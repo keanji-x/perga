@@ -3,6 +3,7 @@
 
 import { z } from 'zod';
 
+import { formatFileLine, isFilePath } from '../domain/report-file.js';
 import { flowOutcomeSchema } from '../domain/report-flow.js';
 import { memoryUpdatedPayloadSchema } from '../domain/memory.js';
 import type { ApiDecodeFailure } from './types.js';
@@ -652,6 +653,15 @@ export const workspaceFileResultDtoSchema = z.object({
 });
 export type WorkspaceFileResultDto = z.infer<typeof workspaceFileResultDtoSchema>;
 
+export const workspaceFileOpenRequestedSchema = z.object({
+  trackId: z.string().min(1),
+  sessionId: z.string().min(1),
+  path: z.string().refine(isFilePath),
+  line: z.number().int().positive().nullish(),
+  endLine: z.number().int().positive().nullish(),
+}).refine(({ line, endLine }) => endLine == null || formatFileLine({ line: line ?? undefined, endLine }) !== undefined);
+export type WorkspaceFileOpenRequested = z.infer<typeof workspaceFileOpenRequestedSchema>;
+
 export const vcsDiffFileDtoSchema = z.object({
   path: z.string(),
   status: z.string().default('modified'),
@@ -791,6 +801,7 @@ export type PergaEventDecodeResult =
   | Readonly<{ status: 'ready'; kind: 'approvals'; trackId: string; sessionId: string }>
   | Readonly<{ status: 'ready'; kind: 'approval-audit' }>
   | Readonly<{ status: 'ready'; kind: 'upgrade-status'; payload: SystemUpgradeStatusPayload }>
+  | Readonly<{ status: 'ready'; kind: 'file-open-requested'; payload: WorkspaceFileOpenRequested }>
   | Readonly<{ status: 'ready'; kind: 'memory-updated'; payload: z.output<typeof memoryUpdatedPayloadSchema> }>
   | Readonly<{ status: 'ready'; kind: 'persistent'; event: PergaPersistentEvent }>
   | Readonly<{ status: 'ready'; kind: 'delta'; delta: PergaStreamDelta }>
@@ -814,6 +825,13 @@ export function decodePergaEventEnvelope(input: unknown): PergaEventDecodeResult
     };
   }
   const { eventId, areaId, trackId, kind, payload, createdAtMs } = base.data;
+  if (kind === 'workspace.file_open_requested') {
+    const parsed = workspaceFileOpenRequestedSchema.safeParse(payload);
+    if (!parsed.success || eventId != null || parsed.data.trackId !== trackId) {
+      return { status: 'failed', error: { kind: 'decode', message: 'Invalid workspace.file_open_requested event' } };
+    }
+    return { status: 'ready', kind: 'file-open-requested', payload: parsed.data };
+  }
   if (kind === 'memory.updated') {
     const parsed = memoryUpdatedPayloadSchema.safeParse(payload);
     return parsed.success ? { status: 'ready', kind: 'memory-updated', payload: parsed.data }

@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import type { ReportFileLinkTarget } from '../../../../../core/domain/report-file.ts';
 import type { ReportTaskRow } from '../../../../../core/domain/track-task-inventory.ts';
 import type {
   TemplateViewsProjection,
@@ -52,7 +53,7 @@ export function ReportWidgetBlock({
   taskRows?: readonly ReportTaskRow[];
   renderText: (text: string) => ReactNode;
   renderMarkdown?: (markdown: string, key: string) => ReactNode;
-  onOpenFile?: (path: string) => void;
+  onOpenFile?: (target: ReportFileLinkTarget) => void;
   onOpenWorker?: (sessionId: string) => void;
   onOpenTrack?: (trackId: string) => void;
 }>) {

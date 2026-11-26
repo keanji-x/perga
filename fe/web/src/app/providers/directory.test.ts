@@ -8,7 +8,7 @@ import { describe,expect,it } from 'vitest';
 
 import type { ApiRequest,ApiTransportPort } from '../../../../core/api/types.ts';
 import { createUnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
-import { createDirectoryLister,createTrackWorkspaceFilesPort } from './directory.ts';
+import { createDirectoryLister,createTrackCardFilesPort,createTrackWorkspaceFilesPort } from './directory.ts';
 
 const unauthorized = createUnauthorizedChannel({ enqueue: (task: () => void) => task() });
 
@@ -20,7 +20,7 @@ function harness(body: unknown, status = 200) {
       return Promise.resolve({ status, statusText: status === 200 ? 'OK' : 'Bad Request', body });
     },
   };
-  return { sent, listDirectory: createDirectoryLister(transport, unauthorized) };
+  return { sent, transport, listDirectory: createDirectoryLister(transport, unauthorized) };
 }
 
 describe('createDirectoryLister', () => {
@@ -85,7 +85,7 @@ describe('createDirectoryLister', () => {
 });
 
 describe('createTrackWorkspaceFilesPort', () => {
-  it('binds every read and raw URL to one Track instead of accepting an absolute root', async () => {
+  it('binds text and raw reads to their Track', async () => {
     const sent: ApiRequest[] = [];
     const transport: ApiTransportPort = {
       send(request) {
@@ -109,6 +109,34 @@ describe('createTrackWorkspaceFilesPort', () => {
   });
 });
 
+describe('createTrackCardFilesPort', () => {
+  it('uses relative paths for workspace directory, text and raw reads', async () => {
+    const listing = harness({ relativePath: 'docs', isDirectory: true, entries: [] });
+    const file = harness({ relativePath: 'docs/a.txt', isDirectory: false, content: 'a' });
+    const folders = createTrackCardFilesPort(listing.transport, unauthorized, 'track/1', '/repo');
+    const files = createTrackCardFilesPort(file.transport, unauthorized, 'track/1', '/repo');
+
+    await expect(folders.listDirectory('/repo/docs')).resolves.toEqual({ path: '/repo/docs', parent: '/repo', entries: [] });
+    await expect(files.readFile('/repo/docs/a.txt')).resolves.toMatchObject({ text: 'a' });
+    expect(listing.sent[0]?.path).toBe('/api/v1/tracks/track%2F1/files?path=docs');
+    expect(file.sent[0]?.path).toBe('/api/v1/tracks/track%2F1/files?path=docs%2Fa.txt');
+    expect(files.rawUrl('/repo/docs/a.png')).toBe('/api/v1/tracks/track%2F1/files/raw?path=docs%2Fa.png');
+  });
+
+  it.each([
+    ['/outside/logs', '/outside'],
+    ['/outside', '/'],
+    ['/', null],
+  ])('keeps the canonical external directory %s and its parent', async (canonical, parent) => {
+    const { sent, transport } = harness({ relativePath: canonical, isDirectory: true, entries: [] });
+    const files = createTrackCardFilesPort(transport, unauthorized, 'track/1', '/repo');
+
+    await expect(files.listDirectory('/repo/alias')).resolves.toEqual({ path: canonical, parent, entries: [] });
+    expect(sent[0]?.path).toBe('/api/v1/tracks/track%2F1/files?path=alias');
+    expect(files.rawUrl('/outside/a.png')).toBe('/api/v1/tracks/track%2F1/files/raw?path=%2Foutside%2Fa.png');
+  });
+
+});
 
 it('keeps remote directory reads on their selected target including the initial home read', async () => {
   const paths: string[] = [];

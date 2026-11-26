@@ -55,7 +55,8 @@ export function useDialogView(): DialogViewController | null { return useContext
 const focusableSelector = 'a[href],area[href],button:not([disabled]),input:not([disabled]):not([type="hidden"]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"]),[contenteditable="true"]';
 function focusables(panel: HTMLElement): HTMLElement[] {
   return Array.from(panel.querySelectorAll<HTMLElement>(focusableSelector)).filter((element) =>
-    !element.hasAttribute('disabled') && !element.closest('[inert]') && isVisibleWithin(element, panel));
+    element.getAttribute('tabindex') !== '-1'
+    && !element.hasAttribute('disabled') && !element.closest('[inert]') && isVisibleWithin(element, panel));
 }
 function isVisibleWithin(element: HTMLElement, panel: HTMLElement): boolean {
   for (let current: HTMLElement | null = element; current; current = current.parentElement) {

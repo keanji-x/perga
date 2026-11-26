@@ -31,6 +31,7 @@ public static class KernelMcpToolNames
     public const string TerminalInput = "terminal_input";
 
     // Governance tools (BoundTaskId == null ONLY)
+    public const string FileOpen = "file_open";
     public const string FlowRead = "flow_read";
     public const string FlowCommit = "flow_commit";
     public const string TaskCancel = "task_cancel";
@@ -71,6 +72,7 @@ public static class KernelMcpToolNames
         TerminalOpen,
         TerminalRead,
         TerminalInput,
+        FileOpen,
         FlowRead,
         FlowCommit,
         TaskCancel,
@@ -119,7 +121,7 @@ public static class KernelMcpCatalog
 
     public static IReadOnlyList<McpToolDescriptor> GetToolsForSession(string? boundTaskId, bool isLead = false)
     {
-        var isBound = !string.IsNullOrEmpty(boundTaskId);
+        var isBound = boundTaskId is not null;
         return AllDescriptors
             .Where(d => isBound ? !IsGovernanceOnly(d.Name) : !IsCompletionOnly(d.Name))
             .Where(d => !IsLeadOnly(d.Name) || (!isBound && isLead))
@@ -127,6 +129,7 @@ public static class KernelMcpCatalog
     }
 
     public static bool IsGovernanceOnly(string toolName) => toolName is
+        KernelMcpToolNames.FileOpen or
         KernelMcpToolNames.FlowRead or KernelMcpToolNames.FlowCommit or
         KernelMcpToolNames.TaskCancel or
         KernelMcpToolNames.SessionCreate or KernelMcpToolNames.SessionUpdate or KernelMcpToolNames.SessionSend or
@@ -177,6 +180,14 @@ public static class KernelMcpCatalog
                   "area":{"type":"string","minLength":1,"description":"Area ID or exact Area name (case-insensitive). Use '*' for all Areas."},
                   "query":{"type":"string","minLength":1,"description":"Case-insensitive substring of a Track title, report summary, or ID."},
                   "includeClosed":{"type":"boolean","description":"Include closed Tracks. Defaults to false."}
+                }}
+                """), readOnlyLocal),
+            new(KernelMcpToolNames.FileOpen, "Open a readable file in the Track viewer. Relative paths start in the Track workspace.",
+                Schema("""
+                {"type":"object","additionalProperties":false,"required":["path"],"dependentRequired":{"endLine":["line"]},"properties":{
+                  "path":{"type":"string","minLength":1,"description":"Relative, absolute, or home-relative file path on the Track execution target."},
+                  "line":{"type":"integer","minimum":1,"maximum":2147483647,"description":"First line to highlight (1-based)."},
+                  "endLine":{"type":"integer","minimum":1,"maximum":2147483647,"description":"Optional inclusive last line to highlight. Requires line."}
                 }}
                 """), readOnlyLocal),
             new(KernelMcpToolNames.ReportRead, "Read a Track report. Omit trackId for the current Track and its read anchor, or pass another Track ID for a read-only snapshot. Supports format ('full'|'blocks'|'markdown'|'outline'), sectionH1/blockIds scoping, and includeContract for perga-block authoring specs.",
@@ -395,6 +406,19 @@ public static class KernelMcpDispatcher
                 var query = OptionalNonBlankStringArg(args, ["query"]);
                 return JsonHelpers.ToElement(await kernel.DiscoverTracksAsync(
                     caller.TrackId, area, query, ParseIncludeClosed(args), ct).ConfigureAwait(false));
+            }
+
+            case KernelMcpToolNames.FileOpen:
+            {
+                RejectUnknownArgs(args, ToolSchema(toolName));
+                var path = OptionalNonBlankStringArg(args, ["path"]) ?? throw KernelException.InvalidArgument("'path' is required.");
+                var line = (int?)IntegerArg(args, "line", 1, int.MaxValue);
+                var endLine = (int?)IntegerArg(args, "endLine", 1, int.MaxValue);
+                if (endLine is not null && (line is null || endLine < line))
+                    throw KernelException.InvalidArgument("'endLine' requires 'line' and must be greater than or equal to it.");
+                var result = await kernel.Actors.GetOrActivate(caller.TrackId)
+                    .RequestWorkspaceFileOpenAsync(authorization, path, line, endLine, ct).ConfigureAwait(false);
+                return JsonHelpers.ToElement(result);
             }
 
             case KernelMcpToolNames.ReportRead:

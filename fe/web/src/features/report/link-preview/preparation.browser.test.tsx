@@ -36,7 +36,7 @@ it('shares file preview context and prose parsing without preparing a closed pre
   parse.mockClear();
   view.rerender(<ReportDocument {...props} fileRoot="/other" onOpenFileLink={current} />);
   expect(parse).not.toHaveBeenCalled();
-  expect(within(preview).queryByRole('button', { name: 'private' })).toBeNull();
+  expect(within(preview).getByRole('button', { name: 'private' }).getAttribute('title')).toBe('/repo/private.md');
   fireEvent.click(within(preview).getByRole('button', { name: 'sibling' }));
   expect(previous).not.toHaveBeenCalled();
   expect(current).toHaveBeenCalledWith({ path: 'docs/other.md' });

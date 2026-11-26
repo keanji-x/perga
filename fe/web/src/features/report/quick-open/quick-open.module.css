@@ -1,0 +1,56 @@
+@layer features {
+  .quickOpen {
+    display: grid;
+    min-inline-size: 0;
+    gap: var(--space-2);
+  }
+
+  .inputRow {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: var(--space-2);
+  }
+
+  .list {
+    max-block-size: min(22rem, 50dvh);
+    overflow: auto;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .status {
+    margin: 0;
+    padding-inline: var(--space-2);
+    color: var(--text-3);
+    font: var(--type-metadata);
+  }
+
+  .option {
+    display: flex;
+    align-items: center;
+    inline-size: 100%;
+    gap: var(--space-2);
+    padding: var(--space-2);
+    border: 0;
+    border-radius: var(--radius-sm);
+    background: transparent;
+    color: var(--text);
+    cursor: pointer;
+    text-align: start;
+    font: var(--type-code);
+  }
+
+  .option > span {
+    min-inline-size: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .option[aria-selected='true'],
+  .option:hover {
+    background: var(--accent-soft);
+  }
+}

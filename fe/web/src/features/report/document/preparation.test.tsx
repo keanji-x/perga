@@ -76,7 +76,7 @@ it('retains current callbacks and file admission when prepared syntax is reused'
   expect(screen.getByRole('button', { name: 'File' }).getAttribute('title')).toBe('info.md');
   view.rerender(<PreparedProseBlock prepared={prepared} fileRoot="/denied"
     onOpenLink={target => currentTargets.push(target)} onOpenFileLink={target => currentTargets.push(target)} />);
-  expect(screen.queryByRole('button', { name: 'File' })).toBeNull();
+  expect(screen.getByRole('button', { name: 'File' }).getAttribute('title')).toBe('/allowed/info.md');
   fireEvent.click(screen.getByRole('button', { name: 'Track' }));
   expect(oldTargets).toEqual([]); expect(currentTargets).toEqual([{ trackId: 'other', blockId: 'target' }]);
   view.rerender(<PreparedProseBlock prepared={prepared} fileRoot="/allowed"

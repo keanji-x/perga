@@ -1,7 +1,7 @@
 import { cloneElement, isValidElement, useMemo, type ReactNode } from 'react';
 import { prepareProse, preparePreviewProse, type PreparedProse, type PreviewReferenceContext } from './preparation.ts';
 import { parseReportLink, type ReportLinkTarget } from '../../../../../core/domain/report.ts';
-import { parseReportFileLink, reportFilePathRelativeToRoot, type ReportFileLinkTarget } from '../../../../../core/domain/report-file.ts';
+import { parseReportFileLink, reportFileNavigationPath, type ReportFileLinkTarget } from '../../../../../core/domain/report-file.ts';
 import { parseReportSourceLink, type ReportSourceLinkTarget } from '../../../../../core/domain/report-source.ts';
 import { reportTextReferences, qualifiedReportFileReference, type ReferenceRepository } from '../../../../../core/domain/report-references.ts';
 import { isImagePath, useReportFileResource } from '../../../systems/fs-viewers/public.tsx';
@@ -93,7 +93,7 @@ function ReportImage({ destination, alt, context }: { destination: string; alt: 
   if (context.destinationMode === 'inert') return body;
   const target = parseReportFileLink(destination);
   const path = target !== null && context.fileRoot !== undefined
-    ? reportFilePathRelativeToRoot(context.fileRoot, target, context.fileBasePath) : null;
+    ? reportFileNavigationPath(context.fileRoot, target.path, context.fileBasePath) : null;
   if (path !== null && isImagePath(path) && context.linkPreview !== undefined) {
     return <WorkspaceImage key={`${context.linkPreview.trackId}:${path}`} path={path} label={label}
       files={context.linkPreview.files} context={context} />;
@@ -169,9 +169,9 @@ function Destination({ destination, label, body, image = false, context }: {
   }
   const fileTarget = parseReportFileLink(destination);
   const path = fileTarget !== null && fileRoot !== undefined
-    ? reportFilePathRelativeToRoot(fileRoot, fileTarget, fileBasePath) : null;
-  if (path !== null && (onOpenFileLink !== undefined || linkPreview !== undefined)) {
-    const open = onOpenFileLink === undefined ? undefined : () => onOpenFileLink({ path });
+    ? reportFileNavigationPath(fileRoot, fileTarget.path, fileBasePath) : null;
+  if (path !== null && fileTarget !== null && (onOpenFileLink !== undefined || linkPreview !== undefined)) {
+    const open = onOpenFileLink === undefined ? undefined : () => onOpenFileLink({ ...fileTarget, path });
     return wrap({ kind: 'file', path },
       (activate, dismiss) => <button type="button" className={styles.link} title={path} onClick={open === undefined ? activate : () => { dismiss(); open(); }}>{body}</button>, open);
   }

@@ -214,9 +214,11 @@ export function useConversationPane(
   const openChatLink = useCallback((target: ReportLinkTarget) => {
     go({ name: 'track', trackId: target.trackId, blockId: target.blockId ?? undefined });
   }, [go]);
+  const { scopeId: fileScopeId, openFile: openTrackFile } = source;
   const openChatFile = useCallback((owner: string, target: ReportFileLinkTarget) => {
-    openChatWorkspaceFile(owner, target.path);
-  }, [openChatWorkspaceFile]);
+    if (owner === fileScopeId && openTrackFile !== undefined) openTrackFile(target);
+    else openChatWorkspaceFile(owner, target.path, target);
+  }, [openChatWorkspaceFile, fileScopeId, openTrackFile]);
   const chatLinks = useConversationLinks({ transport, unauthorized, conversationId: openRowId, trackId: imageTrackId,
     root: imageRoot, files: conversationFiles, onOpenLink: openChatLink, onOpenFile: openChatFile });
   const open = store.conversations.find((conversation) => conversation.id === openRowId) ?? null;
@@ -458,7 +460,7 @@ export function useConversationPane(
       side: !hasSideConversation || !composerView.historyReady ? undefined : sideQuestion,
       sideHidden: options?.showSideCommand === false,
       sideUnavailableReason: sideSourceReady ? undefined : 'Side conversations are not available here yet.',
-      terminal: onTerminal, compactViewport: compactComposer,
+      terminal: onTerminal, compactViewport: compactComposer, openFile: source.openFileCommand,
     }),
     ...plannerCommands?.(composerStop),
     mem: memorySave.commandBinding,
@@ -471,7 +473,7 @@ export function useConversationPane(
         ? undefined : 'Unavailable in the current conversation state',
     }])),
   }), [allowNewConversation, options?.showSideCommand, newConversation, composerView.manualCompactSupported, composerView.historyReady,
-    composerView.compact, hasSideConversation, sideQuestion, sideSourceReady, onTerminal, compactComposer, plannerCommands, composerStop,
+    composerView.compact, source.openFileCommand, hasSideConversation, sideQuestion, sideSourceReady, onTerminal, compactComposer, plannerCommands, composerStop,
     memorySave.commandBinding, plannerSwitchBinding, interrupt, compact, recover, commandEnabled]);
   const sessionModelGroups = useMemo<readonly ModelGroup<AgentProvider>[]>(() => {
     const currentGroup: ModelGroup<AgentProvider> = {
@@ -612,7 +614,7 @@ export function useConversationPane(
               </ChatFooterNotice>
             )}
             {/* Initial submit hands words to the held draft, including refusal; only recovery uses the takeover boolean. */}
-            <ConversationComposer commands={conversationCommands({ terminal: onTerminal, compactViewport: compactComposer, newConversation: allowNewConversation ? startAnother : undefined })} target={{ kind: 'scope', id: sourceScopeId }} layout={compactComposer ? 'mobile' : 'standard'} disabled={creating} sendWaiting={creating} onSend={text => { sendDraft(text); }}
+            <ConversationComposer commands={conversationCommands({ terminal: onTerminal, openFile: source.openFileCommand, compactViewport: compactComposer, newConversation: allowNewConversation ? startAnother : undefined })} target={{ kind: 'scope', id: sourceScopeId }} layout={compactComposer ? 'mobile' : 'standard'} disabled={creating} sendWaiting={creating} onSend={text => { sendDraft(text); }}
               focusOnMount={panePresented} focusRequest={composerFocusRequest} focusHandle={draftFocus.handle}
               mentionTrigger={mentionTrigger}
               changeText={setNewConversationText}
@@ -763,7 +765,7 @@ export function useConversationPane(
 
   return {
     dock: compactComposer ? <ConversationDock target={dockRowId === null ? { kind: 'scope', id: sourceScopeId } : { kind: 'card', id: dockRowId }}
-      commands={dockRowId === null ? conversationCommands({ compactViewport: true }) : paneCommands}
+      commands={dockRowId === null ? conversationCommands({ compactViewport: true, openFile: source.openFileCommand }) : paneCommands}
       onChange={setDockText} onSend={sendFromDock} onBeginInput={openDockHistory}
       disabled={archived || options?.reportComposer?.ready === false || (dockRowId !== null && (store.sendBlocked || !store.historyReady || !store.runReady))} /> : undefined,
     selectedConversationId: draftOpen ? null : open?.id ?? dockRowId,

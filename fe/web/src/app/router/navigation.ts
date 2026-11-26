@@ -1,13 +1,13 @@
 // Route targets and the single navigation exit.
 
-import { useNavigate,useRouter,useRouterState,type RouterHistory } from '@tanstack/react-router';
+import { trimPathRight,useNavigate,useRouter,useRouterState,type RouterHistory } from '@tanstack/react-router';
 import { useCallback,useMemo } from 'react';
 
 import { useDraftBackOwner,type NavigationSource } from './draft-back-owner.tsx';
 import type { MobilePanel,TrackSearch,TrackSource } from './track-search.ts';
 import { useTrackViews } from './track-view-state.tsx';
 
-import { parseWorkspaceRelativeFilePath } from '../../../../core/domain/report-file.ts';
+import { formatFileLine, parseFileLine, isFilePath, type FileLineLocation } from '../../../../core/domain/report-file.ts';
 
 export type { MobilePanel,TrackSearch,TrackSource } from './track-search.ts';
 
@@ -22,6 +22,8 @@ declare module '@tanstack/history' {
     /** Explicit report-anchor activation, independent of file/panel navigation. */
     ncReportAnchorIntent?: string;
     ncFilePushed?: boolean;
+    ncFileSilent?: boolean;
+    ncFileOpenRequest?: number;
     ncOpenPlanner?: boolean;
   }
 }
@@ -43,6 +45,7 @@ export type NavTarget =
     blockId?: string;
     cardId?: string;
     filePath?: string;
+    fileLine?: number | string;
     panel?: MobilePanel;
     from?: TrackSource;
     openPlanner?: boolean;
@@ -88,10 +91,10 @@ export function useGo(alias?: TrackRouteAlias): (target: NavTarget, options?: Go
       // The block anchor rides in the hash: the track route remounts per track, so
       // state set before `go` would be discarded by the very move it describes.
       const hash = target.name === 'track' ? target.blockId : undefined;
-      // All four fields are built from the target, never spread from the previous
+      // All fields are built from the target, never spread from the previous
       // location: "not passed" means "cleared".
       const search: Record<string, unknown> = target.name === 'track'
-        ? buildTrackSearch({ card: target.cardId, file: target.filePath, panel: target.panel, from: target.from })
+        ? buildTrackSearch({ card: target.cardId, file: target.filePath, line: target.fileLine, panel: target.panel, from: target.from })
         : target.name === 'today' && target.day !== undefined
           ? { day: target.day }
           : {};
@@ -101,9 +104,8 @@ export function useGo(alias?: TrackRouteAlias): (target: NavTarget, options?: Go
         && target.cardId === undefined && target.filePath === undefined
         && target.panel === undefined && target.openPlanner !== true
         && !source.pathname.endsWith(destination);
-      if (resumeTrack) {
-        Object.assign(search, views?.get(target.trackId)?.search);
-      }
+      const resumedView = resumeTrack ? views?.get(target.trackId) : undefined;
+      if (resumedView !== undefined) Object.assign(search, resumedView.search);
       // The planner-open intent rides on the history entry this navigation creates;
       // written only when asked for, so an ordinary move leaves `state` alone.
       const state = target.name === 'track' && target.openPlanner === true
@@ -188,12 +190,15 @@ export function usePlannerOpenIntent(trackId: string): PlannerOpenIntent {
 
 /** `card`, `file` and `panel` are mutually exclusive: a persisted card wins, then a transient file, then a panel. */
 function buildTrackSearch(fields: Readonly<{
-  card?: string; file?: string; panel?: MobilePanel; from?: TrackSource;
+  card?: string; file?: string; line?: number | string; panel?: MobilePanel; from?: TrackSource;
 }>): TrackSearch {
-  const search: { card?: string; file?: string; panel?: MobilePanel; from?: TrackSource } = {};
+  const search: { card?: string; file?: string; line?: number | string; panel?: MobilePanel; from?: TrackSource } = {};
   if (fields.card !== undefined) search.card = fields.card;
-  else if (fields.file !== undefined) search.file = fields.file;
-  else if (fields.panel !== undefined) search.panel = fields.panel;
+  else if (fields.file !== undefined) {
+    search.file = fields.file;
+    const line = trackFileLine(fields.line);
+    if (line !== undefined) search.line = line;
+  } else if (fields.panel !== undefined) search.panel = fields.panel;
   if (fields.from !== undefined) search.from = fields.from;
   return search;
 }
@@ -203,7 +208,7 @@ export function useRouteCardId(): string | null {
   return useRouterState({ select: (state) => cardIdFromLocation(state.location) });
 }
 
-/** The normalized workspace-relative file named by the current URL. */
+/** The normalized file named by the current URL. */
 export function useRouteFilePath(): string | null {
   return useRouterState({ select: (state) => filePathFromLocation(state.location) });
 }
@@ -223,14 +228,36 @@ export function cardIdFromSearchString(searchStr: string): string | null {
   return rawParamFromSearchString(searchStr, 'card');
 }
 
+function parseRouteFilePath(value: string | null): string | null {
+  if (value === null) return null;
+  if (value.startsWith('"')) {
+    // TanStack quotes filenames such as "42" to retain their string type.
+    try {
+      const decoded: unknown = JSON.parse(value);
+      if (typeof decoded === 'string') return isFilePath(decoded) ? decoded : null;
+    } catch {
+      // A hand-edited URL can still name a file that begins with a quote.
+    }
+  }
+  return isFilePath(value) ? value : null;
+}
+
 export function filePathFromSearchString(searchStr: string): string | null {
-  const value = rawParamFromSearchString(searchStr, 'file');
-  return value === null ? null : parseWorkspaceRelativeFilePath(value)?.path ?? null;
+  return parseRouteFilePath(rawParamFromSearchString(searchStr, 'file'));
 }
 
 export function filePathFromLocation(location: SearchCarrier): string | null {
-  const value = rawParamFromLocation(location, 'file');
-  return value === null ? null : parseWorkspaceRelativeFilePath(value)?.path ?? null;
+  return parseRouteFilePath(rawParamFromLocation(location, 'file'));
+}
+
+function trackFileLine(value: unknown): number | string | undefined {
+  const line = parseFileLine(value);
+  // TanStack quotes strings it could otherwise parse as numbers. Keep ?line=42 readable.
+  return line.endLine === undefined ? line.line : formatFileLine(line);
+}
+
+export function useRouteFileLine(): string | undefined {
+  return useRouterState({ select: (state) => formatFileLine(parseFileLine(rawParamFromLocation(state.location, 'line'))) });
 }
 
 /** A value outside the union is dropped, not thrown on: the query string is user-editable text. */
@@ -310,7 +337,8 @@ export function validateTrackSearch(search: Record<string, unknown>): TrackSearc
   const from = search.from;
   return buildTrackSearch({
     card: typeof card === 'string' && card !== '' ? card : undefined,
-    file: typeof file === 'string' ? parseWorkspaceRelativeFilePath(file)?.path : undefined,
+    file: typeof file === 'string' && isFilePath(file) ? file : undefined,
+    line: trackFileLine(search.line),
     panel: asMobilePanel(typeof panel === 'string' ? panel : null) ?? undefined,
     from: asTrackSource(typeof from === 'string' ? from : null) ?? undefined,
   });
@@ -357,18 +385,22 @@ export function routeParamFromPath(path: string, prefix: '/area/' | '/track/'): 
 }
 
 /**
- * The four fields exactly as they stand in `location`, deliberately not run
+ * The fields exactly as they stand in `location`, deliberately not run
  * through `buildTrackSearch`: the card/panel exclusion is a rule about the URL a
  * navigation produces, not the one it reads.
  */
 export function trackSearchFromLocation(location: SearchCarrier): TrackSearch {
-  const search: { card?: string; file?: string; panel?: MobilePanel; from?: TrackSource } = {};
+  const search: { card?: string; file?: string; line?: number | string; panel?: MobilePanel; from?: TrackSource } = {};
   const card = cardIdFromLocation(location);
   const file = filePathFromLocation(location);
   const panel = panelFromLocation(location);
   const from = fromFromLocation(location);
   if (card !== null) search.card = card;
-  if (file !== null) search.file = file;
+  if (file !== null) {
+    search.file = file;
+    const line = trackFileLine(rawParamFromLocation(location, 'line'));
+    if (line !== undefined) search.line = line;
+  }
   if (panel !== null) search.panel = panel;
   if (from !== null) search.from = from;
   return search;
@@ -378,6 +410,7 @@ export function trackSearchFromLocation(location: SearchCarrier): TrackSearch {
 export type TrackSearchPatch = Readonly<{
   card?: string | undefined;
   file?: string | undefined;
+  line?: number | string | undefined;
   panel?: MobilePanel | undefined;
   from?: TrackSource | undefined;
 }>;
@@ -393,11 +426,12 @@ export function sameTrackSearch(
   alias?: TrackRouteAlias,
 ): TrackSearch | null {
   if (routeParamFromPath(location.pathname, '/track/') !== expectedTrackId &&
-    !(alias?.trackId === expectedTrackId && location.pathname === alias.path)) return null;
+    !(alias?.trackId === expectedTrackId && trimPathRight(location.pathname) === trimPathRight(alias.path))) return null;
   const current = trackSearchFromLocation(location);
   return buildTrackSearch({
     card: Object.hasOwn(patch, 'card') ? patch.card : current.card,
     file: Object.hasOwn(patch, 'file') ? patch.file : current.file,
+    line: Object.hasOwn(patch, 'file') || Object.hasOwn(patch, 'line') ? patch.line : current.line,
     panel: Object.hasOwn(patch, 'panel') ? patch.panel : current.panel,
     from: Object.hasOwn(patch, 'from') ? patch.from : current.from,
   });
@@ -420,7 +454,7 @@ export function useGoSameTrack(alias?: TrackRouteAlias): GoSameTrack {
       go(
         {
           name: 'track', trackId: expectedTrackId, cardId: patch.card,
-          filePath: patch.file, panel: patch.panel, from: patch.from,
+          filePath: patch.file, fileLine: patch.line, panel: patch.panel, from: patch.from,
         },
         options,
       );
@@ -447,37 +481,59 @@ export function hasFilePushedMarker(state: unknown): boolean {
   return (state as Record<string, unknown>)[FILE_PUSHED_STATE_KEY] === true;
 }
 
+export type FileOpenOptions = FileLineLocation & Readonly<{ focus?: boolean }>;
+
 export type TrackFileNavigation = Readonly<{
-  openFile: (expectedTrackId: string, path: string) => void;
+  openFile: (expectedTrackId: string, path: string, options?: FileOpenOptions) => boolean;
   closeFile: (expectedTrackId: string) => void;
 }>;
 
-/** The first file pushes a marked entry, file-to-file replaces it, close pops the marked entry; a cold deep link has no marker, so close replaces in place. */
+/** Report opens push a return entry. Switching surfaces replaces the current entry and reuses a marked Report return when available. */
 export function useTrackFileNavigation(alias?: TrackRouteAlias): TrackFileNavigation {
-  const history = useRouter().history as RouterHistory;
+  const router = useRouter();
+  const history = router.history as RouterHistory;
   const navigate = useNavigate();
   const go = useGo(alias);
-  const location = useRouterState({ select: (state) => state.location });
 
-  const openFile = useCallback((expectedTrackId: string, path: string) => {
+  const openFile = useCallback((expectedTrackId: string, path: string, options?: FileOpenOptions) => {
+    const location = router.parseLocation(history.location);
+    if (!isFilePath(path)) return false;
+    const line = formatFileLine(options ?? {});
+    const silent = options?.focus === false;
     const search = sameTrackSearch(location, expectedTrackId, {
-      file: path, card: undefined, panel: undefined,
+      file: path, line, card: undefined, panel: undefined,
     }, alias);
     if (search === null) {
-      go({ name: 'track', trackId: expectedTrackId, filePath: path });
-      return;
+      if (silent) return false;
+      go({ name: 'track', trackId: expectedTrackId, filePath: path, fileLine: line });
+      return true;
     }
-    const switching = filePathFromLocation(location) !== null;
+    const switchingFile = filePathFromLocation(location) !== null;
+    const switchingPanel = panelFromLocation(location) !== null;
+    const leavingCard = cardIdFromLocation(location) !== null;
+    const replace = switchingFile || switchingPanel || leavingCard;
+    const pushedFromReport = !replace || (!leavingCard && (
+      (switchingFile && hasFilePushedMarker(location.state)) || (switchingPanel && hasPanelPushedMarker(location.state))
+    ));
     void navigate({
       to: trackPath(expectedTrackId, alias),
       search,
       hash: true,
-      replace: switching,
-      state: switching ? true : { ncFilePushed: true },
+      replace,
+      state: (previous) => ({
+        ...previous,
+        ncPanelPushed: false,
+        ncFilePushed: pushedFromReport,
+        ncFileSilent: silent,
+        // A new request can repeat the same file and line.
+        ncFileOpenRequest: (previous.ncFileOpenRequest ?? 0) + 1,
+      }),
     });
-  }, [go, location, navigate, alias]);
+    return true;
+  }, [go, history, navigate, router, alias]);
 
   const closeFile = useCallback((expectedTrackId: string) => {
+    const location = router.parseLocation(history.location);
     if (hasFilePushedMarker(location.state) && history.canGoBack()) {
       history.back();
       return;
@@ -493,7 +549,7 @@ export function useTrackFileNavigation(alias?: TrackRouteAlias): TrackFileNaviga
       hash: true,
       replace: true,
     });
-  }, [go, history, location, navigate, alias]);
+  }, [go, history, navigate, router, alias]);
 
   return { openFile, closeFile };
 }
@@ -525,12 +581,13 @@ export function useTrackPanelNavigation(alias?: TrackRouteAlias): TrackPanelNavi
       return;
     }
     const switching = panelFromLocation(location) !== null;
+    const switchingFile = filePathFromLocation(location) !== null;
     void navigate({
       to: trackPath(expectedTrackId, alias),
       search,
       hash: true,
-      replace: switching,
-      state: switching ? true : { ncPanelPushed: true },
+      replace: switching || switchingFile,
+      state: switching ? true : { ncPanelPushed: !switchingFile || hasFilePushedMarker(location.state) },
     });
   }, [go, location, navigate, alias]);
 

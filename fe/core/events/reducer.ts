@@ -1,3 +1,4 @@
+import type { WorkspaceFileOpenRequested } from '../api/perga-v1.js';
 import type { EventFrame } from './protocol.js';
 import { invalidationPlanFor, type CacheWrite, type InvalidationContext, type QueryKey } from './invalidation-plan.js';
 
@@ -7,6 +8,7 @@ export type EventEffect =
   | Readonly<{ type: 'invalidate'; keys: readonly QueryKey[] | null }>
   | Readonly<{ type: 'remove'; keys: readonly QueryKey[] }>
   | Readonly<{ type: 'write-through'; writes: readonly CacheWrite[] }>
+  | Readonly<{ type: 'file-open-requested'; request: WorkspaceFileOpenRequested }>
   | Readonly<{ type: 'clear-cache' }>
   | Readonly<{ type: 'reconnect' }>
   | Readonly<{ type: 'refresh-snapshot'; tipId: number }>;
@@ -54,6 +56,10 @@ export function reduceEventFrame(
   if (
     state.syncEventVersion !== null && eventVersion !== null && eventVersion > state.syncEventVersion
   ) return { state, effects: [] };
+
+  if (frame.type === 'event' && frame.event.ev === 'workspace.file_open_requested') {
+    return { state, effects: frame.meta.id === 0 ? [{ type: 'file-open-requested', request: frame.event.data }] : [] };
+  }
 
   const rawId = frame.type === 'event' ? frame.meta.id : frame.id;
   const advanced = advance(state, rawId);

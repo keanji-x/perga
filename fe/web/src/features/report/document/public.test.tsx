@@ -120,32 +120,20 @@ describe('ReportDocument', () => {
       expect(onOpenFileLink).toHaveBeenCalledWith({ path: 'fe/web/src/app/providers/transport.ts' });
     });
 
-    it('does not turn an escaping relative path into a file control', () => {
-      const onOpenFileLink = vi.fn();
-      const { container } = render(
-        <ReportDocument
-          report={flat('Do not open [outside](../secret.txt).')}
-          empty={EMPTY}
-          onOpenFileLink={onOpenFileLink}
-          fileRoot="/repo"
-        />,
-      );
-      expect(container.querySelectorAll('button').length).toBe(0);
-      expect(container.textContent).toContain('outside');
-      expect(onOpenFileLink).not.toHaveBeenCalled();
-    });
-
-    it('accepts an absolute file link only when it is inside the injected workspace root', () => {
-      const onOpenFileLink = vi.fn();
+    it('opens relative parents and absolute paths with their locations', () => {
+      const onOpenFileLink = vi.fn<(target: ReportFileLinkTarget) => void>();
       render(<ReportDocument
-        report={flat('[inside](/repo/src/main.rs:12) and [outside](/etc/passwd).')}
+        report={flat('[inside](/repo/src/main.rs:12) · [outside](/tmp/notes#L3-L5) · [parent](../manual.txt)')}
         empty={EMPTY}
         onOpenFileLink={onOpenFileLink}
         fileRoot="/repo"
       />);
-      screen.getByRole('button', { name: 'inside' }).click();
-      expect(onOpenFileLink).toHaveBeenCalledWith({ path: 'src/main.rs' });
-      expect(screen.queryByRole('button', { name: 'outside' })).toBeNull();
+      for (const name of ['inside', 'outside', 'parent']) screen.getByRole('button', { name }).click();
+      expect(onOpenFileLink.mock.calls.map(([target]) => target)).toEqual([
+        { path: 'src/main.rs', line: 12 },
+        { path: '/tmp/notes', line: 3, endLine: 5 },
+        { path: '../manual.txt' },
+      ]);
     });
 
     it('resolves links relative to the Markdown file being rendered', () => {
@@ -160,7 +148,7 @@ describe('ReportDocument', () => {
       screen.getByRole('button', { name: 'sibling' }).click();
       screen.getByRole('button', { name: 'parent' }).click();
       expect(onOpenFileLink.mock.calls.map(([target]) => target)).toEqual([
-        { path: 'docs/spec.md' }, { path: 'README.md' },
+        { path: 'docs/spec.md' }, { path: 'docs/../README.md' },
       ]);
     });
 
@@ -338,7 +326,7 @@ it('shares destination admission through the public link capability and preserve
     fileRoot="/workspace" onOpenFileLink={open}><strong>Notes</strong></ReportTextLink>);
   screen.getByRole('button', { name: 'Notes' }).click();
   expect(open).toHaveBeenCalledExactlyOnceWith({ path: 'notes.md' });
-  rerender(<ReportTextLink href="/outside/private" label="Notes" referenceRepository={null}
+  rerender(<ReportTextLink href="javascript:alert(1)" label="Notes" referenceRepository={null}
     fileRoot="/workspace" onOpenFileLink={open}><strong>Notes</strong></ReportTextLink>);
   expect(screen.queryByRole('button')).toBeNull();
   expect(screen.queryByRole('link')).toBeNull();

@@ -1,82 +1,72 @@
 import { describe, expect, it } from 'vitest';
-
 import {
-  parseReportFileLink, parseWorkspaceRelativeFilePath, reportFilePathRelativeToRoot,
-  resolveReportFilePath,
+  formatFileLine, parseFileLine, parseFileOpenInput, isFilePath, parseReportFileLink,
+  reportFileNavigationPath,
 } from './report-file.js';
 
-describe('parseReportFileLink', () => {
-  it('normalizes a workspace-relative Markdown destination', () => {
-    expect(parseReportFileLink('./src/../README%20first.md#L12'))
-      .toEqual({ path: 'README first.md' });
-    expect(parseReportFileLink('fe/web/src/main.tsx'))
-      .toEqual({ path: 'fe/web/src/main.tsx' });
-    expect(parseReportFileLink('file:///srv/work/src/main.rs:42:7'))
-      .toEqual({ path: '/srv/work/src/main.rs' });
-    expect(parseReportFileLink('docs/100%2520done.md'))
-      .toEqual({ path: 'docs/100%20done.md' });
+describe('file links', () => {
+  it.each([
+    ['./src/../README%20first.md#L12', { path: 'src/../README first.md', line: 12 }],
+    ['fe/web/src/main.tsx:42-60', { path: 'fe/web/src/main.tsx', line: 42, endLine: 60 }],
+    ['file:///srv/work/src/main.rs:42:7', { path: '/srv/work/src/main.rs', line: 42 }],
+    ['~/notes.md#L4-L6', { path: '~/notes.md', line: 4, endLine: 6 }],
+    ['docs/100%2520done.md', { path: 'docs/100%20done.md' }],
+    ['src/../../manual.txt', { path: 'src/../../manual.txt' }],
+    ['/tmp/log.txt', { path: '/tmp/log.txt' }],
+    ['./draft%3Anotes.txt', { path: './draft:notes.txt' }],
+    ['draft%5Cnotes.txt', { path: 'draft\\notes.txt' }],
+  ])('normalizes %s and preserves its line location', (spelling, expected) => {
+    expect(parseReportFileLink(spelling)).toEqual(expected);
   });
 
-  it('rejects destinations that are not files beneath the workspace root', () => {
-    for (const destination of [
-      '', '.', '..',
-      'https://example.com/x', '//example.com/x',
-      '#section', '?download=1', 'perga://wave/w1', 'javascript:alert(1)',
-    ]) {
-      expect(parseReportFileLink(destination), destination).toBeNull();
+  it.each(['', '.', 'https://example.com/x', '//example.com/x', '#section', '?download=1', 'file://hostname/x',
+    'perga://wave/w1', 'other:notes.txt', 'javascript:alert(1)', 'javascript:42', 'bad%ZZ.txt', 'bad%00.txt', 'bad\\path.txt',
+  ])('rejects the Markdown destination %j', (destination) => {
+    expect(parseReportFileLink(destination)).toBeNull();
+  });
+
+  it('keeps decoded characters literal in paths sent through the route or MRU', () => {
+    expect(isFilePath('docs/100%20done.md')).toBe(true);
+    expect(isFilePath('/tmp/a#L5')).toBe(true);
+    expect(isFilePath('../a/../b')).toBe(true);
+    expect(isFilePath('draft:notes.txt')).toBe(true);
+    expect(isFilePath('draft\\notes.txt')).toBe(true);
+    expect(isFilePath('./~/notes.txt')).toBe(true);
+    expect(parseFileOpenInput('alias-dir/../outside.txt:42')).toEqual({ path: 'alias-dir/../outside.txt', line: 42 });
+    expect(parseFileOpenInput('README:42')).toEqual({ path: 'README', line: 42 });
+    expect(parseFileOpenInput('/tmp/a%20b:5')).toEqual({ path: '/tmp/a%20b', line: 5 });
+    expect(parseFileOpenInput('draft:notes.txt')).toEqual({ path: 'draft:notes.txt' });
+    expect(parseFileOpenInput('draft\\notes.txt')).toEqual({ path: 'draft\\notes.txt' });
+    expect(parseFileOpenInput('javascript:42')).toBeNull();
+  });
+
+  it('formats one-based lines and inclusive ranges', () => {
+    expect(parseFileLine(42)).toEqual({ line: 42 });
+    expect(parseFileLine('42-60')).toEqual({ line: 42, endLine: 60 });
+    expect(formatFileLine({ line: 42, endLine: 60 })).toBe('42-60');
+    for (const invalid of ['0', '-1', '3-2', '9007199254740992', ['1', '2']]) {
+      expect(parseFileLine(invalid)).toEqual({});
     }
-  });
-
-  it('keeps parent segments as candidates until a document base is known', () => {
-    expect(parseReportFileLink('../secret.txt')).toEqual({ path: '../secret.txt' });
-    expect(parseReportFileLink('src/../../secret.txt')).toEqual({ path: '../secret.txt' });
-    const target = parseReportFileLink('../secret.txt');
-    if (target === null) throw new Error('parent target did not parse');
-    expect(reportFilePathRelativeToRoot('/repo', target)).toBeNull();
-  });
-
-  it('keeps route and history paths relative even though report links may be absolute', () => {
-    expect(parseWorkspaceRelativeFilePath('src/main.rs')).toEqual({ path: 'src/main.rs' });
-    expect(parseWorkspaceRelativeFilePath('/srv/work/src/main.rs')).toBeNull();
-    expect(parseWorkspaceRelativeFilePath('docs/100%20done.md'))
-      .toEqual({ path: 'docs/100%20done.md' });
-  });
-
-  it('fails closed on malformed escapes and control characters', () => {
-    expect(parseReportFileLink('bad%ZZ.txt')).toBeNull();
-    expect(parseReportFileLink('bad%00.txt')).toBeNull();
-    expect(parseReportFileLink('bad\\path.txt')).toBeNull();
   });
 });
 
-describe('resolveReportFilePath', () => {
-  it('places the normalized relative path beneath an absolute workspace root', () => {
-    expect(resolveReportFilePath('/srv/work/', { path: 'src/main.rs' }))
-      .toBe('/srv/work/src/main.rs');
-    expect(resolveReportFilePath('/', { path: 'tmp/a.txt' })).toBe('/tmp/a.txt');
-    expect(resolveReportFilePath('/srv/work', { path: '/srv/work/src/main.rs' }))
-      .toBe('/srv/work/src/main.rs');
-    expect(reportFilePathRelativeToRoot('/srv/work', { path: '/srv/work/src/main.rs' }))
-      .toBe('src/main.rs');
-    const percent = parseReportFileLink('docs/100%2520done.md');
-    if (percent === null) throw new Error('percent path did not parse');
-    expect(resolveReportFilePath('/srv/work', percent)).toBe('/srv/work/docs/100%20done.md');
-    expect(reportFilePathRelativeToRoot('/srv/work', percent)).toBe('docs/100%20done.md');
+describe('file navigation paths', () => {
+  it('resolves siblings and parents against the parent document', () => {
+    expect(reportFileNavigationPath('/repo', './spec.md', 'docs')).toBe('docs/./spec.md');
+    expect(reportFileNavigationPath('/repo', '../README.md', 'docs')).toBe('docs/../README.md');
+    expect(reportFileNavigationPath('/repo', '../README.md')).toBe('../README.md');
+    expect(reportFileNavigationPath('/repo', './notes.md', '/tmp')).toBe('/tmp/./notes.md');
   });
 
-  it('resolves links from an opened Markdown file before applying the root fence', () => {
-    const sibling = parseReportFileLink('./spec.md');
-    const parent = parseReportFileLink('../README.md');
-    if (sibling === null || parent === null) throw new Error('relative Markdown links did not parse');
-    expect(reportFilePathRelativeToRoot('/repo', sibling, 'docs')).toBe('docs/spec.md');
-    expect(reportFilePathRelativeToRoot('/repo', parent, 'docs')).toBe('README.md');
-    expect(reportFilePathRelativeToRoot('/repo', parent, '')).toBeNull();
+  it('shortens workspace absolute paths and preserves external and home paths', () => {
+    expect(reportFileNavigationPath('/srv/work/', '/srv/work/docs/100%20done.md')).toBe('docs/100%20done.md');
+    expect(reportFileNavigationPath('/', '/tmp/a.txt')).toBe('tmp/a.txt');
+    expect(reportFileNavigationPath('/repo', '/repo-other/a.txt')).toBe('/repo-other/a.txt');
+    expect(reportFileNavigationPath('/repo', '~/notes.md')).toBe('~/notes.md');
   });
 
-  it('refuses an absent or non-absolute workspace root', () => {
-    expect(resolveReportFilePath('', { path: 'README.md' })).toBeNull();
-    expect(resolveReportFilePath('relative', { path: 'README.md' })).toBeNull();
-    expect(resolveReportFilePath('/srv/work', { path: '/srv/other/secret' })).toBeNull();
-    expect(resolveReportFilePath('/srv/work', { path: '/srv/work-other/secret' })).toBeNull();
+  it('escapes literal tilde components when shortening workspace paths', () => {
+    expect(reportFileNavigationPath('/repo', '/repo/~/picture.png')).toBe('./~/picture.png');
+    expect(reportFileNavigationPath('/repo', './~/picture.png')).toBe('./~/picture.png');
   });
 });

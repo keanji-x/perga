@@ -5,6 +5,7 @@ export type TrackSource = 'pages' | 'area';
 export type TrackSearch = Readonly<{
   card?: string;
   file?: string;
+  line?: number | string;
   panel?: MobilePanel;
   from?: TrackSource;
 }>;

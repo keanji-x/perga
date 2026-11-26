@@ -202,16 +202,23 @@ public static class ApiV1Endpoints
             return TypedResults.Json(result, PergaJsonDefaults.ApiOptions);
         });
 
+        v1.MapGet("/tracks/{trackId}/files/search", async (string trackId, string? q, int? limit, IPergaKernel kernel, CancellationToken ct) =>
+        {
+            var result = await kernel.SearchWorkspaceFilesAsync(trackId, q, limit ?? WorkspaceFileSearchResultDto.DefaultLimit, ct)
+                .ConfigureAwait(false);
+            return TypedResults.Json(result, PergaJsonDefaults.ApiOptions);
+        });
+
         v1.MapGet("/tracks/{trackId}/files/raw", async (string trackId, string? path, HttpContext ctx, IPergaKernel kernel, CancellationToken ct) =>
         {
-            var (fullFilePath, stream) = await kernel.OpenWorkspaceRawFileAsync(trackId, path, ct).ConfigureAwait(false);
-            if (!RawMimeProvider.TryGetContentType(fullFilePath, out var contentType) || string.IsNullOrWhiteSpace(contentType))
+            var (resolvedPath, stream) = await kernel.OpenWorkspaceRawFileAsync(trackId, path, ct).ConfigureAwait(false);
+            if (!RawMimeProvider.TryGetContentType(resolvedPath, out var contentType) || string.IsNullOrWhiteSpace(contentType))
             {
                 contentType = "application/octet-stream";
             }
 
             ctx.Response.Headers["X-Content-Type-Options"] = "nosniff";
-            if (RequiresSandboxCsp(fullFilePath, contentType))
+            if (RequiresSandboxCsp(resolvedPath, contentType))
             {
                 ctx.Response.Headers["Content-Security-Policy"] = "sandbox";
             }

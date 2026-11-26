@@ -33,16 +33,24 @@ function setup(markdown: string, fileBasePath = '') {
   return { ...rendered, files, openFile, resources };
 }
 
-it('normalizes encoded absolute file images and relative Markdown parents', async () => {
+it('decodes absolute image links and preserves relative Markdown parents', async () => {
   const { files } = setup('![First](file:///repo/docs/a%20b.PNG:12#figure) ![Second](../figure.svg)', 'docs');
   expect((await screen.findByRole('img', { name: 'First' })).getAttribute('src')).toBe(trackWorkspaceRawFileUrl('image-track', 'docs/a b.PNG'));
-  expect((await screen.findByRole('img', { name: 'Second' })).getAttribute('src')).toBe(trackWorkspaceRawFileUrl('image-track', 'figure.svg'));
+  expect((await screen.findByRole('img', { name: 'Second' })).getAttribute('src')).toBe(trackWorkspaceRawFileUrl('image-track', 'docs/../figure.svg'));
   expect(files.readFile).not.toHaveBeenCalled();
 });
 
-it('refuses outside-root and invalid images without requesting resources', () => {
-  const { container, files, openFile } = setup('![Escape](/repo-other/secret.png) ![Parent](../../secret.png) ![Encoded](%2Fother%2Fsecret.svg) ![Protocol](//evil.invalid/pic.png) ![Data](data:image/png;base64,AAAA) ![Unsupported](note.txt)', 'docs');
-  for (const label of ['Escape', 'Parent', 'Encoded', 'Protocol', 'Data', 'Unsupported']) {
+it('reads absolute and parent-relative images through the Track port', async () => {
+  const { files } = setup('![Absolute](/tmp/outside.png) ![Parent](../../outside.png) ![Encoded](%2Ftmp%2Foutside.svg)', 'docs');
+  for (const [label, path] of [['Absolute', '/tmp/outside.png'], ['Parent', 'docs/../../outside.png'], ['Encoded', '/tmp/outside.svg']]) {
+    expect((await screen.findByRole('img', { name: label })).getAttribute('src')).toBe(trackWorkspaceRawFileUrl('image-track', path));
+  }
+  expect(files.readFile).not.toHaveBeenCalled();
+});
+
+it('keeps unsupported Markdown image destinations unavailable', () => {
+  const { container, files, openFile } = setup('![Protocol](//invalid.example/pic.png) ![Data](data:image/png;base64,AAAA) ![Unsupported](note.txt)', 'docs');
+  for (const label of ['Protocol', 'Data', 'Unsupported']) {
     expect(screen.getByText(`${label} — Image unavailable`)).toBeTruthy();
   }
   expect(container.querySelector('img, object, iframe')).toBeNull();

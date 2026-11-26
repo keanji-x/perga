@@ -107,7 +107,7 @@ export type TrackPageProps = Readonly<{
   /** The card grid covers the workspace. A file covers only the reading column. */
   board?: ReactNode;
   onCloseBoard?: () => void;
-  fileViewer?: Readonly<{ render: (hasBackFocus: () => boolean) => ReactNode; onClose: () => void }>;
+  fileViewer?: Readonly<{ label: string; fullPath: string; render: (hasBackFocus: () => boolean) => ReactNode; onClose: () => void }>;
   /** Which secondary panel the mobile report is showing, or `null`. The panel is a navigation destination, so its identity lives in the URL and `app/router` reads it. */
   panel?: MobilePanelKind | null;
   onOpenPanel?: (panel: MobilePanelKind) => void;
@@ -245,6 +245,22 @@ export function TrackPage({ fillReading = false, articleMasthead = !fillReading,
   });
   const [desktopActionsOpen, setDesktopActionsOpen] = useState(false);
   const [pageScrolled, setPageScrolled] = useState(false);
+  const pageRef = useRef<HTMLElement>(null);
+  const reportOffset = useRef<number | null>(null);
+  const fileOpen = fileViewer !== undefined;
+  useLayoutEffect(() => {
+    const page = pageRef.current;
+    const top = reportOffset.current;
+    if (page === null || top === null) return;
+    if (fileOpen && top > page.scrollHeight - page.clientHeight) {
+      // The sticky file surface can reduce the hidden Report's scroll range.
+      // Keep its last offset available without changing the viewport's layout.
+      page.style.setProperty('--file-scroll-end', `${top + page.clientHeight - 1}px`);
+    } else {
+      page.style.removeProperty('--file-scroll-end');
+    }
+    page.scrollTop = top;
+  }, [fileOpen]);
   const mastheadRef = useRef<HTMLElement | null>(null);
   const desktopActionsRef = useRef<HTMLButtonElement | null>(null);
   const mobilePanelRef = useRef<HTMLElement | null>(null);
@@ -369,12 +385,17 @@ export function TrackPage({ fillReading = false, articleMasthead = !fillReading,
     </div>
   );
 
+  const fileTitle = fileViewer === undefined ? undefined
+    : <span className={styles.headerFilePath} title={fileViewer.fullPath}>{fileViewer.label}</span>;
+
   return (
     <section
-      className={`${styles.page} ${fillReading ? styles.fillReading : ''} ${closeSurface !== undefined ? styles.pageBoard : ''}`}
+      ref={pageRef}
+      className={`${styles.page} ${fillReading ? styles.fillReading : ''} ${closeSurface !== undefined ? styles.pageBoard : ''} ${fileOpen ? styles.pageFile : ''}`}
       data-nc-track-page=""
       data-nc-scrolled={pageScrolled ? '' : undefined}
       onScroll={(event) => {
+        if (!fileOpen && !boardOpen) reportOffset.current = event.currentTarget.scrollTop;
         const threshold = mastheadRef.current?.offsetHeight || 72;
         const next = event.currentTarget.scrollTop > threshold;
         if (next !== pageScrolled) setPageScrolled(next);
@@ -398,8 +419,7 @@ export function TrackPage({ fillReading = false, articleMasthead = !fillReading,
                 <Icon name="arrow-left" />
               </button>
             )}
-            {/* The raw title, with the fallback as the placeholder. `emptyCommit="clear"`: the planner's `track_rename` succeeds only while the title is empty, so clearing the name is a real request here, not a cancel. */}
-            {usesMastheadHost ? (
+            {(!compactViewport && fileTitle !== undefined) ? fileTitle : usesMastheadHost ? (
               closeSurface !== undefined ? (
                 <h1 className={styles.titleHeading}><span className={styles.title} tabIndex={-1} data-nc-page-title=""><TrackTitle track={track} /></span></h1>
               ) : (
@@ -461,12 +481,12 @@ export function TrackPage({ fillReading = false, articleMasthead = !fillReading,
       {titleInHeader && closeSurface === undefined ? null : <div className={styles.mobileTrackHeader}>
         <MobileHeader
           title={trackDisplayTitle(track.title)}
-          titleText={<TrackTitle track={track} />}
-          meta={<>
+          titleText={compactViewport && fileTitle !== undefined ? fileTitle : <TrackTitle track={track} />}
+          meta={fileViewer === undefined ? <>
             {isDirectFolder && <ExplanationBadge label={NO_ISOLATION_LABEL}>{NO_ISOLATION_EXPLANATION}</ExplanationBadge>}
             <TrackClosedBadge closedAt={track.closedAt} />
             {!titleInHeader && originLink}
-          </>}
+          </> : undefined}
           level={1}
           backLabel={closeSurface === undefined ? mobileBackLabel : 'Report'}
           onBack={closeSurface ?? onMobileBack}

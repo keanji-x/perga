@@ -3,7 +3,7 @@
 import { z } from 'zod';
 
 import { memoryUpdatedPayloadSchema } from '../domain/memory.js';
-import { areaDtoSchema, agentSessionDtoSchema, askDtoSchema, decodePergaEventEnvelope, mailDtoSchema, readReceiptDtoSchema, sessionRuntimeStatusPayloadSchema, sessionTaskProgressPayloadSchema, sessionTextDeltaPayloadSchema, sessionThinkingDeltaPayloadSchema, sessionToolProgressPayloadSchema, sessionTurnDtoSchema, systemUpgradeStatusPayloadSchema, terminalDtoSchema, trackDtoSchema, type PergaStreamDelta } from './perga-v1.js';
+import { areaDtoSchema, agentSessionDtoSchema, askDtoSchema, decodePergaEventEnvelope, mailDtoSchema, readReceiptDtoSchema, sessionRuntimeStatusPayloadSchema, sessionTaskProgressPayloadSchema, sessionTextDeltaPayloadSchema, sessionThinkingDeltaPayloadSchema, sessionToolProgressPayloadSchema, sessionTurnDtoSchema, systemUpgradeStatusPayloadSchema, terminalDtoSchema, trackDtoSchema, workspaceFileOpenRequestedSchema, type PergaStreamDelta } from './perga-v1.js';
 import type { ApiDecodeFailure } from './types.js';
 
 export const agentProviderSchema = z.string().min(1);
@@ -121,6 +121,7 @@ export const pergaSessionToolProgressSchema = z.object({
 
 /** Keep this 1:1 with Perga `/api/v1/events` and historical event kinds. */
 export const wireEventSchema = z.discriminatedUnion('ev', [
+  z.object({ ev: z.literal('workspace.file_open_requested'), data: workspaceFileOpenRequestedSchema }),
   z.object({ ev: z.literal('memory.updated'), data: memoryUpdatedPayloadSchema }),
   z.object({ ev: z.literal('system.upgrade_status'), data: systemUpgradeStatusPayloadSchema }),
   z.object({ ev: z.literal('track.schedules.updated'), data: z.object({ trackId: z.string() }) }),
@@ -170,6 +171,7 @@ export function decodeWireEvent(input: unknown): WireEventDecodeResult {
     } };
     if (perga.kind === 'approval-audit') return { status: 'ready', value: { ev: 'approval.audit', data: undefined } };
     if (perga.kind === 'upgrade-status') return { status: 'ready', value: { ev: 'system.upgrade_status', data: perga.payload } };
+    if (perga.kind === 'file-open-requested') return { status: 'ready', value: { ev: 'workspace.file_open_requested', data: perga.payload } };
     if (perga.kind === 'memory-updated') return { status: 'ready', value: { ev: 'memory.updated', data: perga.payload } };
     if (perga.kind === 'delta') {
       const delta: PergaStreamDelta = perga.delta;

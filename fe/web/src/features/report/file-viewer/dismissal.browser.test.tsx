@@ -76,7 +76,8 @@ it.each([{ isComposing: true }, { keyCode: 229 }])('keeps file search and its ma
 it('opens zoomed media viewer for a report image and dismisses the lightbox before closing the viewer', async () => {
   const close = vi.fn();
   const dataPng = 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="160" height="120"><rect width="160" height="120" fill="%234682b4"/></svg>';
-  render(<ReportFileViewer path="/repo/image.png" files={{ readFile: vi.fn(), rawUrl: () => dataPng }}
+  const readFile = vi.fn().mockResolvedValue({ path: '/repo/image.png', size: 0, text: '', truncated: false });
+  render(<ReportFileViewer path="/repo/image.png" files={{ readFile, rawUrl: () => dataPng }}
     fileRoot="/repo" wide onClose={close} />);
   await expect.element(page.getByRole('img')).toBeVisible();
   await page.getByRole('button', { name: 'Inspect image.png' }).click();

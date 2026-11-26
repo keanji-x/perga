@@ -12,7 +12,7 @@ function Probe({ path, files, onOpened }: {
   files: WorkspaceFilePort;
   onOpened?: (path: string) => void;
 }) {
-  const resource = useReportFileResource(path, files, onOpened);
+  const resource = useReportFileResource(path, files, { onOpened });
   return <div data-kind={resource.kind} data-format={resource.kind === 'loaded' ? resource.format : ''}>
     {resource.kind === 'loaded' ? resource.text : resource.kind}
   </div>;
@@ -54,11 +54,13 @@ describe('useReportFileResource', () => {
 
   it('reads a page first and hands it to a frame only once the read succeeds', async () => {
     const readFile = vi.fn(() => Promise.resolve({ path: 'docs/a.html', size: 6, text: '<p>a</p>', truncated: false }));
+    const rawUrl = vi.fn((path: string) => `/raw/${path}`);
     const onOpened = vi.fn();
-    render(<Probe path="docs/A.HTM" files={{ readFile, rawUrl: (path) => `/raw/${path}` }} onOpened={onOpened} />);
+    render(<Probe path="docs/A.HTM" files={{ readFile, rawUrl }} onOpened={onOpened} />);
     expect((await screen.findByText('html')).dataset.kind).toBe('html');
     expect(readFile).toHaveBeenCalledWith('docs/A.HTM');
-    expect(onOpened).toHaveBeenCalledWith('docs/A.HTM');
+    expect(rawUrl).toHaveBeenCalledExactlyOnceWith('docs/a.html');
+    expect(onOpened).toHaveBeenCalledWith('docs/a.html');
   });
 
   it('keeps a page over the read cap as truncated source, never a frame', async () => {

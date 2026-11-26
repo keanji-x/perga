@@ -18,8 +18,11 @@ public interface IExecutionFileSystem
         CancellationToken ct = default);
     Task<(string Path, Stream Content)> OpenWorkspaceRawFileAsync(
         string workspaceRoot,
-        string relativePath,
+        string? relativePath,
         CancellationToken ct = default);
+    Task<string> ValidateWorkspaceFileAsync(string workspaceRoot, string path, CancellationToken ct = default);
+    Task<WorkspaceFileSearchResultDto> SearchWorkspaceFilesAsync(
+        string workspaceRoot, string? query, int limit, CancellationToken ct = default);
 }
 
 public interface IExecutionEnvironment : IAsyncDisposable
@@ -66,7 +69,7 @@ public static class ExecutionTargetIds
         string.IsNullOrWhiteSpace(targetId) ? Local : targetId.Trim();
 }
 
-public sealed class LocalExecutionFileSystem : IExecutionFileSystem
+public sealed partial class LocalExecutionFileSystem : IExecutionFileSystem
 {
     private const int BinarySniffBytes = 8 * 1024;
 
@@ -80,34 +83,7 @@ public sealed class LocalExecutionFileSystem : IExecutionFileSystem
 
     public HostListDirResultDto ListDirectory(string? path)
     {
-        var homeDir = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-        if (string.IsNullOrWhiteSpace(homeDir))
-        {
-            homeDir = Environment.GetEnvironmentVariable("HOME") ?? Path.DirectorySeparatorChar.ToString();
-        }
-
-        string rawTarget;
-        if (string.IsNullOrWhiteSpace(path))
-        {
-            rawTarget = homeDir;
-        }
-        else
-        {
-            var trimmed = path.Trim();
-            if (string.Equals(trimmed, "~", StringComparison.Ordinal))
-            {
-                rawTarget = homeDir;
-            }
-            else if (trimmed.StartsWith("~/", StringComparison.Ordinal) ||
-                     trimmed.StartsWith("~\\", StringComparison.Ordinal))
-            {
-                rawTarget = Path.Combine(homeDir, trimmed[2..]);
-            }
-            else
-            {
-                rawTarget = trimmed;
-            }
-        }
+        var rawTarget = string.IsNullOrWhiteSpace(path) ? HomeDirectory() : ExpandHome(path.Trim());
 
         string fullPath;
         try
@@ -226,55 +202,31 @@ public sealed class LocalExecutionFileSystem : IExecutionFileSystem
         int maxBytes,
         CancellationToken ct = default)
     {
-        var (rootFull, candidateFull, sanitizedRel) = ResolveContainedWorkspacePathOrThrow(workspaceRoot, relativePath);
+        ct.ThrowIfCancellationRequested();
+        var (root, canonicalPath) = ResolveWorkspacePath(workspaceRoot, relativePath);
+        var relFile = DisplayWorkspacePath(root, canonicalPath);
+        var kind = UseWorkspaceFileReader(() => WorkspaceFileReader.GetEntryKind(canonicalPath));
+        if (kind == WorkspaceFileReader.EntryKind.Directory)
+            return UseWorkspaceFileReader(() => BrowseDirectory(root, canonicalPath, relFile, ct));
+        RequireRegularFile(kind);
 
-        if (Directory.Exists(candidateFull))
-        {
-            var containedDirectory = EnsureRealPathContainedInWorkspace(rootFull, candidateFull);
-            using var openedDirectory = UseWorkspaceFileReader(() => WorkspaceFileReader.OpenDirectory(containedDirectory));
-            var directoryPath = openedDirectory is null ? containedDirectory
-                : $"/proc/self/fd/{openedDirectory.DangerousGetHandle()}";
-            var entries = new List<WorkspaceFileEntryDto>();
-            foreach (var dir in Directory.GetDirectories(directoryPath).OrderBy(d => d, StringComparer.Ordinal))
-            {
-                var name = Path.GetFileName(dir);
-                var rel = Path.GetRelativePath(rootFull, Path.Combine(candidateFull, name)).Replace('\\', '/');
-                entries.Add(new WorkspaceFileEntryDto(name, rel, IsDirectory: true, SizeBytes: 0));
-            }
-
-            foreach (var file in Directory.GetFiles(directoryPath).OrderBy(f => f, StringComparer.Ordinal))
-            {
-                var info = new FileInfo(file);
-                var rel = Path.GetRelativePath(rootFull, Path.Combine(candidateFull, info.Name)).Replace('\\', '/');
-                entries.Add(new WorkspaceFileEntryDto(info.Name, rel, IsDirectory: false, SizeBytes: info.Length));
-            }
-
-            var relDir = string.Equals(candidateFull, rootFull, StringComparison.Ordinal)
-                ? string.Empty
-                : Path.GetRelativePath(rootFull, candidateFull).Replace('\\', '/');
-            return new WorkspaceFileResultDto(
-                relDir,
-                IsDirectory: true,
-                Content: null,
-                Truncated: false,
-                Entries: entries,
-                IsBinary: false);
-        }
-
-        if (!File.Exists(candidateFull))
-        {
-            throw KernelException.NotFound($"Workspace path '{sanitizedRel}' not found.");
-        }
-
-        var canonicalPath = EnsureRealPathContainedInWorkspace(rootFull, candidateFull);
-        await using var fs = UseWorkspaceFileReader(() => WorkspaceFileReader.Open(canonicalPath));
+        await using var fs = UseWorkspaceFileReader(() => WorkspaceFileReader.OpenRegularFile(canonicalPath));
         var limit = Math.Max(1, maxBytes);
-        var buffer = new byte[Math.Min(fs.Length, limit)];
-        var read = await fs.ReadAtLeastAsync(buffer, buffer.Length, throwOnEndOfStream: false, ct).ConfigureAwait(false);
-        var relFile = Path.GetRelativePath(rootFull, candidateFull).Replace('\\', '/');
+        using var preview = new MemoryStream();
+        var buffer = new byte[Math.Min(limit, BinarySniffBytes)];
+        while (preview.Length < limit)
+        {
+            var bytesRead = await fs.ReadAsync(
+                buffer.AsMemory(0, Math.Min(buffer.Length, limit - (int)preview.Length)), ct).ConfigureAwait(false);
+            if (bytesRead == 0) break;
+            preview.Write(buffer, 0, bytesRead);
+        }
+        var read = (int)preview.Length;
+        var bytes = preview.GetBuffer();
+        var truncated = read == limit && await fs.ReadAsync(buffer.AsMemory(0, 1), ct).ConfigureAwait(false) != 0;
 
         var sniffLen = Math.Min(read, BinarySniffBytes);
-        if (buffer.AsSpan(0, sniffLen).IndexOf((byte)0) >= 0)
+        if (bytes.AsSpan(0, sniffLen).IndexOf((byte)0) >= 0)
         {
             return new WorkspaceFileResultDto(
                 relFile,
@@ -285,9 +237,8 @@ public sealed class LocalExecutionFileSystem : IExecutionFileSystem
                 IsBinary: true);
         }
 
-        var truncated = fs.Length > read;
-        var validLen = truncated ? TrimTrailingIncompleteUtf8(buffer.AsSpan(0, read)) : read;
-        var text = Encoding.UTF8.GetString(buffer, 0, validLen);
+        var validLen = truncated ? TrimTrailingIncompleteUtf8(bytes.AsSpan(0, read)) : read;
+        var text = Encoding.UTF8.GetString(bytes, 0, validLen);
 
         return new WorkspaceFileResultDto(
             relFile,
@@ -298,27 +249,111 @@ public sealed class LocalExecutionFileSystem : IExecutionFileSystem
             IsBinary: false);
     }
 
+    private static WorkspaceFileResultDto BrowseDirectory(
+        string root, string canonicalPath, string relativePath, CancellationToken ct)
+    {
+        var entries = new List<WorkspaceFileEntryDto>();
+        var options = new EnumerationOptions { AttributesToSkip = 0, IgnoreInaccessible = false };
+        foreach (var child in Directory.EnumerateFileSystemEntries(canonicalPath, "*", options))
+        {
+            ct.ThrowIfCancellationRequested();
+            try
+            {
+                var kind = WorkspaceFileReader.GetEntryKind(child);
+                if (kind == WorkspaceFileReader.EntryKind.Other) continue;
+                var name = Path.GetFileName(child);
+                var path = WorkspaceFileReader.ResolveExistingPath(child);
+                var directory = kind == WorkspaceFileReader.EntryKind.Directory;
+                entries.Add(new WorkspaceFileEntryDto(name, DisplayWorkspacePath(root, path),
+                    IsDirectory: directory, SizeBytes: directory ? 0 : new FileInfo(child).Length));
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
+            {
+                // Entries can disappear, be inaccessible, or be broken links.
+            }
+        }
+
+        return new WorkspaceFileResultDto(relativePath, IsDirectory: true, Content: null,
+            Truncated: false, Entries: entries.OrderByDescending(entry => entry.IsDirectory)
+                .ThenBy(entry => entry.Name, StringComparer.Ordinal).ToArray(), IsBinary: false);
+    }
+
     public Task<(string Path, Stream Content)> OpenWorkspaceRawFileAsync(
-        string workspaceRoot,
-        string relativePath,
-        CancellationToken ct = default)
+        string workspaceRoot, string? relativePath, CancellationToken ct = default)
     {
         ct.ThrowIfCancellationRequested();
-        var (rootFull, candidateFull, sanitizedRel) = ResolveContainedWorkspacePathOrThrow(workspaceRoot, relativePath);
+        var (root, canonicalPath) = ResolveWorkspacePath(workspaceRoot, relativePath);
+        var kind = UseWorkspaceFileReader(() => WorkspaceFileReader.GetEntryKind(canonicalPath));
+        if (kind == WorkspaceFileReader.EntryKind.Directory)
+            throw KernelException.NotFound($"Path '{canonicalPath}' is a directory, not a file.");
+        RequireRegularFile(kind);
 
-        if (Directory.Exists(candidateFull))
-        {
-            throw KernelException.NotFound($"Workspace path '{sanitizedRel}' is a directory, not a file.");
-        }
-
-        if (!File.Exists(candidateFull))
-        {
-            throw KernelException.NotFound($"Workspace file '{sanitizedRel}' not found.");
-        }
-
-        var canonicalPath = EnsureRealPathContainedInWorkspace(rootFull, candidateFull);
         return Task.FromResult<(string Path, Stream Content)>(
-            (canonicalPath, UseWorkspaceFileReader(() => WorkspaceFileReader.Open(canonicalPath))));
+            (DisplayWorkspacePath(root, canonicalPath), UseWorkspaceFileReader(() => WorkspaceFileReader.OpenRegularFile(canonicalPath))));
+    }
+
+    public Task<string> ValidateWorkspaceFileAsync(string workspaceRoot, string path, CancellationToken ct = default)
+    {
+        ct.ThrowIfCancellationRequested();
+        var (root, canonicalPath) = ResolveWorkspacePath(workspaceRoot, path);
+        RequireRegularFile(UseWorkspaceFileReader(() => WorkspaceFileReader.GetEntryKind(canonicalPath)));
+        using var stream = UseWorkspaceFileReader(() => WorkspaceFileReader.OpenRegularFile(canonicalPath));
+        return Task.FromResult(DisplayWorkspacePath(root, canonicalPath));
+    }
+
+    private static void RequireRegularFile(WorkspaceFileReader.EntryKind kind)
+    {
+        if (kind != WorkspaceFileReader.EntryKind.RegularFile)
+            throw KernelException.InvalidArgument("Path is not a regular file.");
+    }
+
+    private static (string Root, string Candidate) ResolveWorkspacePath(string workspaceRoot, string? path)
+    {
+        if (path?.Contains('\0') == true)
+            throw KernelException.InvalidArgument("Path cannot contain a null character.");
+
+        return UseWorkspaceFileReader(() =>
+        {
+            var root = Path.TrimEndingDirectorySeparator(
+                WorkspaceFileReader.ResolveExistingPath(Path.GetFullPath(workspaceRoot)));
+            var target = string.IsNullOrEmpty(path) ? root : ExpandHome(path);
+            // On Unix, realpath resolves a symlink before processing the following '..'.
+            var candidate = OperatingSystem.IsWindows() ? Path.GetFullPath(target, root) : Path.Combine(root, target);
+            return (root, WorkspaceFileReader.ResolveExistingPath(candidate));
+        });
+    }
+
+    private static string DisplayWorkspacePath(string root, string canonicalPath)
+    {
+        var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+        if (string.Equals(root, canonicalPath, comparison)) return string.Empty;
+        var prefix = Path.EndsInDirectorySeparator(root) ? root : root + Path.DirectorySeparatorChar;
+        return canonicalPath.StartsWith(prefix, comparison)
+            ? EscapeWorkspaceRelativePath(ToWirePath(canonicalPath[prefix.Length..]))
+            : ToWirePath(canonicalPath);
+    }
+
+    private static string ToWirePath(string path) => OperatingSystem.IsWindows() ? path.Replace('\\', '/') : path;
+
+    // A relative path starting with a literal tilde component must survive the next read.
+    private static string EscapeWorkspaceRelativePath(string path) =>
+        path == "~" || path.StartsWith("~/", StringComparison.Ordinal) ? "./" + path : path;
+
+    private static string HomeDirectory()
+    {
+        var path = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        return string.IsNullOrEmpty(path)
+            ? Environment.GetEnvironmentVariable("HOME") ?? Path.DirectorySeparatorChar.ToString()
+            : path;
+    }
+
+    private static string ExpandHome(string path)
+    {
+        if (path == "~") return HomeDirectory();
+        if (path.StartsWith("~/", StringComparison.Ordinal) ||
+            (OperatingSystem.IsWindows() && path.StartsWith("~\\", StringComparison.Ordinal)))
+            return HomeDirectory() + Path.DirectorySeparatorChar + path[2..];
+        return path;
     }
 
     public static (string RootFull, string CandidateFull, string SanitizedRel) ResolveContainedWorkspacePathOrThrow(
@@ -400,22 +435,23 @@ public sealed class LocalExecutionFileSystem : IExecutionFileSystem
         return (bytes.Length - i) < expected ? i : bytes.Length;
     }
 
-    private static string EnsureRealPathContainedInWorkspace(string rootFull, string candidateFull) =>
-        UseWorkspaceFileReader(() => WorkspaceFileReader.ResolveContainedPath(rootFull, candidateFull));
-
     private static T UseWorkspaceFileReader<T>(Func<T> read)
     {
         try
         {
             return read();
         }
-        catch (FileNotFoundException ex)
+        catch (IOException ex) when (ex is FileNotFoundException or DirectoryNotFoundException)
         {
             throw KernelException.NotFound(ex.Message);
         }
         catch (UnauthorizedAccessException ex)
         {
             throw KernelException.Forbidden(ex.Message);
+        }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            throw KernelException.InvalidArgument(ex.Message);
         }
     }
 }

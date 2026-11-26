@@ -388,7 +388,7 @@ public sealed class ExecutionTargetIntegrationTests
             var (path, content) = await files.OpenWorkspaceRawFileAsync(root, "data.bin");
             await using (content)
             {
-                Assert.Equal(Path.Combine(root, "data.bin"), path);
+                Assert.Equal("data.bin", path);
                 Assert.False(content.CanSeek);
                 using var received = new MemoryStream();
                 await content.CopyToAsync(received);
@@ -410,11 +410,11 @@ public sealed class ExecutionTargetIntegrationTests
             await unread.DisposeAsync();
             await File.WriteAllTextAsync(Path.Combine(root, "hello.txt"), "hello");
             Assert.Equal("hello", (await files.BrowseOrReadWorkspaceFileAsync(root, "hello.txt", 1024)).Content);
-            var escaped = await Assert.ThrowsAsync<KernelException>(() => files.OpenWorkspaceRawFileAsync(root, "../outside"));
-            Assert.Equal(KernelErrorCode.Forbidden, escaped.Code);
-            File.CreateSymbolicLink(Path.Combine(root, "escape"), "/etc/passwd");
-            await Assert.ThrowsAsync<KernelException>(() => files.OpenWorkspaceRawFileAsync(root, "escape"));
-            await Assert.ThrowsAsync<KernelException>(() => files.OpenWorkspaceRawFileAsync(root, "missing"));
+            var outsideFile = $"{root}-outside";
+            await File.WriteAllTextAsync(outsideFile, "external");
+            File.CreateSymbolicLink(Path.Combine(root, "escape"), outsideFile);
+            var missing = await Assert.ThrowsAsync<KernelException>(() => files.OpenWorkspaceRawFileAsync(root, "missing"));
+            Assert.Equal(KernelErrorCode.NotFound, missing.Code);
             var dirErr = await Assert.ThrowsAsync<KernelException>(() => files.OpenWorkspaceRawFileAsync(root, "."));
             Assert.Equal(KernelErrorCode.NotFound, dirErr.Code);
 
@@ -480,6 +480,7 @@ public sealed class ExecutionTargetIntegrationTests
         finally
         {
             Directory.Delete(root, recursive: true);
+            File.Delete($"{root}-outside");
             Directory.Delete(config.ControlDir, recursive: true);
         }
     }
@@ -1027,8 +1028,15 @@ public sealed class ExecutionTargetIntegrationTests
         }
 
         public Task<(string Path, Stream Content)> OpenWorkspaceRawFileAsync(
-            string workspaceRoot, string relativePath, CancellationToken ct = default) =>
+            string workspaceRoot, string? relativePath, CancellationToken ct = default) =>
             LocalExecutionFileSystem.Instance.OpenWorkspaceRawFileAsync(workspaceRoot, relativePath, ct);
+
+        public Task<string> ValidateWorkspaceFileAsync(string workspaceRoot, string path, CancellationToken ct = default) =>
+            LocalExecutionFileSystem.Instance.ValidateWorkspaceFileAsync(workspaceRoot, path, ct);
+
+        public Task<WorkspaceFileSearchResultDto> SearchWorkspaceFilesAsync(
+            string workspaceRoot, string? query, int limit, CancellationToken ct = default) =>
+            LocalExecutionFileSystem.Instance.SearchWorkspaceFilesAsync(workspaceRoot, query, limit, ct);
     }
 
     private sealed class RecordingVcsService : IVcsService

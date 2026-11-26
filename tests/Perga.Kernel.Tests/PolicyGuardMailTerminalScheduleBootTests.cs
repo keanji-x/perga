@@ -228,7 +228,7 @@ public sealed class PolicyGuardMailTerminalScheduleBootTests
     }
 
     [Fact]
-    public async Task AskUserSuspension_And_WorkspaceFileTraversalFence_WorkCorrectly()
+    public async Task AskUserSuspension_And_WorkspaceFileReads_WorkCorrectly()
     {
         var tempWs = Path.Combine(Path.GetTempPath(), $"perga-ws-{Guid.NewGuid():N}");
         Directory.CreateDirectory(tempWs);
@@ -267,14 +267,14 @@ public sealed class PolicyGuardMailTerminalScheduleBootTests
             await ctx.Kernel.WaitForTrackIdleAsync(trackId);
             Assert.Equal(askingTurnsBefore + 1, ctx.Store.GetTurnsForSession(sub.Id).Count);
 
-            // 2. Safe workspace file browse/read works, path traversal outside workspace root is strictly blocked!
+            // 2. Read files both in the workspace and on its execution target.
             var fileRes = await ctx.Kernel.BrowseOrReadWorkspaceFileAsync(trackId, "hello.txt");
             Assert.False(fileRes.IsDirectory);
             Assert.Equal("safe-content", fileRes.Content);
 
-            var traversalEx = await Assert.ThrowsAsync<KernelException>(() =>
-                ctx.Kernel.BrowseOrReadWorkspaceFileAsync(trackId, "../../etc/passwd"));
-            Assert.Equal(KernelErrorCode.Forbidden, traversalEx.Code);
+            var outside = await ctx.Kernel.BrowseOrReadWorkspaceFileAsync(trackId, "..");
+            Assert.True(outside.IsDirectory);
+            Assert.True(Path.IsPathFullyQualified(outside.RelativePath));
         }
         finally
         {

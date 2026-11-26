@@ -8,6 +8,7 @@ import { useTrackClosedControl } from '../../features/track/page/closed-control.
 import { TerminalWorkbenchView,useTerminalWorkbench } from '../../features/track/workbench/public.tsx';
 import { PanelModule } from '../../ui/panel-card/public.tsx';
 import { trackCommandBindings } from './track-composer-command.ts';
+import { useTrackQuickOpen } from './track-file-open.tsx';
 
 import { useQuery } from '@tanstack/react-query';
 import {
@@ -26,9 +27,7 @@ import { openAsksOf } from '../../../../core/domain/ask.ts';
 import {
 agentSessionDtoToConversation
 } from '../../../../core/domain/conversation.ts';
-import {
-parseWorkspaceRelativeFilePath,type ReportFileLinkTarget,
-} from '../../../../core/domain/report-file.ts';
+import { isAbsoluteFilePath, joinFilePath, parseFileLine, type ReportFileLinkTarget } from '../../../../core/domain/report-file.ts';
 import type { ReportSourceLinkTarget } from '../../../../core/domain/report-source.ts';
 import type { ReportLinkTarget } from '../../../../core/domain/report.ts';
 import { trackTaskInventory } from '../../../../core/domain/track-task-inventory.ts';
@@ -46,7 +45,7 @@ import {
 sameCardDraft,
 type CardDraft,type KeyedCardBody
 } from '../../features/track/new-card/create.ts';
-import { TrackPage } from '../../features/track/page/public.tsx';
+import { TrackPage, type TrackPageProps } from '../../features/track/page/public.tsx';
 import type {
 CardHostItem
 } from '../../systems/cards/public.js';
@@ -79,7 +78,7 @@ import {
 renderedMobilePanel,
 useGo,useGoSameTrack,
 usePlannerOpenIntent,
-useRouteCardId,useRouteFilePath,useRouteFrom,useRouteHash,
+useRouteCardId,useRouteFileLine,useRouteFilePath,useRouteFrom,useRouteHash,
 useRoutePanel,
 useTrackFileNavigation,
 useTrackPanelNavigation
@@ -157,10 +156,30 @@ export function TrackRouteBody({
   const requestedCardId = useRouteCardId();
   const rawRequestedFilePath = useRouteFilePath();
   const requestedFilePath = requestedCardId === null ? rawRequestedFilePath : null;
+  const requestedFileLine = useRouteFileLine();
+  const silentFile = useRouterState({ select: (state) => state.location.state.ncFileSilent === true });
+  const fileOpenRequest = useRouterState({ select: (state) => state.location.state.ncFileOpenRequest });
+  const [resolvedFile, setResolvedFile] = useState<Readonly<{ requested: string; canonical: string }> | null>(null);
+  useEffect(() => () => { setResolvedFile(null); }, [requestedFilePath, setResolvedFile]);
   const [recentFilePaths, setRecentFilePaths] = useState<readonly string[]>(
     () => recentFiles.read(track.id),
   );
   const fileReturnFocusRef = useRef<HTMLElement | null>(null);
+  const rememberReportFile = useCallback((path: string) => {
+    setRecentFilePaths(recentFiles.record(track.id, path));
+  }, [recentFiles, setRecentFilePaths, track.id]);
+  const { openFile } = fileNavigation;
+  const openReportFile = useCallback((target: ReportFileLinkTarget, focus = true, opener: Element | null = document.activeElement) => {
+    const opened = openFile(track.id, target.path, { ...target, focus });
+    if (opened && focus && requestedFilePath === null && opener instanceof HTMLElement) {
+      fileReturnFocusRef.current = opener;
+    }
+    return opened;
+  }, [openFile, requestedFilePath, track.id]);
+  const quickOpen = useTrackQuickOpen({
+    trackId: track.id, transport, unauthorized, recent: recentFilePaths,
+    open: openReportFile, remember: rememberReportFile,
+  });
   const previousFilePathRef = useRef(requestedFilePath);
   useLayoutEffect(() => {
     const previous = previousFilePathRef.current;
@@ -270,6 +289,8 @@ export function TrackRouteBody({
                open them; the store checks each row's `trackId` against this. */
       rememberOn: track.id,
       workspaceRoot: track.agentCwd,
+      openFile: openReportFile,
+      openFileCommand: quickOpen.command,
       scopeOf: (conversationId) => {
         const row = rows.find(candidate => candidate.id === conversationId);
         /* `id: row.trackId`, never `track.id`: this is the line the `rememberOn`
@@ -370,22 +391,6 @@ export function TrackRouteBody({
     go({ name: 'track', trackId: target.trackId, blockId: target.blockId ?? undefined });
   };
 
-  const rememberReportFile = (target: ReportFileLinkTarget) => {
-    const relativePath = parseWorkspaceRelativeFilePath(target.path)?.path ?? null;
-    if (relativePath === null) return null;
-    setRecentFilePaths(recentFiles.record(track.id, relativePath));
-    return relativePath;
-  };
-
-  const openReportFile = (target: ReportFileLinkTarget) => {
-    const relativePath = parseWorkspaceRelativeFilePath(target.path)?.path ?? null;
-    if (relativePath === null) return;
-    if (requestedFilePath === null && document.activeElement instanceof HTMLElement) {
-      fileReturnFocusRef.current = document.activeElement;
-    }
-    fileNavigation.openFile(track.id, relativePath);
-  };
-
   const [sourceSelection, setSourceSelection] = useState<{
     trackId: string; target: ReportSourceLinkTarget; opener: HTMLElement | null; filePath: string | null; position: ReportSourcePosition | null;
   } | null>(null);
@@ -399,7 +404,7 @@ export function TrackRouteBody({
     renderSource: (target: ReportSourceLinkTarget) => <ReportSourcePreview transport={transport} trackId={track.id} target={target} unauthorized={unauthorized} />,
     renderReference: (target: ReportLinkTarget) => <ReportReferencePreview transport={transport} unauthorized={unauthorized} target={target}
       onOpenLink={openReportLink} onOpenSource={openSource}
-      onOpenFile={(owner, file) => { if (owner === track.id) openReportFile(file); else fileNavigation.openFile(owner, file.path); }} />,
+      onOpenFile={(owner, file) => { if (owner === track.id) openReportFile(file); else openFile(owner, file.path, file); }} />,
   };
   const sourceInsertion = sourceSelection === null ? undefined : {
     position: sourceSelection.position,
@@ -453,6 +458,38 @@ export function TrackRouteBody({
       >{reportEvidence}</TrackReportRegion>
     )}
   </>;
+  let fileViewer: TrackPageProps['fileViewer'];
+  if (requestedFilePath !== null) {
+    const displayFile = resolvedFile?.requested === requestedFilePath ? resolvedFile.canonical : requestedFilePath;
+    fileViewer = {
+      label: displayFile + (requestedFileLine === undefined ? '' : `:${requestedFileLine}`),
+      fullPath: isAbsoluteFilePath(track.agentCwd) && !isAbsoluteFilePath(displayFile) && !/^~(?:\/|$)/.test(displayFile)
+        ? joinFilePath(track.agentCwd, displayFile) : displayFile,
+      onClose: closeFile,
+      render: hasBackFocus => (
+        <ReportFileViewer
+          key={requestedFilePath}
+          path={requestedFilePath}
+          {...parseFileLine(requestedFileLine)}
+          silent={silentFile}
+          openRequest={fileOpenRequest}
+          files={reportFiles}
+          sourceInsertion={sourceInsertion}
+          linkPreview={linkPreview}
+          fileRoot={track.agentCwd}
+          wide
+          onClose={closeFile}
+          hasBackFocus={hasBackFocus}
+          onFileOpened={(path) => {
+            setResolvedFile({ requested: requestedFilePath, canonical: path });
+            rememberReportFile(path);
+          }}
+          onOpenFileLink={openReportFile}
+          onOpenSourceLink={openReportSource}
+        />
+      ),
+    };
+  }
   return (
     <>
     <TrackStage>
@@ -510,25 +547,7 @@ export function TrackRouteBody({
           onClose={knownCard ? closeBoard : undefined}
         />}
       onCloseBoard={knownCard ? closeBoard : undefined}
-      fileViewer={requestedFilePath === null ? undefined : {
-        onClose: closeFile,
-        render: hasBackFocus => (
-          <ReportFileViewer
-            key={requestedFilePath}
-            path={requestedFilePath}
-            files={reportFiles}
-            sourceInsertion={sourceInsertion}
-            linkPreview={linkPreview}
-            fileRoot={track.agentCwd}
-            wide
-            onClose={closeFile}
-            hasBackFocus={hasBackFocus}
-            onFileOpened={(path) => { rememberReportFile({ path }); }}
-            onOpenFileLink={openReportFile}
-            onOpenSourceLink={openReportSource}
-          />
-        ),
-      }}
+      fileViewer={fileViewer}
       /* Gated on the viewport too: the effect above cannot have run yet on a desktop
                cold start, and one render "open" is one render with the desktop panel `inert`. */
       panel={renderedMobilePanel(routePanel, {
@@ -570,6 +589,7 @@ export function TrackRouteBody({
       onTrackDeleted={() => go({ name: 'today' })}
     />
     </TrackStage>
+    {quickOpen.dialog}
     {cardCreation.surfaces}
     <DeleteConfirmDialog confirm={cardDeletion} copy={DELETE_CARD_COPY} />
     <div data-nc-conversation-drawer-host="">

@@ -32,7 +32,10 @@ export type ReportFileResource =
 export function useReportFileResource(
   path: string,
   files: WorkspaceFilePort,
-  onOpened?: (path: string) => void,
+  { onOpened, resolveImagePath = false }: Readonly<{
+    onOpened?: (path: string) => void;
+    resolveImagePath?: boolean;
+  }> = {},
 ): ReportFileResource {
   const onOpenedRef = useRef(onOpened);
   onOpenedRef.current = onOpened;
@@ -40,7 +43,8 @@ export function useReportFileResource(
   const [state, setState] = useState<ResourceState>({ kind: 'loading' });
 
   useEffect(() => {
-    if (isImagePath(path)) {
+    const image = isImagePath(path);
+    if (image && !resolveImagePath) {
       setState({ kind: 'image', path, url: files.rawUrl(path) });
       return;
     }
@@ -49,25 +53,29 @@ export function useReportFileResource(
     files.readFile(path)
       .then((result) => {
         if (cancelled) return;
+        if (image) {
+          setState({ kind: 'image', path: result.path, url: files.rawUrl(result.path) });
+          return;
+        }
         if (isHtmlPath(path) && !result.truncated) {
-          setState({ kind: 'html', path, url: files.rawUrl(path), text: result.text });
-          onOpenedRef.current?.(path);
+          setState({ kind: 'html', path: result.path, url: files.rawUrl(result.path), text: result.text });
+          onOpenedRef.current?.(result.path);
           return;
         }
         setState({
           kind: 'loaded',
-          path,
+          path: result.path,
           text: result.text,
           truncated: result.truncated,
           format: isMarkdownPath(path) ? 'markdown' : 'source',
         });
-        onOpenedRef.current?.(path);
+        onOpenedRef.current?.(result.path);
       })
       .catch((error: unknown) => {
-        if (!cancelled) setState({ kind: 'error', failure: readFailureOf(error), resource: 'file' });
+        if (!cancelled) setState({ kind: 'error', failure: readFailureOf(error), resource: image ? 'image' : 'file' });
       });
     return () => { cancelled = true; };
-  }, [files, path, retryKey]);
+  }, [files, path, resolveImagePath, retryKey]);
 
   if (state.kind === 'error') return { ...state, retry: () => setRetryKey((value) => value + 1) };
   if (state.kind !== 'image') return state;

@@ -9,7 +9,7 @@ export function trackCommandBindings({ canReopen, canClose, closed, stop }: Read
   stop?: () => void;
 }>): CommandBindings {
   return {
-    open: { unavailableReason: !canReopen ? 'This Track cannot be reopened.' : closed.pending ? 'A Track update is pending.' : undefined,
+    reopen: { unavailableReason: !canReopen ? 'This Track cannot be reopened.' : closed.pending ? 'A Track update is pending.' : undefined,
       execute: () => closed.setClosed('reopen') },
     close: { unavailableReason: !canClose ? 'This Track cannot be closed.' : closed.pending ? 'A Track update is pending.' : undefined,
       execute: () => closed.setClosed('close') },

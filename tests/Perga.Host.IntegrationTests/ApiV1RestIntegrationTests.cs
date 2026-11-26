@@ -378,7 +378,7 @@ public sealed class ApiV1RestIntegrationTests
             using var snap = JsonDocument.Parse(await trackResp.Content.ReadAsStringAsync());
             var trackId = snap.RootElement.GetProperty("track").GetProperty("id").GetString()!;
 
-            // 1. GET /api/v1/tracks/{trackId}/files (root listing, file read, 403 traversal guard, 404 missing)
+            // 1. GET /api/v1/tracks/{trackId}/files (root listing, file read, external directory, 404 missing)
             using var dirResp = await client.GetAsync($"/api/v1/tracks/{trackId}/files");
             Assert.Equal(HttpStatusCode.OK, dirResp.StatusCode);
             using var dirDoc = JsonDocument.Parse(await dirResp.Content.ReadAsStringAsync());
@@ -393,8 +393,11 @@ public sealed class ApiV1RestIntegrationTests
             Assert.False(fileDoc.RootElement.GetProperty("isDirectory").GetBoolean());
             Assert.Contains("line 2 added", fileDoc.RootElement.GetProperty("content").GetString());
 
-            using var escapeResp = await client.GetAsync($"/api/v1/tracks/{trackId}/files?path=../../etc/passwd");
-            Assert.Equal(HttpStatusCode.Forbidden, escapeResp.StatusCode);
+            using var parentResp = await client.GetAsync($"/api/v1/tracks/{trackId}/files?path=..");
+            Assert.Equal(HttpStatusCode.OK, parentResp.StatusCode);
+            using var parentDoc = JsonDocument.Parse(await parentResp.Content.ReadAsStringAsync());
+            Assert.True(parentDoc.RootElement.GetProperty("isDirectory").GetBoolean());
+            Assert.True(Path.IsPathFullyQualified(parentDoc.RootElement.GetProperty("relativePath").GetString()!));
 
             using var missingFileResp = await client.GetAsync($"/api/v1/tracks/{trackId}/files?path=nope.txt");
             Assert.Equal(HttpStatusCode.NotFound, missingFileResp.StatusCode);

@@ -1,3 +1,4 @@
+import { fileParentDirectory } from '../../../../../core/domain/report-file.ts';
 import { ReadOnlyCode } from '../../../ui/code/public.tsx';
 import type { ReactNode } from 'react';
 import { GitHubPreviewContent } from '../../../systems/github-links/public.tsx';
@@ -95,7 +96,6 @@ function FileContent({ path, files, renderMarkdown }: Readonly<{
   renderMarkdown: (text: string, basePath?: string) => ReactNode;
 }>) {
   const resource = useReportFileResource(path, files);
-  const basePath = path.slice(0, Math.max(0, path.lastIndexOf('/')));
   return <div className={styles.content}>
     <p className={styles.destination}>{path}</p>
     {resource.kind === 'loading' && <LoadingStatus>Loading file…</LoadingStatus>}
@@ -106,7 +106,7 @@ function FileContent({ path, files, renderMarkdown }: Readonly<{
     {resource.kind === 'loaded' && <>
       {resource.truncated && <p>Showing the first 2 MiB of this file.</p>}
       {resource.format === 'markdown'
-        ? renderMarkdown(resource.text, basePath)
+        ? renderMarkdown(resource.text, fileParentDirectory(resource.path) ?? '')
         : <ReadOnlyCode text={resource.text} source={{ kind: 'filename', value: path }} />}
     </>}
   </div>;

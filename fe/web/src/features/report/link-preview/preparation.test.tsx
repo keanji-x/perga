@@ -24,7 +24,7 @@ it('prepares a loaded Markdown file once across parent updates while keeping cur
   view.rerender(<ReportFileViewer path="docs/notes.md" files={files} fileRoot="/other" wide={false}
     onClose={() => {}} onOpenFileLink={current} />);
   expect(parse).not.toHaveBeenCalled();
-  expect(screen.queryByRole('button', { name: 'private' })).toBeNull();
+  expect(screen.getByRole('button', { name: 'private' }).getAttribute('title')).toBe('/repo/private.md');
   expect(screen.getByRole('button', { name: 'sibling' }).closest('p')).toBe(paragraph);
   fireEvent.click(screen.getByRole('button', { name: 'sibling' }));
   expect(previous).not.toHaveBeenCalled();

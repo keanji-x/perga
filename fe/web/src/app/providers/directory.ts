@@ -6,11 +6,11 @@ import type { ApiTransportPort } from '../../../../core/api/types.ts';
 import type { UnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
 import { ApiError } from '../../../../core/domain/failure-class.ts';
 import {
-listDirectoryOperation,listTrackWorkspaceDirectoryOperation,
-readTrackWorkspaceFileOperation,toDirectoryListing,
-trackVcsDiffOperation,trackWorkspaceRawFileUrl,
-type CardFilesPort,type DirectoryListingWire,type GitDiffWire,type GitStatusWire,type ReadFileWire,type WorkspaceFilePort
+  listDirectoryOperation, listTrackWorkspaceDirectoryOperation, readTrackWorkspaceFileOperation,
+  toDirectoryListing, trackVcsDiffOperation, trackWorkspaceRawFileUrl,
+  type CardFilesPort, type DirectoryListingWire, type GitDiffWire, type GitStatusWire, type ReadFileWire, type WorkspaceFilePort,
 } from '../../../../core/domain/fs.ts';
+import { isAbsoluteFilePath, reportFileNavigationPath } from '../../../../core/domain/report-file.ts';
 import { readErrorText } from '../../../../core/domain/read-failure.ts';
 import { DIRECTORY_LIST_FAILED,joinDirectoryPath,type ListDirectory } from '../../ui/directory-browser/public.tsx';
 import { runOperation } from './query-operation.ts';
@@ -32,7 +32,7 @@ export function createDirectoryLister(
   );
 }
 
-/** Reads for agent-authored Report links; never accepts an absolute root from the browser — the kernel applies containment. */
+/** Bind reads to the Track execution environment. */
 export function createTrackWorkspaceFilesPort(
   transport: ApiTransportPort,
   unauthorized: UnauthorizedChannel,
@@ -50,17 +50,15 @@ export function createTrackWorkspaceFilesPort(
 
 function normalizeWorkspaceRoot(workspaceRoot: string): string {
   if (workspaceRoot === '' || workspaceRoot === '.') return '.';
+  if (/^[A-Za-z]:\/$/.test(workspaceRoot)) return workspaceRoot;
   const trimmed = workspaceRoot.replace(/\/+$/, '');
   return trimmed === '' ? '/' : trimmed;
 }
 
-function toWorkspaceRelative(workspaceRoot: string, targetPath: string): string {
-  const root = normalizeWorkspaceRoot(workspaceRoot);
-  const cleaned = targetPath.replace(/\/+$/, '');
+function toTrackFilePath(root: string, targetPath: string): string {
+  const cleaned = targetPath === '/' || /^[A-Za-z]:\/$/.test(targetPath) ? targetPath : targetPath.replace(/\/+$/, '');
   if (cleaned === '' || cleaned === '.' || cleaned === root) return '';
-  if (root === '/' && cleaned.startsWith('/')) return cleaned.slice(1);
-  if (cleaned.startsWith(`${root}/`)) return cleaned.slice(root.length + 1);
-  return cleaned.replace(/^\.?\//, '');
+  return reportFileNavigationPath(root, cleaned);
 }
 
 /** Track-scoped `CardFilesPort` backed by `/api/v1/tracks/{trackId}/files`, `/files/raw`, and `/vcs-diff`. */
@@ -73,35 +71,22 @@ export function createTrackCardFilesPort(
   const root = normalizeWorkspaceRoot(workspaceRoot);
   return Object.freeze({
     listDirectory: async (targetPath): Promise<DirectoryListingWire> => {
-      const rel = toWorkspaceRelative(root, targetPath);
+      const rel = toTrackFilePath(root, targetPath);
       const wire = await runOperation(
         transport,
         listTrackWorkspaceDirectoryOperation(trackId, rel),
         unauthorized,
       );
-      const resolvedRel = wire.path.replace(/^\/+/, '');
-      const fullPath = resolvedRel === '' ? root : joinDirectoryPath(root, resolvedRel);
-      const parentPath = resolvedRel === ''
-        ? null
-        : resolvedRel.includes('/')
-          ? joinDirectoryPath(root, resolvedRel.slice(0, resolvedRel.lastIndexOf('/')))
-          : root;
-      return {
-        path: fullPath,
-        parent: parentPath,
-        entries: wire.entries,
-      };
+      const absolute = (path: string) => isAbsoluteFilePath(path) ? path
+        : path === '' || path === '.' ? root : joinDirectoryPath(root, path);
+      return { ...wire, path: absolute(wire.path), parent: wire.parent === null ? null : absolute(wire.parent) };
     },
     readFile: async (targetPath): Promise<ReadFileWire> => {
-      const rel = toWorkspaceRelative(root, targetPath);
-      const query = rel === '' ? '' : `?path=${encodeURIComponent(rel)}`;
+      const rel = toTrackFilePath(root, targetPath);
+      const { method, path } = readTrackWorkspaceFileOperation(trackId, rel);
       const dto = await runOperation(
         transport,
-        {
-          method: 'GET',
-          path: `/api/v1/tracks/${encodeURIComponent(trackId)}/files${query}`,
-          responseSchema: workspaceFileResultDtoSchema,
-        },
+        { method, path, responseSchema: workspaceFileResultDtoSchema },
         unauthorized,
       );
       if (dto.isDirectory) {
@@ -141,7 +126,7 @@ export function createTrackCardFilesPort(
       };
     },
     gitDiff: async (targetPath): Promise<GitDiffWire> => {
-      const rel = toWorkspaceRelative(root, targetPath);
+      const rel = toTrackFilePath(root, targetPath).replace(/^\.?\//, '');
       const diff = await runOperation(
         transport,
         trackVcsDiffOperation(trackId, undefined, undefined, rel),
@@ -165,6 +150,6 @@ export function createTrackCardFilesPort(
         truncated: diff.truncated,
       };
     },
-    rawUrl: (targetPath) => trackWorkspaceRawFileUrl(trackId, toWorkspaceRelative(root, targetPath)),
+    rawUrl: (targetPath) => trackWorkspaceRawFileUrl(trackId, toTrackFilePath(root, targetPath)),
   });
 }

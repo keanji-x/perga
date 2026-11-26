@@ -39,6 +39,13 @@ describe('filePathFromSearchString', () => {
   it('reads exactly one non-empty file query and rejects duplicates', () => {
     expect(filePathFromSearchString('?file=src%2Fmain.rs')).toBe('src/main.rs');
     expect(filePathFromSearchString('?file=docs%2F100%2520done.md')).toBe('docs/100%20done.md');
+    expect(filePathFromSearchString('?file=%2Ftmp%2Fa.log')).toBe('/tmp/a.log');
+    expect(filePathFromSearchString('?file=..%2Fdir%2F..%2Fa.log')).toBe('../dir/../a.log');
+    expect(filePathFromSearchString('?file=~%2Fa.log')).toBe('~/a.log');
+    expect(filePathFromSearchString('?file=draft%3Anotes.txt')).toBe('draft:notes.txt');
+    expect(filePathFromSearchString('?file=draft%5Cnotes.txt')).toBe('draft\\notes.txt');
+    expect(filePathFromSearchString('?file=bad%00path')).toBeNull();
+    expect(filePathFromSearchString('?file=%2242%22')).toBe('42');
     expect(filePathFromSearchString('?file=')).toBeNull();
     expect(filePathFromSearchString('?file=a&file=b')).toBeNull();
     expect(filePathFromLocation({ searchStr: '?file=README.md' })).toBe('README.md');
@@ -88,9 +95,17 @@ describe('panel and from parsers', () => {
 });
 
 describe('validateTrackSearch', () => {
-  it('keeps the four whitelisted fields and drops everything else', () => {
+  it('keeps the whitelisted fields and drops everything else', () => {
     expect(validateTrackSearch({ file: 'src/main.rs', from: 'area', other: 'x' }))
       .toEqual({ file: 'src/main.rs', from: 'area' });
+  });
+
+  it('keeps valid one-based line selections only when a file owns the surface', () => {
+    expect(validateTrackSearch({ file: '/tmp/a.log', line: '42-60' })).toEqual({ file: '/tmp/a.log', line: '42-60' });
+    expect(validateTrackSearch({ file: 'README.md', line: 42 })).toEqual({ file: 'README.md', line: 42 });
+    expect(validateTrackSearch({ file: 'README.md', line: '60-42' })).toEqual({ file: 'README.md' });
+    expect(validateTrackSearch({ file: 'README.md', line: ['1', '2'] })).toEqual({ file: 'README.md' });
+    expect(validateTrackSearch({ card: 'c', file: 'README.md', line: 42 })).toEqual({ card: 'c' });
   });
 
   it('drops illegal values, empty strings, and repeated keys parsed as arrays', () => {

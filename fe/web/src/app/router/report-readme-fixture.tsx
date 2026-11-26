@@ -65,10 +65,10 @@ export function renderReadmeFixture(initial: string, detailReady: Promise<void> 
     if (request.path === `/api/v1/tracks/${track.id}/files?path=docs%2FREADME.md`) {
       if (fileReadFailed) return { status: 500, statusText: 'Internal Server Error',
         body: { code: 'internal', message: 'secure workspace reads require Linux openat2 support' } };
-      return ok({ path: '/repo/docs/README.md', size: new TextEncoder().encode(readme).length, text: readme, truncated: false });
+      return ok({ path: 'docs/README.md', size: new TextEncoder().encode(readme).length, text: readme, truncated: false });
     }
-    if (request.path === `/api/v1/tracks/${track.id}/files?path=README.md`) {
-      return ok({ path: '/repo/README.md', size: new TextEncoder().encode(rootReadme).length, text: rootReadme, truncated: false });
+    if (request.path === `/api/v1/tracks/${track.id}/files?path=docs%2F..%2FREADME.md`) {
+      return ok({ path: 'README.md', size: new TextEncoder().encode(rootReadme).length, text: rootReadme, truncated: false });
     }
     if (request.path.includes('/files?path=')) throw new Error(`Unexpected file read: ${request.path}`);
     if (request.path.includes('/items?')) return ok(sessionPage(card, [sessionItem(card.id, 1, 'Conversation remains available while reading documentation.')]));

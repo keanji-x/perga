@@ -4,7 +4,7 @@
 //   Navigation intents: open_file, open_session, open_url, open_track
 
 import { useCallback, useEffect, useRef } from 'react';
-import { parseWorkspaceRelativeFilePath } from '../../../../../core/domain/report-file.ts';
+import { isFilePath, type ReportFileLinkTarget } from '../../../../../core/domain/report-file.ts';
 import { WIDGET_MAX_HEIGHT, WIDGET_MIN_HEIGHT } from '../../../../../core/domain/report-widget.ts';
 import { useState } from '../../../ui/state/public.ts';
 import styles from './widget.module.css';
@@ -61,7 +61,7 @@ export function SeamlessHtmlWidget({
   data: unknown;
   chrome?: 'seamless' | 'framed';
   initialHeight?: number;
-  onOpenFile?: (path: string) => void;
+  onOpenFile?: (target: ReportFileLinkTarget) => void;
   onOpenWorker?: (sessionId: string) => void;
   onOpenTrack?: (trackId: string) => void;
 }>) {
@@ -105,11 +105,8 @@ export function SeamlessHtmlWidget({
 
       if (type === 'perga:intent') {
         const kind = record.kind;
-        if (kind === 'open_file' && typeof record.path === 'string' && record.path.trim() !== '') {
-          const parsed = parseWorkspaceRelativeFilePath(record.path.trim());
-          if (parsed !== null) {
-            onOpenFile?.(parsed.path);
-          }
+        if (kind === 'open_file' && typeof record.path === 'string' && isFilePath(record.path)) {
+          onOpenFile?.({ path: record.path });
         } else if (kind === 'open_session' && typeof record.sessionId === 'string' && record.sessionId.trim() !== '') {
           onOpenWorker?.(record.sessionId.trim());
         } else if (kind === 'open_url' && typeof record.url === 'string') {

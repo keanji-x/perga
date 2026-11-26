@@ -16,16 +16,19 @@ it.each([
   ['/work/track/screenshots/page.png', 'screenshots%2Fpage.png'],
   ['file:///work/track/screenshots/page.png', 'screenshots%2Fpage.png'],
   ['/work/track/screenshots/%E6%88%AA%E5%9B%BE%20one.png', 'screenshots%2F%E6%88%AA%E5%9B%BE%20one.png'],
+  ['../outside.png', '..%2Foutside.png'],
+  ['/work/other/secret.png', '%2Fwork%2Fother%2Fsecret.png'],
+  ['/work/track-other/secret.png', '%2Fwork%2Ftrack-other%2Fsecret.png'],
+  ['file:///etc/secret.png', '%2Fetc%2Fsecret.png'],
+  ['%2e%2e/outside.png', '..%2Foutside.png'],
 ])('resolves local image destination %s through the Track file port', (destination, path) => {
   render(<Reply text={`![Screenshot](${destination})`} imageFiles={imageFiles()} />);
   expect(screen.getByRole('img', { name: 'Screenshot' }).getAttribute('src'))
     .toBe(`/api/v1/tracks/track-1/files/raw?path=${path}`);
 });
 
-it.each([
-  '../outside.png', '/work/other/secret.png', '/work/track-other/secret.png',
-  'file:///etc/secret.png', '%2e%2e/outside.png', 'ftp://example.com/image.png',
-])('does not request a local image outside the workspace: %s', (destination) => {
+it('keeps unsupported image URLs unavailable', () => {
+  const destination = 'ftp://example.com/image.png';
   const rawUrl = vi.fn(() => '/must-not-be-requested');
   render(<Reply text={`![Screenshot](${destination})`} imageFiles={{ root: '/work/track', files: { rawUrl } }} />);
   expect(rawUrl).not.toHaveBeenCalled();

@@ -9,6 +9,10 @@
     background: var(--bg);
   }
 
+  .lineJump {
+    container-type: size;
+  }
+
   .body {
     display: grid;
     grid-template-columns:
@@ -16,7 +20,6 @@
       minmax(0, var(--document-measure, 45rem))
       minmax(0, 1fr);
     align-content: start;
-    row-gap: var(--space-3);
     inline-size: 100%;
     min-block-size: 100%;
     padding-block: var(--space-2) var(--space-6);
@@ -30,7 +33,6 @@
       minmax(var(--space-4), 1fr);
   }
 
-  .fileName,
   .state,
   .error,
   .sourceWrap,
@@ -38,16 +40,6 @@
   .pageWrap {
     grid-column: 2;
     min-inline-size: 0;
-  }
-
-  .fileName {
-    font-family: var(--font-mono);
-    font-size: var(--font-step-1-size);
-    line-height: 1;
-    overflow: hidden;
-    color: var(--text-3);
-    text-overflow: ellipsis;
-    white-space: nowrap;
   }
 
   .state,
@@ -90,6 +82,21 @@
     flex: 1 1 auto;
     min-block-size: 0;
     overflow: auto;
+  }
+
+  /* Fit the editor to the actual reading pane so its centered line is visible
+     through the outer viewer as well as the CodeMirror scroller. */
+  .lineJump .sourceWrap {
+    --read-only-code-max-height: max(var(--space-9), calc(100cqb - var(--space-9)));
+  }
+
+  .lineJump .pageWrap {
+    block-size: calc(100cqb - var(--space-6));
+    min-block-size: 0;
+  }
+
+  .lineJump .pageSource {
+    --read-only-code-max-height: max(var(--space-9), calc(100cqb - var(--space-9) - var(--space-7)));
   }
 
   .views {
@@ -141,7 +148,6 @@
       padding-block-start: var(--space-1);
     }
 
-    .fileName,
     .state,
     .error,
     .sourceWrap,
@@ -154,16 +160,12 @@
       grid-column: 1;
     }
 
-    /* Match the compact Report column, including its file-name metadata. */
+    /* Match the compact Report column. */
     .bodyProse {
       grid-template-columns:
         minmax(0, 1fr)
         minmax(0, min(100%, var(--document-measure, 45rem)))
         minmax(0, 1fr);
-    }
-
-    .bodyProse .fileName {
-      grid-column: 2;
     }
 
     .bodyProse .markdown {

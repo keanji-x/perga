@@ -120,3 +120,4 @@ export type WorkerActivityEvent = { "createdAtMs": number; "kind": string; "payl
 export type WorkerModelOption = { "defaultReasoningEffort": string | null; "id": string; "name": string; "reasoningEfforts": Array<string> };
 export type WorkspaceFileEntryDto = { "isDirectory": boolean; "name": string; "relativePath": string; "sizeBytes": number };
 export type WorkspaceFileResultDto = { "content": string | null; "entries": Array<WorkspaceFileEntryDto> | null; "isBinary": boolean; "isDirectory": boolean; "relativePath": string; "truncated": boolean };
+export type WorkspaceFileSearchResultDto = { "paths": Array<string>; "truncated": boolean };

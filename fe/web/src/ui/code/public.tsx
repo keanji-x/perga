@@ -22,7 +22,7 @@ function subscribeTheme(onChange: () => void) {
 /** Owns only presentation. No file reads, navigation, search adapter, or edit lifecycle.
  * The host may set a theme; otherwise changes to its declared data-theme are observed.
  * Source is always preserved while the display/grammar loads. */
-export function ReadOnlyCode({ text, source, theme }: ReadOnlyCodeProps) {
+export function ReadOnlyCode({ theme, ...props }: ReadOnlyCodeProps) {
   const currentTheme = useSyncExternalStore(subscribeTheme, hostTheme, () => 'dark' as const);
   const [Pane, setPane] = useState<ComponentType<ReadOnlyCodeProps> | null>(null);
   const [failed, setFailed] = useState(false);
@@ -36,13 +36,13 @@ export function ReadOnlyCode({ text, source, theme }: ReadOnlyCodeProps) {
     );
     return () => { cancelled = true; };
   }, [setPane, setFailed]);
-  if (Pane !== null) return <Pane text={text} source={source} theme={theme ?? currentTheme} />;
+  if (Pane !== null) return <Pane {...props} theme={theme ?? currentTheme} />;
   return <div className={styles.code}>
     <div className={styles.toolbar}>
       <span>{failed ? 'Plain text · code display unavailable' : 'Loading code…'}</span>
-      <CopyCodeButton text={text} />
+      <CopyCodeButton text={props.text} />
     </div>
-    <pre className={styles.fallback}><code>{text}</code></pre>
+    <pre className={styles.fallback}><code>{props.text}</code></pre>
   </div>;
 }
 

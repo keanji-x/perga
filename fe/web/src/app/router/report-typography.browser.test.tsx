@@ -23,10 +23,9 @@ afterEach(() => {
 function renderReport(file = false, wide = false) {
   const view = renderPage({
     report: <ReportDocument report={{ summary: '', body: markdown, blocks: null }} empty={<></>} />,
-    fileViewer: file ? {
-      render: () => <ReportFileViewer path="report.md" files={files} fileRoot="/repo" wide={wide} onClose={vi.fn()} />,
-      onClose: vi.fn(),
-    } : undefined,
+    fileViewer: file ? { label: 'report.md', fullPath: '/repo/report.md', onClose: vi.fn(),
+      render: hasBackFocus => <ReportFileViewer path="report.md" files={files} fileRoot="/repo" wide={wide}
+        onClose={vi.fn()} hasBackFocus={hasBackFocus} /> } : undefined,
   });
   // Use the shell's production container and panel sizing, including its cqi scope.
   view.container.className = shell.main;
@@ -52,8 +51,8 @@ it.each([320, 768, 1000, 1440, 1920])('keeps Report and Markdown reading widths 
     const actual = prose(true).getBoundingClientRect();
     expect(actual.width).toBeCloseTo(expected.width, 0);
     expect(actual.left).toBeCloseTo(expected.left, 0);
-    const fileName = document.querySelector<HTMLElement>('[data-nc-report-file-viewer] [title="report.md"]')!;
-    expect(fileName.getBoundingClientRect().left).toBeCloseTo(actual.left, 0);
+    const fileName = document.querySelector('header [title="/repo/report.md"]');
+    expect(fileName?.textContent).toBe('report.md');
     const layer = document.querySelector<HTMLElement>('[data-nc-report-file-viewer]')!;
     expect(layer.scrollWidth).toBeLessThanOrEqual(layer.clientWidth);
     fileView.unmount();

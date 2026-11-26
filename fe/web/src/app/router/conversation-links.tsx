@@ -4,7 +4,7 @@ import type { ApiTransportPort } from '../../../../core/api/types.ts';
 import type { UnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
 import type { WorkspaceFilePort } from '../../../../core/domain/fs.ts';
 import type { ReportLinkTarget } from '../../../../core/domain/report.ts';
-import type { ReportFileLinkTarget } from '../../../../core/domain/report-file.ts';
+import { parseReportFileLink, type ReportFileLinkTarget } from '../../../../core/domain/report-file.ts';
 import type { ReportSourceLinkTarget } from '../../../../core/domain/report-source.ts';
 import { ReportTextLink } from '../../features/report/document/public.tsx';
 import { useState } from '../../ui/state/public.ts';
@@ -36,8 +36,8 @@ export function useConversationLinks({ transport, unauthorized, conversationId, 
     setState({ conversationId, conversationTrackId: trackId, selection: { trackId: owner, target } });
   }, [conversationId, trackId]);
   const renderLink = useMemo(() => ({ href, children }: { href: string; children: ReactNode }) => {
-    // The router owns the application namespace; rejected workspace paths never become anchors.
-    if (href.startsWith('/') && !href.startsWith('//')) {
+    // Keep application links in the router. A line destination explicitly names a file.
+    if (href.startsWith('/') && !href.startsWith('//') && parseReportFileLink(href)?.line === undefined) {
       // URL treats backslashes as separators; do not reinterpret Markdown as app navigation.
       if (href.includes('\\')) return children;
       let url: URL;

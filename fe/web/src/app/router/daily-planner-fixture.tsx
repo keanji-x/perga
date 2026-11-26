@@ -1,3 +1,6 @@
+import { EventBridge } from '../events/event-bridge.tsx';
+import { LiveConnectionProvider } from '../providers/connection-status.tsx';
+import type { UnconfiguredEventStream } from '../../systems/events/event-stream.ts';
 import { Profiler,StrictMode,type ReactNode } from 'react';
 import type { SessionIdentity } from '../../../../core/api/auth.ts';
 import type { AgentProvider } from '../../../../core/domain/presentation-types.ts';
@@ -19,7 +22,7 @@ import { ThemeProvider } from '../theme/public.tsx';
 import { createAppRouter } from './public.tsx';
 import { bootTestCardRuntime } from './test-card-runtime.ts';
 
-export function renderDailyFixture({ history, identity, shareScope, routeProbe, withTransport, strict = false, initial = '/', plannerProvider = 'codex', failChanges = false, emptyWorkspace = false, extraPlanner = false, projectTitle = 'Project evidence', reportBody, reply, onCommit, uiPreferences, receipts, prepareReport = prepareReportDocument, }: Readonly<{ history?: RouterHistory; identity?: SessionIdentity; shareScope?: unknown; routeProbe?: ReactNode; withTransport?: (transport: ApiTransportPort) => ApiTransportPort; strict?: boolean; prepareReport?: ReportPreparationPort; plannerProvider?: AgentProvider; uiPreferences?: UiPreferences; receipts?: ReadReceiptsKernel; initial?: string; failChanges?: boolean; emptyWorkspace?: boolean; extraPlanner?: boolean; projectTitle?: string; reportBody?: string; reply?: (request: ApiRequest) => ApiTransportResponse | undefined | Promise<ApiTransportResponse | undefined>; onCommit?: () => void;  }> = {}) {
+export function renderDailyFixture({ history, identity, shareScope, routeProbe, withTransport, strict = false, initial = '/', plannerProvider = 'codex', failChanges = false, emptyWorkspace = false, extraPlanner = false, projectTitle = 'Project evidence', reportBody, reply, onCommit, uiPreferences, receipts, prepareReport = prepareReportDocument, stream, }: Readonly<{ stream?: UnconfiguredEventStream; history?: RouterHistory; identity?: SessionIdentity; shareScope?: unknown; routeProbe?: ReactNode; withTransport?: (transport: ApiTransportPort) => ApiTransportPort; strict?: boolean; prepareReport?: ReportPreparationPort; plannerProvider?: AgentProvider; uiPreferences?: UiPreferences; receipts?: ReadReceiptsKernel; initial?: string; failChanges?: boolean; emptyWorkspace?: boolean; extraPlanner?: boolean; projectTitle?: string; reportBody?: string; reply?: (request: ApiRequest) => ApiTransportResponse | undefined | Promise<ApiTransportResponse | undefined>; onCommit?: () => void;  }> = {}) {
   const requests: ApiRequest[] = [];
   const area = { id: 'daily-area', name: 'system', color: '#6574cd', sortOrder: 0, kind: 'system', createdAtMs: 1, updatedAtMs: 1 };
   const projectArea = { ...area, id: 'project-area', name: 'Project', kind: 'user' };
@@ -94,7 +97,12 @@ export function renderDailyFixture({ history, identity, shareScope, routeProbe, 
   const authenticated=identity === undefined ? content : <SessionGate transport={fixtureTransport} unauthorized={unauthorized} client={client}
     runtime={{deleteDatabase:()=>undefined,idbDatabaseName:'fixture'}} cursorStore={{clear:()=>undefined}}
     renderLogin={()=><p>Sign in required</p>} renderError={()=><p>Identity unavailable</p>}>{content}</SessionGate>;
-  const tree = <Profiler id="daily-fixture" onRender={onCommit ?? (() => undefined)}><QueryClientProvider client={client}><ThemeProvider storage={{ getItem: () => null, setItem: () => undefined }}>{authenticated}</ThemeProvider></QueryClientProvider></Profiler>;
+  const eventContent = stream === undefined ? authenticated : <LiveConnectionProvider>
+    <EventBridge client={client} stream={stream} syncEventVersion={1} dbInstanceId="fixture"
+      cursor={{ read: () => null, write: () => undefined, adopt: () => undefined, clear: () => undefined }} />
+    {authenticated}
+  </LiveConnectionProvider>;
+  const tree = <Profiler id="daily-fixture" onRender={onCommit ?? (() => undefined)}><QueryClientProvider client={client}><ThemeProvider storage={{ getItem: () => null, setItem: () => undefined }}>{eventContent}</ThemeProvider></QueryClientProvider></Profiler>;
   render(strict ? <StrictMode>{tree}</StrictMode> : tree, { container });
   return { router, requests, client };
 }

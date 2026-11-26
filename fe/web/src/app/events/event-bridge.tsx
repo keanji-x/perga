@@ -1,4 +1,3 @@
-import { useSystemUpgradeStore } from '../providers/connection-status.tsx';
 // The React glue that owns exactly one configured event stream: mounted inside `ServerCompatGate`,
 // the only `start()` caller in the tree; `configure()` is side-effect free.
 
@@ -12,7 +11,7 @@ import type { SyncCursorPort } from '../../systems/events/cursor-port.ts';
 import type { UnconfiguredEventStream } from '../../systems/events/event-stream.ts';
 import { applyEventEffects } from './query-invalidation-adapter.ts';
 import { trackLookupContext } from './track-lookup.ts';
-import { usePublishConnectionState } from '../providers/connection-status.tsx';
+import { useFileOpenRequests, usePublishConnectionState, useSystemUpgradeStore } from '../providers/connection-status.tsx';
 
 export type EventBridgeProps = Readonly<{
   client: QueryClient;
@@ -27,6 +26,7 @@ export type EventBridgeProps = Readonly<{
 
 /** Renders an inert marker so a contract test can assert where in the tree the bridge sits. */
 export function EventBridge({ client, stream, syncEventVersion, dbInstanceId, cursor, context }: EventBridgeProps) {
+  const fileOpenRequests = useFileOpenRequests();
   const upgradeStore = useSystemUpgradeStore();
   const publishConnectionState = usePublishConnectionState();
   useEffect(() => {
@@ -69,7 +69,8 @@ export function EventBridge({ client, stream, syncEventVersion, dbInstanceId, cu
       const reduction = reduceEventFrame(state, frame, current.context ?? trackLookupContext(current.client));
       state = reduction.state;
       for (const effect of reduction.effects) {
-        if (effect.type === 'persist-cursor') current.cursor.write(effect.id);
+        if (effect.type === 'file-open-requested') fileOpenRequests?.publish(effect.request);
+        else if (effect.type === 'persist-cursor') current.cursor.write(effect.id);
         else if (effect.type === 'refresh-snapshot') {
           configured.stop();
           void recoverSnapshot(effect.tipId);
@@ -85,7 +86,7 @@ export function EventBridge({ client, stream, syncEventVersion, dbInstanceId, cu
       unsubscribe();
       configured.stop();
     };
-  }, [stream, syncEventVersion, upgradeStore]);
+  }, [stream, syncEventVersion, upgradeStore, fileOpenRequests]);
 
   return <span data-nc-event-bridge="" hidden />;
 }

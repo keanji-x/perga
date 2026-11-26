@@ -76,6 +76,7 @@ public partial interface IPergaKernel : IAsyncDisposable
     // Workspace Files & VCS Diff
     Task<WorkspaceFileResultDto> BrowseOrReadWorkspaceFileAsync(string trackId, string? relativePath = null, int maxBytes = 256 * 1024, CancellationToken ct = default);
     Task<(string Path, Stream Content)> OpenWorkspaceRawFileAsync(string trackId, string? relativePath, CancellationToken ct = default);
+    Task<WorkspaceFileSearchResultDto> SearchWorkspaceFilesAsync(string trackId, string? query, int limit, CancellationToken ct = default);
     Task<DiffSummary> GetTrackVcsDiffAsync(string trackId, string? fromRev = null, string? toRev = null, CancellationToken ct = default);
     Task<DiffSummary> GetTrackVcsDiffAsync(string trackId, string? fromRev, string? toRev, string? path, CancellationToken ct = default);
 
@@ -863,16 +864,20 @@ public sealed partial class PergaKernelService : IPergaKernel, IFlowTrackSpawner
         string? relativePath,
         CancellationToken ct = default)
     {
-        if (string.IsNullOrWhiteSpace(relativePath))
-        {
-            throw KernelException.InvalidArgument("Query parameter 'path' is required.");
-        }
-
         var env = await ResolveTrackExecutionEnvironmentAsync(trackId, ct).ConfigureAwait(false);
         var mounted = await Actors.GetOrActivate(trackId).EnsureMountedAsync(ct).ConfigureAwait(false);
         return await env.Files
             .OpenWorkspaceRawFileAsync(mounted.MergedCwd, relativePath, ct)
             .ConfigureAwait(false);
+    }
+
+    public async Task<WorkspaceFileSearchResultDto> SearchWorkspaceFilesAsync(
+        string trackId, string? query, int limit, CancellationToken ct = default)
+    {
+        var env = await ResolveTrackExecutionEnvironmentAsync(trackId, ct).ConfigureAwait(false);
+        var mounted = await Actors.GetOrActivate(trackId).EnsureMountedAsync(ct).ConfigureAwait(false);
+        return await env.Files.SearchWorkspaceFilesAsync(mounted.MergedCwd, query,
+            Math.Clamp(limit, 1, WorkspaceFileSearchResultDto.MaxLimit), ct).ConfigureAwait(false);
     }
 
     public Task<DiffSummary> GetTrackVcsDiffAsync(

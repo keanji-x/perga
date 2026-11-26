@@ -14,7 +14,7 @@ async function readmeDocument() {
   expect(within(file).getByRole('heading', { name: 'Develop and understand the system', level: 3 })).toBeTruthy();
   expect(within(file).getAllByRole('table')).toHaveLength(2);
   expect(within(file).getByRole('button', { name: 'Using Perga' }).getAttribute('title')).toBe('docs/using-perga.md');
-  expect(within(file).getByRole('button', { name: 'English README' }).getAttribute('title')).toBe('README.md');
+  expect(within(file).getByRole('button', { name: 'English README' }).getAttribute('title')).toBe('docs/../README.md');
   expect(file.querySelector('pre')).toBeNull();
   expect(file.querySelector('[data-nc-report-file-source]')).toBeNull();
   expect(file.closest('[data-nc-track-page]')).not.toBeNull();
@@ -72,13 +72,13 @@ it('resolves the real README parent link through the same scoped file navigation
   const { router, requests } = renderReadmeFixture(README_FILE_URL);
   const file = await readmeDocument();
   fireEvent.click(within(file).getByRole('button', { name: 'English README' }));
-  const parent = await screen.findByRole('region', { name: 'File README.md' });
+  const parent = await screen.findByRole('region', { name: 'File docs/../README.md' });
   await within(parent).findByRole('heading', { name: 'Why Perga?', level: 3 });
-  expect(router.history.location.href).toBe(`${README_TRACK_URL}?file=README.md`);
+  expect(router.history.location.href).toBe(`${README_TRACK_URL}?file=docs%2F..%2FREADME.md`);
   expect(router.history.length).toBe(1);
   expect(requests.filter(request => request.path.includes('/files?')).map(request => request.path)).toEqual([
     `/api/v1/tracks/${README_TRACK_ID}/files?path=docs%2FREADME.md`,
-    `/api/v1/tracks/${README_TRACK_ID}/files?path=README.md`,
+    `/api/v1/tracks/${README_TRACK_ID}/files?path=docs%2F..%2FREADME.md`,
   ]);
 });
 
@@ -88,7 +88,7 @@ it('suppresses HTTP 500 details and retries the same workspace read into the rea
   const alert = await screen.findByRole('alert');
   const file = screen.getByRole('region', { name: 'File docs/README.md' });
   expect(alert.textContent).toBe('Could not load this file.Retry');
-  expect(within(file).getByText('README.md')).toBeTruthy();
+  expect(screen.getByText('docs/README.md').closest('header')).toBeTruthy();
   expect(file.querySelector('[data-nc-report]')).toBeNull();
   fixture.recoverFileRead();
   fireEvent.click(within(file).getByRole('button', { name: 'Retry' }));
