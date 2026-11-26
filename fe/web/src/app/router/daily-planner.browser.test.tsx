@@ -7,7 +7,7 @@ import { withFontRoleProbe } from '../../../../tools/styles/font-role-fixture.ts
 import { NewTrackForm } from '../../features/area/new-track/public.tsx';
 import { sessionItem,sessionPage,sessionTurn } from './conversation-session-data.ts';
 import { renderDailyFixture } from './daily-planner-fixture.tsx';
-import { fixtureSession } from './session-contract-fixture.ts';
+import { fixtureBootstrap,fixtureSession,fixtureSnapshot,fixtureTrack } from './session-contract-fixture.ts';
 
 afterEach(async () => { cleanup(); await page.viewport(1280, 800); });
 
@@ -432,4 +432,54 @@ it.each([
   expect(dateBtn.height).toBeGreaterThanOrEqual(44);
   expect(dateBtn.width).toBeGreaterThanOrEqual(minDateWidth);
   expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(width);
+});
+
+it('switches provider on an empty Today session and locks after history exists', async () => {
+  await page.viewport(1440, 900);
+  const bootstrap = fixtureBootstrap(['codex', 'claude'], ['gpt-5']);
+  bootstrap.providers[1] = { ...bootstrap.providers[1], models: ['sonnet'] };
+  let session = fixtureSession('daily-planner', 'daily', { title: 'Daily Planner conversation', isLead: true, provider: 'codex' });
+  let hasHistory = false;
+  const dailyTrack = fixtureTrack('daily', { title: 'Renamed daily Track', leadSessionId: 'daily-planner' });
+  const { requests, client } = renderDailyFixture({
+    reply: (request) => {
+      if (request.path.startsWith('/api/v1/bootstrap')) return { status: 200, statusText: 'OK', body: bootstrap };
+      if (request.path === '/api/v1/tracks/daily') return { status: 200, statusText: 'OK', body: fixtureSnapshot(dailyTrack, [session]) };
+      if (request.path.includes('/sessions/daily-planner/items?')) {
+        return {
+          status: 200,
+          statusText: 'OK',
+          body: sessionPage(session, hasHistory ? [sessionItem('daily-planner', 1, 'Started today')] : []),
+        };
+      }
+      if (request.method === 'PATCH' && request.path === '/api/v1/sessions/daily-planner') {
+        const body = request.body as { provider?: string; model?: string | null; reasoningEffort?: string | null };
+        session = {
+          ...session,
+          provider: body.provider ?? session.provider,
+          model: body.model ?? null,
+          reasoningEffort: body.reasoningEffort ?? null,
+        };
+        return { status: 200, statusText: 'OK', body: session };
+      }
+      return undefined;
+    },
+  });
+
+  const trigger = page.getByRole('button', { name: /^Model: Codex/ });
+  await expect.element(trigger).toBeVisible();
+  await trigger.click();
+  await page.getByRole('group', { name: 'Providers' }).getByRole('radio', { name: 'Claude' }).click();
+  await page.getByRole('group', { name: 'Models' }).getByRole('radio', { name: 'sonnet', exact: true }).click();
+
+  await expect.poll(() => requests.filter(r => r.method === 'PATCH' && r.path === '/api/v1/sessions/daily-planner').map(r => r.body))
+    .toEqual([{ provider: 'claude', model: 'sonnet', reasoningEffort: null }]);
+  await expect.element(page.getByRole('button', { name: 'Model: Claude sonnet', exact: true })).toBeVisible();
+
+  hasHistory = true;
+  await client.invalidateQueries({ queryKey: transcript('daily-planner') });
+  const lockedTrigger = page.getByRole('button', { name: 'Model: sonnet', exact: true });
+  await expect.element(lockedTrigger).toBeVisible();
+  await lockedTrigger.click();
+  expect(page.getByRole('group', { name: 'Providers' }).query()).toBeNull();
 });

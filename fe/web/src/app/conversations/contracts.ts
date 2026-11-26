@@ -92,8 +92,8 @@ export type ConversationStore = Readonly<{
   modelCatalog: ModelCatalog | null;
   modelDefaultAvailable: boolean;
   modelChangeDisabled: boolean;
-  /** Store a whole new selection. Its failure lands in `actionError`, and only while its conversation is shown. */
-  setModel: (selection: ModelSelection) => void;
+  /** Store a whole new selection (and optional provider switch on empty sessions). Its failure lands in `actionError`, and only while its conversation is shown. */
+  setModel: (selection: ModelSelection, provider?: AgentProvider) => void;
   /** The session's approval mode when the server provides one. */
   permissionMode: PlannerPermissionMode | null;
   /** Overrides the provider menu when the session exposes its own approval policy. */

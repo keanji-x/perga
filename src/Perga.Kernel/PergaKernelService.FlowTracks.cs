@@ -56,10 +56,7 @@ public sealed partial class PergaKernelService
         if (requestedProvider is null && targetId != parent.ExecutionTargetId && providers.Count > 0 &&
             status is not { Available: true })
         {
-            var fallback = providers.Where(candidate => candidate.Available)
-                .OrderByDescending(candidate => SessionLaunchValidator.NormalizeProvider(candidate.Provider) == defaultProvider)
-                .FirstOrDefault();
-            provider = fallback is not null ? SessionLaunchValidator.NormalizeProvider(fallback.Provider) : defaultProvider;
+            provider = SessionLaunchValidator.ResolvePreferredProvider(providers, defaultProvider);
         }
         status = SessionLaunchValidator.ValidateProvider(providers, provider,
             explicitlySelected: requestedProvider is not null || targetId != parent.ExecutionTargetId, requireAvailable: true);

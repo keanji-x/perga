@@ -298,4 +298,77 @@ public sealed class SessionLaunchValidationTests
         Assert.Equal(KernelErrorCode.PreconditionFailed, error.Code);
         Assert.Contains("offline", error.Message);
     }
+
+    [Fact]
+    public async Task TodayAndMemoryTracksFallBackToFirstAvailableProviderWithoutLeakingDefaultModel()
+    {
+        await using var ctx = new KernelTestContext(options: new KernelOptions
+        {
+            DefaultProvider = "codex",
+            DefaultModel = "gpt-5"
+        });
+        ctx.DriverRegistry.Register(new SpyWorkspaceDriver("vcs-workspace"));
+        ctx.AgentRuntime.Providers =
+        [
+            new("codex", false, null, "not installed", []),
+            new("claude", true, "1", null, ["sonnet"]),
+            new("acp:opencode", true, "1", null, ["deepseek"])
+        ];
+
+        var daily = await ctx.Kernel.GetDailyTrackAsync(null);
+        Assert.NotNull(daily);
+        var dailySnap = await ctx.Kernel.GetTrackAggregateAsync(daily.TrackId);
+        var dailyLead = Assert.Single(dailySnap.Sessions);
+        Assert.Equal("claude", dailyLead.Provider);
+        Assert.Null(dailyLead.Model);
+
+        var globalMemory = await ctx.Kernel.GetOrEnsureMemoryTrackAsync(null);
+        var globalSnap = await ctx.Kernel.GetTrackAggregateAsync(globalMemory.TrackId);
+        var globalLead = Assert.Single(globalSnap.Sessions);
+        Assert.Equal("claude", globalLead.Provider);
+        Assert.Null(globalLead.Model);
+
+        var area = await ctx.Kernel.CreateAreaAsync(new("Project"));
+        var areaMemory = await ctx.Kernel.GetOrEnsureMemoryTrackAsync(area.Id);
+        var areaSnap = await ctx.Kernel.GetTrackAggregateAsync(areaMemory.TrackId);
+        var areaLead = Assert.Single(areaSnap.Sessions);
+        Assert.Equal("claude", areaLead.Provider);
+        Assert.Null(areaLead.Model);
+
+        var switched = await ctx.Kernel.UpdateSessionAsync(
+            dailyLead.Id,
+            new(Provider: "acp:opencode", Model: new("deepseek")),
+            Human,
+            default);
+        Assert.Equal("acp:opencode", switched.Provider);
+        Assert.Equal("deepseek", switched.Model);
+        Assert.Null(switched.PermissionMode);
+    }
+
+    [Fact]
+    public async Task TodayAndMemoryTracksKeepConfiguredDefaultProviderWhenAvailable()
+    {
+        await using var ctx = new KernelTestContext(options: new KernelOptions
+        {
+            DefaultProvider = "codex",
+            DefaultModel = "gpt-5"
+        });
+        ctx.DriverRegistry.Register(new SpyWorkspaceDriver("vcs-workspace"));
+        ctx.AgentRuntime.Providers =
+        [
+            new("codex", true, "1", null, ["gpt-5"]),
+            new("claude", true, "1", null, ["sonnet"])
+        ];
+
+        var daily = await ctx.Kernel.GetDailyTrackAsync(null);
+        Assert.NotNull(daily);
+        var dailyLead = Assert.Single((await ctx.Kernel.GetTrackAggregateAsync(daily.TrackId)).Sessions);
+        Assert.Equal("codex", dailyLead.Provider);
+        Assert.Equal("gpt-5", dailyLead.Model);
+
+        var memory = await ctx.Kernel.GetOrEnsureMemoryTrackAsync(null);
+        var memoryLead = Assert.Single((await ctx.Kernel.GetTrackAggregateAsync(memory.TrackId)).Sessions);
+        Assert.Equal("codex", memoryLead.Provider);
+        Assert.Equal("gpt-5", memoryLead.Model);
+    }
 }

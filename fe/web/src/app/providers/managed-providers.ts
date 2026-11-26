@@ -22,20 +22,30 @@ export function managedProvidersQueryOptions(
 }
 
 /** Backend registrations own the menu membership; catalogs use their reported provider identity. */
-export function useManagedProviders(transport: ApiTransportPort, unauthorized: UnauthorizedChannel, enabled: boolean) {
+export function useManagedProviders(
+  transport: ApiTransportPort,
+  unauthorized: UnauthorizedChannel,
+  enabled: boolean,
+  targetId?: string,
+) {
   const client = useQueryClient();
-  const query = useQuery({ ...managedProvidersQueryOptions(transport, unauthorized), enabled });
+  const query = useQuery({ ...managedProvidersQueryOptions(transport, unauthorized, targetId), enabled });
   const version = useQuery({ queryKey: queryKeys.serverVersion(), queryFn: () => runOperation(transport, serverVersionOperation(), unauthorized), enabled, retry: false });
   const supportsAssistantProviders = !version.isError && version.data?.assistantProviders === true
     && version.data.webCompatVersion >= WEB_COMPAT_VERSION && version.data.minWebCompatVersion <= WEB_COMPAT_VERSION;
   const answers = query.isError ? undefined : query.data;
+  const remoteTargetId = targetId !== undefined && targetId !== '' && targetId !== 'local' ? targetId : undefined;
   const catalogs = useQueries({ queries: (answers ?? []).map(({ availability }) => ({
-    ...modelCatalogQueryOptions(transport, { kind: 'provider', provider: availability.provider }, unauthorized),
+    ...modelCatalogQueryOptions(
+      transport,
+      { kind: 'provider', provider: availability.provider, ...(remoteTargetId !== undefined ? { targetId: remoteTargetId } : {}) },
+      unauthorized,
+    ),
     enabled: enabled && managedProviderProblem(answers, availability.provider) === null,
   })) });
   const recheck = async () => {
-    const next = await runOperation(transport, managedProvidersOperation(true), unauthorized);
-    client.setQueryData(queryKeys.managedProviders(), next);
+    const next = await runOperation(transport, managedProvidersOperation(true, targetId), unauthorized);
+    client.setQueryData(queryKeys.managedProviders(targetId), next);
     return next;
   };
   return { recheck, answers, version, supportsAssistantProviders, loading: query.isPending && !query.isError, groups: (answers ?? []).map(({ availability }, index) => ({

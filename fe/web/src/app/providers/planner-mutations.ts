@@ -6,7 +6,7 @@ import { queryKeys } from './query-keys.ts';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useRef } from 'react';
 import { conversationInputMetadata } from '../../../../core/events/invalidation-plan.ts';
-import type { AskAnswer, PlannerPermissionMode } from '../../../../core/domain/presentation-types.ts';
+import type { AgentProvider, AskAnswer, PlannerPermissionMode } from '../../../../core/domain/presentation-types.ts';
 import type { ApiOperation,ApiTransportPort } from '../../../../core/api/types.ts';
 import type { UnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
 import { type AskId,type AskQuestion } from '../../../../core/domain/activity.ts';
@@ -32,35 +32,57 @@ function usePlannerOperation() {
     mutation.mutateAsync({ transport, operation, unauthorized }) as Promise<T>;
 }
 
-/**
- * One serialised settings writer per mounted card, held across renders: a fresh writer each render would have nothing
- * in flight to serialise against. Re-created when the card changes.
- */
-function useCardSettingWriter<A, R>(
-  transport: ApiTransportPort, cardId: string, operation: (cardId: string, value: A) => ApiOperation<R>,
-  unauthorized: UnauthorizedChannel, accepted: (result: R) => R = result => result,
-): (value: A) => Promise<R> {
-  const execute = usePlannerOperation();
-  const writer = useRef<{ cardId: string; write: (dispatch: () => Promise<R>) => Promise<R> } | null>(null);
-  return (value: A) => {
-    // Only a user event creates a writer. Abandoned renders cannot
-    // replace a queue belonging to the committed card.
-    if (writer.current === null || writer.current.cardId !== cardId) {
-      writer.current = { cardId, write: createSerialWriter((dispatch: () => Promise<R>) => dispatch()) };
-    }
-    return writer.current.write(() => execute(transport, operation(cardId, value), unauthorized).then(accepted));
-  };
-}
-
 export function usePlannerMutations(transport: ApiTransportPort, cardId: string, trackId: string | null, unauthorized: UnauthorizedChannel, permissions: ConversationRegistry) {
   const client = useQueryClient();
   const execute = usePlannerOperation();
-  const setModelWrite = useCardSettingWriter<ModelSelection, ModelSelectionResult>(
-    transport, cardId, setPlannerModelOperation, unauthorized);
+  const runKey = plannerRunQueryOptions(transport, cardId, unauthorized).queryKey;
+  const transcriptKey = queryKeys.harnessItems(cardId);
+  const refreshTranscript = () => client.invalidateQueries({ queryKey: transcriptKey });
+  const refreshInputMetadata = (error?: unknown) => {
+    const canRead = !(error instanceof ApiError && error.failure.kind === 'unauthorized');
+    for (const queryKey of conversationInputMetadata(trackId)) {
+      // An unauthorized write leaves the metadata stale without issuing another protected request.
+      if (canRead) void cancelThenInvalidate(client, queryKey);
+      else void client.invalidateQueries({ queryKey, refetchType: 'none' }).catch(() => undefined);
+    }
+  };
+  // One serialized model/provider writer per mounted card, keeping only the latest waiting intent.
+  const modelWriter = useRef<{ cardId: string; write: (dispatch: () => Promise<ModelSelectionResult>) => Promise<ModelSelectionResult> } | null>(null);
+  const setModelWrite = (selection: ModelSelection, provider?: AgentProvider): Promise<ModelSelectionResult> => {
+    if (modelWriter.current === null || modelWriter.current.cardId !== cardId) {
+      modelWriter.current = { cardId, write: createSerialWriter((dispatch: () => Promise<ModelSelectionResult>) => dispatch()) };
+    }
+    return modelWriter.current.write(() => {
+      const readVersion = client.getQueryState(runKey)?.dataUpdateCount;
+      return execute(transport, setPlannerModelOperation(cardId, selection, provider), unauthorized).then((result) => {
+        let providerChanged = provider !== undefined;
+        if (client.getQueryState(runKey)?.dataUpdateCount === readVersion) {
+          // Cancel any older in-flight GET before publishing the ACK, matching permission writes.
+          void cancelThenInvalidate(client, queryKeys.plannerRun(cardId));
+          client.setQueryData<ConversationRun>(runKey, (current) => {
+            if (current === undefined) return current;
+            const changed = current.session.provider !== result.provider;
+            if (changed) providerChanged = true;
+            return {
+              ...current,
+              session: { ...current.session, ...result },
+              ...(changed ? { permissionModes: [], capabilities: undefined } : {}),
+            };
+          });
+        } else {
+          void cancelThenInvalidate(client, queryKeys.plannerRun(cardId));
+        }
+        void client.invalidateQueries({ queryKey: queryKeys.modelCatalogForCard(cardId) }).catch(() => undefined);
+        void refreshTranscript().catch(() => undefined);
+        if (providerChanged) refreshInputMetadata();
+        return result;
+      });
+    });
+  };
   // The tab registry owns serialization across A → B → A and actual pane remounts.
   const setPermissionModeWrite = (mode: PlannerPermissionMode): Promise<SetPlannerPermissionModeResponse> => {
     const previous = permissions.permissionWriteOf(cardId);
-    const key = plannerRunQueryOptions(transport, cardId, unauthorized).queryKey;
+    const key = runKey;
     const dispatch = () => {
       const readVersion = client.getQueryState(key)?.dataUpdateCount;
       return execute(transport, setPlannerPermissionModeOperation(cardId, mode), unauthorized).then(result => {
@@ -82,8 +104,6 @@ export function usePlannerMutations(transport: ApiTransportPort, cardId: string,
     const held = permissions.holdPermissionWrite(cardId, write);
     return held;
   };
-  const transcriptKey = queryKeys.harnessItems(cardId);
-  const refreshTranscript = () => client.invalidateQueries({ queryKey: transcriptKey });
   const refreshAfter = <T,>(result: T): T => {
     /* A 200 from the write is the acknowledgement; refetch is reconciliation and its failure must not
            turn an accepted send into a failed write. Not awaited: a hung read must not retain the send lease. */
@@ -92,14 +112,6 @@ export function usePlannerMutations(transport: ApiTransportPort, cardId: string,
       client.invalidateQueries({ queryKey: queryKeys.plannerRun(cardId) }),
     ]).catch(() => undefined);
     return result;
-  };
-  const refreshInputMetadata = (error?: unknown) => {
-    const canRead = !(error instanceof ApiError && error.failure.kind === 'unauthorized');
-    for (const queryKey of conversationInputMetadata(trackId)) {
-      // An unauthorized write leaves the metadata stale without issuing another protected request.
-      if (canRead) void cancelThenInvalidate(client, queryKey);
-      else void client.invalidateQueries({ queryKey, refetchType: 'none' }).catch(() => undefined);
-    }
   };
   /* As `refreshAfter`, but each read is cancelled first: the query layer would otherwise hand back a read still in
      flight from before the answer; input acceptance must reconcile against actual reads started after its ACK. */
@@ -142,13 +154,8 @@ export function usePlannerMutations(transport: ApiTransportPort, cardId: string,
         .finally(() => { refreshAfterInput(undefined, false); }),
     /* The stored selection is read back from `planner-run`; the catalog goes with it because the default
      * this card follows is part of that answer. */
-    setModel: (selection: ModelSelection): Promise<ModelSelectionResult> =>
-      setModelWrite(selection)
-        .then((result) => {
-          void client.invalidateQueries({ queryKey: queryKeys.modelCatalogForCard(cardId) })
-            .catch(() => undefined);
-          return refreshAfter(result);
-        }),
+    setModel: (selection: ModelSelection, provider?: AgentProvider): Promise<ModelSelectionResult> =>
+      setModelWrite(selection, provider),
     /* Each actual PUT publishes its ACK inside the serial writer, before the next queued intent. */
     setPermissionMode: (mode: PlannerPermissionMode): Promise<SetPlannerPermissionModeResponse> =>
       setPermissionModeWrite(mode),

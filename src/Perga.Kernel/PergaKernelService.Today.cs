@@ -17,7 +17,8 @@ public sealed partial class PergaKernelService
         {
             var now = NowMs();
             var area = new AreaDto("sys_daily", "Daily", "gray", null, [], 0, now, now);
-            var created = await CreateTrackCoreAsync(new(area.Id, Title: day), ct, null, day, area).ConfigureAwait(false);
+            var provider = await ResolveDefaultProviderAsync(area.ExecutionTargetId, ct).ConfigureAwait(false);
+            var created = await CreateTrackCoreAsync(new(area.Id, Title: day, Provider: provider), ct, null, day, area).ConfigureAwait(false);
             id = created.Track.Id;
         }
         return id is null ? null : new(day, TodayCalendar.IanaId(zone), id);

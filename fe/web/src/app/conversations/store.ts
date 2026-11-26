@@ -9,6 +9,7 @@ import { useEffect, useMemo, useRef } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import type { ApiTransportPort } from '../../../../core/api/types.ts';
 import type { UnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
+import { normalizeWireAgentProvider } from '../../../../core/api/schemas.ts';
 import { COMPACT_FAILURES, COMPACT_TEXT, type PlannerQueueWriteOutcome } from '../../../../core/domain/conversation-commands.ts';
 import { FOLLOW_INSTALLATION_DEFAULT, isConversationMessage, isOptimisticConversationTurn, isUserConversationTurn, kernelQueuesInput, type PendingQueueEntry } from '../../../../core/domain/conversation.ts';
 import { MODEL_CHANGE_TEXT, PLANNER_MODEL_FAILURES } from '../../../../core/domain/conversation-models.ts';
@@ -94,11 +95,12 @@ export function useConversationStore(
   if (readFailure.cardId !== cardId || (run.error !== readFailure.error && (run.error !== null || !run.isFetching)))
     setReadFailure({ cardId, error: run.error });
   const capabilities = run.data?.capabilities;
+  const activeProvider = (run.data?.session.provider ? normalizeWireAgentProvider(run.data.session.provider) : null) ?? provider;
   const sessionCatalog = useMemo(() => capabilities == null || capabilities.models.length === 0 ? null : sessionModelCatalog(capabilities), [capabilities]);
   /* The catalog rides alongside the run query: the trigger has to render the chosen
        model's name, and `planner-run` gives only its slug. */
   const modelCatalog = useQuery({
-    ...modelCatalogQueryOptions(transport, { kind: 'card', cardId, provider: provider ?? 'codex' }, unauthorized), enabled: scope !== null && (capabilities == null || capabilities.models.length === 0),
+    ...modelCatalogQueryOptions(transport, { kind: 'card', cardId, provider: activeProvider ?? 'codex' }, unauthorized), enabled: scope !== null && (capabilities == null || capabilities.models.length === 0),
   });
   const displayItems = history.loadedRows;
   const sessionTurns = useMemo(
@@ -147,6 +149,7 @@ export function useConversationStore(
   const [compactPending, setCompactPending] = useState<ReadonlySet<string>>(() => new Set());
   const compactLeases = useRef(new Set<string>());
   const recoveryLeases = useRef(new Set<string>());
+  const pendingProviderSwitches = useRef(new Map<string, number>());
   const [recoveryPending, setRecoveryPending] = useState<ReadonlySet<string>>(() => new Set());
   const recoveryHoldsSend = sessionState === 'unknown' || recoveryPending.has(cardId);
   const [actionError, setActionError] = useState<Readonly<{ cardId: string; message: string }> | null>(null);
@@ -211,10 +214,10 @@ export function useConversationStore(
   const stopping = sessionState === 'stopping';
   const stopFeedback: ConversationStopFeedback | null = phase === 'issuing_interrupt' ? { kind: 'stopping' }
     : stop.feedback?.kind === 'requesting' && !working ? null : stop.feedback;
-  const facts = useMemo<ConversationFacts | null>(() => trackId === undefined || provider === undefined ? null : {
-    sourceCardId, cardId, trackId, trackTitle, provider, cardTitle: cardTitle ?? null, kind: scopeKind, isLead: scope?.isLead,
+  const facts = useMemo<ConversationFacts | null>(() => trackId === undefined || activeProvider === undefined ? null : {
+    sourceCardId, cardId, trackId, trackTitle, provider: activeProvider, cardTitle: cardTitle ?? null, kind: scopeKind, isLead: scope?.isLead,
     state: scopeState, working, stalled: sessionState === 'unknown', fallbackUpdatedAt: scopeUpdatedAt ?? 0,
-  }, [scope?.isLead, sourceCardId, cardId, cardTitle, provider, scopeKind, scopeState, scopeUpdatedAt, trackId, trackTitle, working, sessionState]);
+  }, [scope?.isLead, sourceCardId, cardId, cardTitle, activeProvider, scopeKind, scopeState, scopeUpdatedAt, trackId, trackTitle, working, sessionState]);
   /** What the reader is looking at: every turn, echoes included. */
   const conversation = useMemo(
     () => facts === null ? null : describeConversation(facts, turns), [facts, turns],
@@ -396,15 +399,24 @@ export function useConversationStore(
     modelCatalog: sessionCatalog ?? modelCatalog.data ?? null,
     modelDefaultAvailable: true,
     modelChangeDisabled: run.data === undefined || recoveryHoldsSend || (readonlyReason !== null && readonlyReason !== 'waiting_task'),
-    setModel: (selection) => {
+    setModel: (selection, nextProvider) => {
       if (recoveryHoldsSend) return;
       const setFor = cardId;
       setActionError(null);
       /* Dropped when it settles while another conversation is shown: kept, it would show for one commit on the way back (#2068). */
       const fail = (message: string) => { if (shownCardId.current === setFor) setActionError({ cardId: setFor, message }); };
-      const save = mutations.setModel(selection);
+      const pendingSwitches = pendingProviderSwitches.current.get(setFor) ?? 0;
+      const providerChange = nextProvider !== undefined && (nextProvider !== activeProvider || pendingSwitches > 0)
+        ? nextProvider : undefined;
+      if (providerChange !== undefined) pendingProviderSwitches.current.set(setFor, pendingSwitches + 1);
+      const save = mutations.setModel(selection, providerChange);
       void save.catch((error: unknown) => {
         fail(refusalText(writeFailureOf(error), PLANNER_MODEL_FAILURES, MODEL_CHANGE_TEXT.refused) ?? MODEL_CHANGE_TEXT.unknown);
+      }).finally(() => {
+        if (providerChange === undefined) return;
+        const remaining = (pendingProviderSwitches.current.get(setFor) ?? 1) - 1;
+        if (remaining <= 0) pendingProviderSwitches.current.delete(setFor);
+        else pendingProviderSwitches.current.set(setFor, remaining);
       });
     },
     permissionMode: run.data?.session.permissionMode ?? null,

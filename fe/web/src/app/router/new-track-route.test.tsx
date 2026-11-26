@@ -202,10 +202,10 @@ function harness(options: {
           : Promise.resolve(detail);
       }
       if (request.method === 'GET' && request.path === '/api/v1/sessions/card-planner/items?afterId=0&limit=1') {
-        return Promise.resolve({ status: 200, statusText: 'OK', body: sessionPage(fixtureSession('card-planner', TRACK_ROW.id)) });
+        return Promise.resolve({ status: 200, statusText: 'OK', body: sessionPage(fixtureSession('card-planner', TRACK_ROW.id, { provider: options.plannerProvider ?? 'codex' })) });
       }
       if (request.method === 'GET' && request.path.includes('/items') && !request.path.includes('limit=1')) {
-        return Promise.resolve({ status: 200, statusText: 'OK', body: sessionPage(fixtureSession(conversationCardId(request.path), TRACK_ROW.id), [...(options.plannerItems ?? [])]) });
+        return Promise.resolve({ status: 200, statusText: 'OK', body: sessionPage(fixtureSession(conversationCardId(request.path), TRACK_ROW.id, { provider: options.plannerProvider ?? 'codex' }), [...(options.plannerItems ?? [])]) });
       }
       if (request.path === '/api/v1/areas' && options.areasFail) {
         return Promise.resolve({ status: 500, statusText: 'Server Error', body: { error: 'areas are unreadable' } });
