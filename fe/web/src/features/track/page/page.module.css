@@ -388,10 +388,9 @@
       padding-inline: var(--space-4);
     }
 
-    /* MobileHeader replaces PageHeader here: its top margin, 44px row and the
-       compact page gap are the visible content edge for a cold `?card=` open. */
+    /* The compact header and page gap form the content edge for a cold `?card=` open. */
     .pageBoard > .workspace {
-      inset-block-start: calc(env(safe-area-inset-top) + var(--rail-w-collapsed) + 6px * 2 + var(--space-3));
+      inset-block-start: calc(env(safe-area-inset-top) + var(--header-primary-h) + var(--space-3));
     }
 
     .page > :first-child {
@@ -414,10 +413,12 @@
 
     .workHeaderInShell .titleSlot,
     .articleMastheadInShell .titleSlot {
-      display: block;
+      display: flex;
+      align-items: center;
+      justify-content: center;
       pointer-events: none;
       z-index: var(--z-overlay);
-      min-block-size: var(--control-h-touch);
+      min-block-size: var(--rail-w-collapsed);
     }
 
     .workHeaderInShell .titleSlot :is(input, button),

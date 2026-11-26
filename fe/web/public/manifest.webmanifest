@@ -6,8 +6,8 @@
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
-  "background_color": "#ffffff",
-  "theme_color": "#3c528d",
+  "background_color": "#f3f2ee",
+  "theme_color": "#f3f2ee",
   "icons": [
     {
       "src": "icons/perga-192.png",

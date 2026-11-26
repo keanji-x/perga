@@ -47,7 +47,18 @@ function ThemeRoot({ children, storage }: { children: ReactNode; storage?: Theme
   }, [mode]);
 
   const resolved = mode === 'system' ? systemPreference : mode;
-  useEffect(() => { if (typeof document !== 'undefined') document.documentElement.dataset.theme = resolved; }, [resolved]);
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+    document.documentElement.dataset.theme = resolved;
+
+    const [existing, ...duplicates] = document.head.querySelectorAll<HTMLMetaElement>('meta[name="theme-color"]');
+    const meta = existing ?? document.createElement('meta');
+    meta.name = 'theme-color';
+    meta.content = resolved === 'light' ? '#f3f2ee' : '#1b2127';
+    meta.removeAttribute('media');
+    if (existing === undefined) document.head.append(meta);
+    duplicates.forEach((duplicate) => duplicate.remove());
+  }, [resolved]);
 
   const setMode = useCallback((next: ThemeMode) => {
     setModeState(next);

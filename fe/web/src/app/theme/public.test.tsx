@@ -26,7 +26,13 @@ function createMatchMedia(initial: boolean) {
   return { matchMedia: vi.fn(() => mql), change(next: boolean) { matches = next; listeners.forEach((fn) => fn({ matches: next } as MediaQueryListEvent)); }, listeners };
 }
 
-afterEach(() => { cleanup(); delete document.documentElement.dataset.theme; history.replaceState(null, '', '/'); vi.restoreAllMocks(); });
+afterEach(() => {
+  cleanup();
+  delete document.documentElement.dataset.theme;
+  document.head.querySelectorAll('meta[name="theme-color"]').forEach((meta) => meta.remove());
+  history.replaceState(null, '', '/');
+  vi.restoreAllMocks();
+});
 
 describe('ThemeProvider behavior', () => {
   it('INV-APP-072 synchronously initializes persisted mode and mirrors resolved theme', () => {
@@ -34,6 +40,7 @@ describe('ThemeProvider behavior', () => {
     render(<ThemeProvider storage={storage}><Probe /></ThemeProvider>);
     expect(screen.getByRole('button').textContent).toBe('dark:dark');
     expect(document.documentElement.dataset.theme).toBe('dark');
+    expect(document.head.querySelector('meta[name="theme-color"]')?.getAttribute('content')).toBe('#1b2127');
   });
 
   it('E2E-CAP-THEME-011 mirrors every explicit mode change to the document dataset', () => {
@@ -42,6 +49,30 @@ describe('ThemeProvider behavior', () => {
     expect(document.documentElement.dataset.theme).toBe('dark');
     act(() => screen.getByRole('button', { name: 'Light' }).click());
     expect(document.documentElement.dataset.theme).toBe('light');
+  });
+
+  it('replaces the startup theme colors with one tag that follows explicit theme changes', () => {
+    for (const [scheme, content] of [['light', '#f3f2ee'], ['dark', '#1b2127']] as const) {
+      const meta = document.createElement('meta');
+      meta.name = 'theme-color';
+      meta.setAttribute('media', `(prefers-color-scheme: ${scheme})`);
+      meta.content = content;
+      document.head.append(meta);
+    }
+    const storage = memoryStorage();
+    storage.setItem(THEME_KEY, 'light');
+    render(<ThemeProvider storage={storage}><ModeControls /></ThemeProvider>);
+
+    const metas = document.head.querySelectorAll<HTMLMetaElement>('meta[name="theme-color"]');
+    expect(metas).toHaveLength(1);
+    const [meta] = metas;
+    expect(meta.hasAttribute('media')).toBe(false);
+    expect(meta.content).toBe('#f3f2ee');
+    act(() => screen.getByRole('button', { name: 'Dark' }).click());
+    expect(meta.content).toBe('#1b2127');
+    act(() => screen.getByRole('button', { name: 'Light' }).click());
+    expect(meta.content).toBe('#f3f2ee');
+    expect([...document.head.querySelectorAll('meta[name="theme-color"]')]).toEqual([meta]);
   });
 
   it('INV-APP-073 accepts valid persistence, rejects invalid values, and survives storage failures', () => {

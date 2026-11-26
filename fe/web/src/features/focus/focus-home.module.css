@@ -15,7 +15,8 @@
     grid-template-columns: calc(var(--rail-w-collapsed) * 2 + var(--space-half)) minmax(0, 1fr) calc(var(--rail-w-collapsed) * 2 + var(--space-half));
     align-items: center;
     min-block-size: calc(var(--header-primary-h) + env(safe-area-inset-top));
-    padding: calc(env(safe-area-inset-top) + var(--space-1)) var(--space-3) var(--space-1);
+    padding-block: calc(env(safe-area-inset-top) + var(--space-1)) var(--space-1);
+    padding-inline: max(var(--space-1), calc(var(--space-4) - (var(--rail-w-collapsed) - var(--glyph-lg)) / 2));
     flex-shrink: 0;
   }
 
@@ -62,6 +63,11 @@
     background: transparent;
     color: var(--text-2);
     cursor: pointer;
+  }
+
+  .header .iconButton svg {
+    inline-size: var(--glyph-lg);
+    block-size: var(--glyph-lg);
   }
 
   .iconButton:hover,

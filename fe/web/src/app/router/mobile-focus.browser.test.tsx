@@ -264,6 +264,11 @@ describe('MobileFocusHome', () => {
 
     const feedScroll = document.querySelector<HTMLElement>('[data-nc-focus-feed]');
     expect(feedScroll).not.toBeNull();
+    const menuGlyph = page.getByRole('button', { name: 'Open workspace', exact: true }).element().querySelector('svg')!.getBoundingClientRect();
+    const title = page.getByRole('heading', { name: 'Focus', exact: true }).element().getBoundingClientRect();
+    const contentLeft = feedScroll!.getBoundingClientRect().left + parseFloat(getComputedStyle(feedScroll!).paddingInlineStart);
+    expect(Math.abs((menuGlyph.top + menuGlyph.height / 2) - (title.top + title.height / 2))).toBeLessThanOrEqual(1);
+    expect(Math.abs(menuGlyph.left - contentLeft)).toBeLessThanOrEqual(1);
     expect(feedScroll!.scrollHeight).toBeGreaterThan(feedScroll!.clientHeight);
     feedScroll!.scrollTop = feedScroll!.scrollHeight;
     await expect.element(page.getByRole('button', { name: /Overflow track 12/ })).toBeInViewport();

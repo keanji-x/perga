@@ -31,6 +31,7 @@ function setup(path: string, areaName = AREA.name, onRequest: (request: ApiReque
   function reply(request: ApiRequest): ApiTransportResponse {
     onRequest(request);
     if (request.path.startsWith('/api/v1/bootstrap')) return ok(fixtureBootstrap());
+    if (request.path === '/api/v1/memory/global/track') return ok({ scopeKey: 'global', areaId: null, trackId: track.id, leadSessionId: planner.id });
     if (request.method === 'PATCH' && request.path === '/api/v1/tracks/w1') {
       const next = (request.body as { title: string }).title;
       if (next === 'Rejected name') return { status: 500, statusText: 'Server Error', body: { error: 'Rename unavailable' } };
@@ -105,6 +106,19 @@ async function editTrack(): Promise<void> {
 }
 
 describe('Unified mobile headers', () => {
+  it.each([320, 390])('centers the static Memory title with the workspace menu glyph at %ipx', async (width) => {
+    await page.viewport(width, 844);
+    setup('/memory', AREA.name, () => undefined, 'Global Memory', { trackAreaId: 'sys_memory' });
+    const title = await page.getByRole('heading', { name: 'Global Memory', exact: true, level: 1 }).findElement();
+    const shellHeader = page.elementLocator(document.querySelector('[data-nc-workspace-header] header')!);
+    const menu = await shellHeader.getByRole('button', { name: 'Open workspace', exact: true }).findElement();
+    await settlePaint();
+
+    const glyphBox = menu.querySelector('svg')!.getBoundingClientRect();
+    const titleBox = title.getBoundingClientRect();
+    expect(Math.abs((glyphBox.top + glyphBox.height / 2) - (titleBox.top + titleBox.height / 2))).toBeLessThanOrEqual(1);
+  });
+
   it('uses clean Area rows and a separate Tracks page with the same actions', async () => {
     await page.viewport(390, 844);
     const router = setup('/');
