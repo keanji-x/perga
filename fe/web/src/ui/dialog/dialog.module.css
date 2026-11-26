@@ -18,6 +18,20 @@
     max-block-size: inherit;
   }
 
+  .topOverlay {
+    align-items: start;
+    grid-template-rows: minmax(0, 1fr);
+    padding-block-start: 12dvh;
+  }
+
+  .topFrame {
+    max-block-size: 100%;
+  }
+
+  .panel.flushPanel {
+    padding: 0;
+  }
+
   .fullscreenOverlay.fullscreenOverlay {
     padding: 0;
     align-items: stretch;

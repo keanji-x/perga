@@ -14,7 +14,7 @@ export function renderCommandFixture(options: Readonly<{
   initial?: string;
   reportBody?: string;
   stream?: UnconfiguredEventStream;
-  reply?: (request: ApiRequest) => ApiTransportResponse | undefined;
+  reply?: (request: ApiRequest) => ApiTransportResponse | Promise<ApiTransportResponse> | undefined;
 }> = {}) {
   let closed = options.closed ?? false;
   let track = fixtureTrack('daily', { areaId: options.areaId ?? 'daily-area', title: 'Command Track', cwd: '/tmp', sortOrder: 0, closedAtMs: closed ? 1 : null, createdAtMs: 1, updatedAtMs: 2 });

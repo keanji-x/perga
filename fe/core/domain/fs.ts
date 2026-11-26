@@ -87,11 +87,11 @@ export function readTrackWorkspaceFileOperation(
 const workspaceFileSearchSchema = z.object({ paths: z.array(z.string()), truncated: z.boolean() }) satisfies z.ZodType<WorkspaceFileSearchResultDto>;
 
 export function searchTrackWorkspaceFilesOperation(
-  trackId: string, query: string, signal: ApiAbortSignal,
+  trackId: string, query: string, signal: ApiAbortSignal, limit = 50,
 ): ApiOperation<WorkspaceFileSearchResultDto> {
   return {
     method: 'GET',
-    path: `/api/v1/tracks/${encodeURIComponent(trackId)}/files/search?q=${encodeURIComponent(query)}&limit=50`,
+    path: `/api/v1/tracks/${encodeURIComponent(trackId)}/files/search?q=${encodeURIComponent(query)}&limit=${limit}`,
     responseSchema: workspaceFileSearchSchema,
     signal,
   };

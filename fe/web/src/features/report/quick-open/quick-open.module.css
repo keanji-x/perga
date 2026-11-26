@@ -1,56 +1,83 @@
 @layer features {
-  .quickOpen {
-    display: grid;
-    min-inline-size: 0;
-    gap: var(--space-2);
+  .input {
+    border-block-end: 1px solid var(--hairline);
   }
 
-  .inputRow {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
-    align-items: center;
-    gap: var(--space-2);
+  .spinner {
+    transition: opacity 1ms 150ms;
+  }
+
+  @starting-style {
+    .spinner {
+      opacity: 0;
+    }
   }
 
   .list {
+    min-block-size: 0;
     max-block-size: min(22rem, 50dvh);
-    overflow: auto;
-    margin: 0;
-    padding: 0;
-    list-style: none;
+    overscroll-behavior: contain;
   }
 
-  .status {
-    margin: 0;
-    padding-inline: var(--space-2);
-    color: var(--text-3);
-    font: var(--type-metadata);
+  .option[aria-selected='false'] {
+    background-color: transparent;
   }
 
-  .option {
+  .option[aria-selected='true'] {
+    background-color: var(--accent-soft);
+  }
+
+  .rowContent {
     display: flex;
+    flex: 1;
     align-items: center;
-    inline-size: 100%;
+    min-inline-size: 0;
     gap: var(--space-2);
-    padding: var(--space-2);
-    border: 0;
-    border-radius: var(--radius-sm);
-    background: transparent;
-    color: var(--text);
-    cursor: pointer;
-    text-align: start;
-    font: var(--type-code);
   }
 
-  .option > span {
-    min-inline-size: 0;
+  .entryIcon {
+    display: flex;
+    flex: none;
+    color: var(--text-3);
+  }
+
+  .filename,
+  .directory {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
 
-  .option[aria-selected='true'],
-  .option:hover {
-    background: var(--accent-soft);
+  .filename {
+    flex: 0 0 auto;
+    max-inline-size: calc(100% - var(--space-6));
+    color: var(--text);
+  }
+
+  .directory {
+    min-inline-size: 0;
+    color: var(--text-3);
+    font: var(--type-metadata);
+  }
+
+  .option mark {
+    background: transparent;
+    color: var(--accent);
+    font-weight: var(--weight-semibold);
+  }
+
+  .footer {
+    border-block-start: 1px solid var(--hairline);
+  }
+
+  .footer > span {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-1);
+    white-space: nowrap;
+  }
+
+  .lineHint kbd {
+    text-transform: lowercase;
   }
 }
