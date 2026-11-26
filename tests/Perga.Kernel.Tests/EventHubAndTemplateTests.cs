@@ -103,53 +103,25 @@ public sealed class EventHubAndTemplateTests
         const string source = """export default defineTemplate({ id: "snapshot", title: "Snapshot" });""";
         var timeout = TimeSpan.FromSeconds(10);
         var manifest = new ConfigurableFakePolicyVm().Compile(source).Manifest;
-        var release = new ManualResetEventSlim();
-        var compiling = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var competingCompile = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var vm = new ConfigurableFakePolicyVm();
-        vm.CustomManifestFactory = _ =>
+        var vm = new ConfigurableFakePolicyVm
         {
-            if (!compiling.TrySetResult())
-                competingCompile.TrySetResult();
-            release.Wait();
-            return manifest;
+            CustomManifestFactory = _ =>
+            {
+                Thread.Sleep(50);
+                return manifest;
+            }
         };
         var host = new TemplateHost(vm);
-        var first = Task.Run(() => host.GetOrCompileSnapshot(source));
-        var competingLookup = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var second = new TaskCompletionSource<CompiledPolicy>(TaskCreationOptions.RunContinuationsAsynchronously);
-        var secondThread = new Thread(() =>
-        {
-            competingLookup.SetResult();
-            try { second.SetResult(host.GetOrCompileSnapshot(source)); }
-            catch (Exception error) { second.SetException(error); }
-        }) { IsBackground = true };
-        var started = false;
-        try
-        {
-            await compiling.Task.WaitAsync(timeout);
-            secondThread.Start();
-            started = true;
-            await competingLookup.Task.WaitAsync(timeout);
-            // While the first compile is held, the second lookup either waits on the cache or reenters Compile.
-            Assert.True(SpinWait.SpinUntil(() => competingCompile.Task.IsCompleted ||
-                (secondThread.ThreadState & ThreadState.WaitSleepJoin) != 0, timeout));
-            Assert.False(competingCompile.Task.IsCompleted);
-        }
-        finally
-        {
-            release.Set();
-            var workers = started ? (Task)Task.WhenAll(first, second.Task) : first;
-            await workers.WaitAsync(timeout).ConfigureAwait(
-                ConfigureAwaitOptions.ContinueOnCapturedContext | ConfigureAwaitOptions.SuppressThrowing);
-            if (workers.IsCompleted)
-                release.Dispose();
-            if (started)
-                Assert.True(secondThread.Join(timeout));
-        }
+        using var start = new Barrier(4);
 
-        var policies = await Task.WhenAll(first, second.Task).WaitAsync(timeout);
-        Assert.Same(policies[0], policies[1]);
+        var calls = Enumerable.Range(0, 4).Select(_ => Task.Run(() =>
+        {
+            Assert.True(start.SignalAndWait(timeout));
+            return host.GetOrCompileSnapshot(source);
+        })).ToArray();
+
+        var policies = await Task.WhenAll(calls).WaitAsync(timeout);
+        Assert.All(policies, policy => Assert.Same(policies[0], policy));
         Assert.Equal(1, vm.CompileCallCount);
     }
 
