@@ -57,6 +57,14 @@ it('keeps an exact basename even when 2,000 shorter basename matches can fill th
   expect(rank('quick', [...paths, exact])[0].path).toBe(exact);
 });
 
+it('ranks non-ASCII paths when exact basenames and ASCII fuzzy hits fill the shortlist', () => {
+  const exact = Array.from({ length: 250 }, (_, index) => [`zzbzz${index}/a`, `zzazz${index}/b`]).flat();
+  const fuzzy = Array.from({ length: 1_510 }, (_, index) => `pkg${index}/src/a-zb.ts`);
+  const path = '文档/a-b.ts';
+
+  expect(rank('a b', [...exact, ...fuzzy, path])[0]).toMatchObject({ path, positions: new Set([3, 5]) });
+});
+
 it.each(['public.tsx', '^public.tsx'])('bounds oversized %s buckets and keeps the shortest path', name => {
   const paths = Array.from({ length: 19_999 }, (_, index) => `packages/p${index}/src/components/Settings/${name}`);
   const shortest = `src/${name}`;

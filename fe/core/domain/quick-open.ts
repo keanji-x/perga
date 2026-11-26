@@ -119,7 +119,7 @@ function shortlistAscii(paths: readonly AsciiPath[], query: string, limit: numbe
   return candidates.map(candidate => candidate.path);
 }
 
-/** Prepare fzf's path representation once per index load, outside the keystroke path. */
+/** Prepare basename buckets and ASCII paths once per index load. */
 export function createQuickOpenFileIndex(paths: readonly string[]): FileIndex {
   const all = new Set(paths);
   const unique = [...all];
@@ -145,15 +145,16 @@ export function createQuickOpenFileIndex(paths: readonly string[]): FileIndex {
   const v2Options: FzfOptions<string> = { match: extendedMatch, forward: false, sort: false };
   const v1Options: FzfOptions<string> = { match: extendedMatch, forward: false, fuzzy: 'v1',
     limit: shortlistLimit, tiebreakers: [compareBasename, byLengthAsc] };
-  const fzf = new Fzf(unique, large ? v1Options : v2Options);
-  const unicodeFzf = unicode.length > 0 ? new Fzf(unicode, v1Options) : undefined;
+  const smallFzf = large ? undefined : new Fzf(unique, v2Options);
+  let fzf: Fzf<string[]> | undefined;
+  let unicodeFzf: Fzf<string[]> | undefined;
 
   return { paths: unique, find: query => {
     const key = query.normalize().toLowerCase();
     const exactNames = basenames.get(key) ?? [];
     const exactPath = all.has(query);
     let matches: FzfResultItem<string>[];
-    if (large) {
+    if (smallFzf === undefined) {
       // Native string scans avoid fzf's per-match allocations for common ASCII
       // terms. Let fzf handle extended syntax and Unicode before the V2 pass.
       const plainAscii = /^[a-z0-9._/-]+(?: +[a-z0-9._/-]+)*$/i.test(query);
@@ -168,18 +169,19 @@ export function createQuickOpenFileIndex(paths: readonly string[]): FileIndex {
       }
       // A popular exact basename already supplies many strong candidates.
       const fuzzyLimit = exactNames.length === basenameBucketLimit ? basenameBucketLimit : shortlistLimit;
-      for (const path of plainAscii ? shortlistAscii(ascii, query, fuzzyLimit) : fzf.find(query).map(match => match.item)) {
+      const fuzzy = plainAscii ? shortlistAscii(ascii, query, fuzzyLimit)
+        : (fzf ??= new Fzf(unique, v1Options)).find(query).map(match => match.item);
+      for (const path of fuzzy) {
         candidates.add(path);
       }
-      if (plainAscii && candidates.size < shortlistLimit * 2) {
-        for (const match of unicodeFzf?.find(query) ?? []) {
+      if (plainAscii && unicode.length > 0) {
+        for (const match of (unicodeFzf ??= new Fzf(unicode, v1Options)).find(query)) {
           candidates.add(match.item);
-          if (candidates.size === shortlistLimit * 2) break;
         }
       }
       matches = new Fzf([...candidates], v2Options).find(query);
     } else {
-      matches = fzf.find(query);
+      matches = smallFzf.find(query);
     }
 
     // fzf syntax can also be an exact path or basename on disk.

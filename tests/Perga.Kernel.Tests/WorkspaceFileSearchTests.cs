@@ -10,6 +10,7 @@ public sealed class WorkspaceFileSearchTests
     [InlineData("quick pub", "quick-open/public.tsx", "quick-open/types.ts")]
     [InlineData("!ignore", "assorted.txt", "docs/ignore.txt")]
     [InlineData("'src", "vendor/src-index.ts", "vendor/s-r-c.ts")]
+    [InlineData("'foo$", "docs/foo-middle.md", "docs/f-o-o")]
     [InlineData(".ts$", "src/file.ts", "src/file.ts.bak")]
     [InlineData("^src$", "src", "src-index.ts")]
     [InlineData("^docs | ^src ts$", "src/file.ts", "docs/file.md")]

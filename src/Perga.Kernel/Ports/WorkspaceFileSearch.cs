@@ -112,6 +112,7 @@ public static class WorkspaceFileSearch
             var inverse = text.StartsWith('!');
             if (inverse) text = text[1..];
             var kind = inverse ? MatchKind.Contains : MatchKind.Fuzzy;
+            // fzf's parseTerms strips the suffix marker before the quote can override suffix matching.
             if (text.Length > 1 && text.EndsWith('$'))
             {
                 kind = MatchKind.Suffix;

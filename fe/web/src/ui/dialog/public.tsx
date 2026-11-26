@@ -211,7 +211,7 @@ export function Dialog({ purpose, origin, open, onClose, title, hideTitleRow, hi
   const headerTitle = showingView ? view.title : title;
   const top = !fullscreen && placement === 'top';
   const overlayClass = fullscreen ? styles.fullscreenOverlay : top ? styles.topOverlay
-    : placement !== 'center' && (showingView || wide) ? 'dialog-overlay-wide' : '';
+    : placement === undefined && (showingView || wide) ? 'dialog-overlay-wide' : '';
   const maxBlockSize = fullscreen || top ? undefined : { maxBlockSize: `calc(${viewport.height}px - var(--space-6))` };
   const onPanelKeyDown: KeyboardEventHandler<HTMLDivElement> = (event) => {
     if (event.defaultPrevented || event.key !== 'Tab' || !panelRef.current) return;
