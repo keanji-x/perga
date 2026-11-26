@@ -163,6 +163,17 @@ export default defineConfig({
               emulateReducedMotion: async ({ page }, reduce: boolean) => {
                 await page.emulateMedia({ reducedMotion: reduce ? 'reduce' : 'no-preference' });
               },
+              emulateColorScheme: async ({ page }, colorScheme: 'dark' | null) => {
+                await page.emulateMedia({ colorScheme });
+              },
+              setHorizontalSafeArea: async ({ page }, left: number, right: number) => {
+                const session = await page.context().newCDPSession(page);
+                try {
+                  await session.send('Emulation.setSafeAreaInsetsOverride', { insets: { top: 0, bottom: 0, left, right } });
+                } finally {
+                  await session.detach();
+                }
+              },
             },
           },
         },

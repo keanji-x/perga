@@ -1,12 +1,4 @@
 @layer features {
-  .rootHeader {
-    grid-template-columns: var(--rail-w-collapsed) minmax(0, 1fr) var(--rail-w-collapsed);
-    gap: var(--space-2);
-    min-block-size: calc(var(--header-primary-h) + env(safe-area-inset-top));
-    padding-block: calc(env(safe-area-inset-top) + var(--space-1)) var(--space-1);
-    padding-inline: max(var(--space-1), calc(var(--space-4) - (var(--rail-w-collapsed) - var(--glyph-lg)) / 2));
-  }
-
   .rootHeader button:not([role='menuitem']) {
     border: 0;
     background-color: transparent;

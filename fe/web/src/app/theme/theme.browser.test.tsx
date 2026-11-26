@@ -1,9 +1,13 @@
 import { cleanup, render } from '@testing-library/react';
-import { page } from 'vitest/browser';
+import { commands, page } from 'vitest/browser';
 import { afterEach, describe, expect, it } from 'vitest';
 import { THEME_KEY } from '../../../../core/keys/storage.ts';
 import { ThemeProvider, useTheme } from './public.tsx';
-import '../../styles/tokens.css';
+import '../../styles/entry.css';
+
+declare module 'vitest/browser' {
+  interface BrowserCommands { emulateColorScheme(colorScheme: 'dark' | null): Promise<void> }
+}
 
 function Controls() { const { setMode } = useTheme(); return <button type="button" onClick={() => setMode('dark')}>Dark</button>; }
 function Probe() { const { resolved } = useTheme(); return <output data-testid="resolved">{resolved}</output>; }
@@ -18,6 +22,25 @@ function pixelLuminance(cssColor: string): number {
 afterEach(() => { cleanup(); delete document.documentElement.dataset.theme; history.replaceState(null, '', '/'); });
 
 describe('browser theme contracts', () => {
+  it('paints the mobile dark startup background before the provider mounts and honors an explicit light theme', async () => {
+    await page.viewport(390, 844);
+    await commands.emulateColorScheme('dark');
+    try {
+      const root = document.documentElement;
+      expect(root.hasAttribute('data-theme')).toBe(false);
+      expect(getComputedStyle(root).colorScheme).toBe('dark');
+      expect(getComputedStyle(document.body).backgroundColor).toBe('rgb(27, 33, 39)');
+
+      const storage = memoryStorage();
+      storage.setItem(THEME_KEY, 'light');
+      render(<ThemeProvider storage={storage}><Probe /></ThemeProvider>);
+      expect(getComputedStyle(root).colorScheme).toBe('light');
+      expect(pixelLuminance(getComputedStyle(document.body).backgroundColor)).toBeGreaterThan(200);
+    } finally {
+      await commands.emulateColorScheme(null);
+    }
+  });
+
   it('E2E-CAP-THEME-011 resolves light and dark through the real document channel', async () => {
     const storage = memoryStorage(); storage.setItem(THEME_KEY, 'light'); const first = render(<ThemeProvider storage={storage}><Probe /></ThemeProvider>);
     await expect.element(page.getByTestId('resolved')).toHaveTextContent('light'); expect(document.documentElement.dataset.theme).toBe('light'); first.unmount();

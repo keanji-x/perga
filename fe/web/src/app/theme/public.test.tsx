@@ -98,10 +98,17 @@ describe('ThemeProvider behavior', () => {
     render(<ThemeProvider storage={memoryStorage()}><Probe /></ThemeProvider>);
     expect(screen.getByRole('button').textContent).toBe('system:dark');
     expect(media.listeners.size).toBe(1);
+    const meta = document.head.querySelector<HTMLMetaElement>('meta[name="theme-color"]');
+    expect(meta?.content).toBe('#1b2127');
+    act(() => media.change(false));
+    expect(meta?.content).toBe('#f3f2ee');
+    act(() => media.change(true));
+    expect(meta?.content).toBe('#1b2127');
     act(() => screen.getByRole('button').click());
     expect(media.listeners.size).toBe(0);
     act(() => media.change(false));
     expect(screen.getByRole('button').textContent).toBe('dark:dark');
+    expect(meta?.content).toBe('#1b2127');
   });
 
   it('INV-APP-078 fails descriptively outside the provider', () => {
