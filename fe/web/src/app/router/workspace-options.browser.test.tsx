@@ -1,7 +1,7 @@
 import '../../styles/entry.css';
 import { cleanup } from '@testing-library/react';
 import { afterEach,expect,it } from 'vitest';
-import { page } from 'vitest/browser';
+import { page, userEvent } from 'vitest/browser';
 import { renderDailyFixture } from './daily-planner-fixture.tsx';
 
 afterEach(() => {
@@ -64,4 +64,71 @@ it('renders Host workspace choices and requires a new choice when the selected m
   expect(request?.body).not.toHaveProperty('workspaceDriver');
   expect(request?.body).not.toHaveProperty('templateId');
   expect(fixture.requests.some(item => item.path === '/api/v1/templates')).toBe(false);
+});
+
+it('selects Use source folder by default for plain directories and allows switching to Copy into a workspace', async () => {
+  await page.viewport(1280, 850);
+  const fixture = renderDailyFixture({
+    initial: '/area/plain-area/new',
+    reply: (request) => {
+      const ok = (body: unknown) => ({ status: 200, statusText: 'OK', body });
+      if (request.path === '/api/v1/areas')
+        return ok([{ id: 'plain-area', name: 'Plain', color: '#123456', defaultCwd: '/plain-folder', createdAtMs: 1, updatedAtMs: 1 }]);
+      const url = new URL(request.path, 'http://fixture.test');
+      if (url.pathname === '/api/v1/areas/plain-area/workspace-options') {
+        return ok({
+          defaultId: 'direct',
+          options: [
+            { id: 'direct', label: 'Use source folder', description: 'Work directly in the selected directory.' },
+            { id: 'copy', label: 'Copy into a workspace', description: 'Copy the source files into an isolated directory.' },
+          ],
+        });
+      }
+      if (request.path === '/api/v1/tracks' && request.method === 'POST')
+        return { status: 400, statusText: 'Bad Request', body: { code: 'invalid_argument', error: 'Captured request' } };
+      return undefined;
+    },
+  });
+
+  const repo = page.getByRole('button', { name: /^Repo:/ });
+  const create = page.getByRole('button', { name: 'Create track' });
+  await expect.element(repo).toHaveTextContent(/Use source folder/);
+
+  await repo.click();
+  const modeGroup = page.getByRole('group', { name: 'Workspace mode' });
+  const directItem = modeGroup.getByRole('menuitem', { name: /Use source folder/ });
+  const copyItem = modeGroup.getByRole('menuitem', { name: /Copy into a workspace/ });
+  await expect.element(directItem).toBeVisible();
+  await expect.element(copyItem).toBeVisible();
+  const items = Array.from(document.querySelectorAll('[role="group"][aria-label="Workspace mode"] [role="menuitem"]'))
+    .map((node) => node.textContent ?? '');
+  expect(items[0]).toContain('Use source folder');
+  expect(items[0]).toContain('Selected');
+  expect(items[1]).toContain('Copy into a workspace');
+  expect(items[1]).not.toContain('Selected');
+  await userEvent.keyboard('{Escape}');
+  await expect.element(modeGroup).not.toBeInTheDocument();
+
+  await page.getByRole('combobox', { name: 'What this track should do' }).fill('Work in plain folder');
+  await expect.element(create).toBeEnabled();
+  await create.click();
+
+  await expect.poll(() =>
+    fixture.requests.filter((item) => item.path === '/api/v1/tracks' && item.method === 'POST').length,
+  ).toBe(1);
+  const firstPost = fixture.requests.find((item) => item.path === '/api/v1/tracks' && item.method === 'POST');
+  expect(firstPost?.body).toMatchObject({ cwd: '/plain-folder', workspaceOptionId: 'direct' });
+  expect(firstPost?.body).not.toHaveProperty('workspaceDriver');
+
+  await repo.click();
+  await page.getByRole('menuitem', { name: /Copy into a workspace/ }).click();
+  await expect.element(repo).toHaveTextContent(/Copy into a workspace/);
+  await create.click();
+
+  await expect.poll(() =>
+    fixture.requests.filter((item) => item.path === '/api/v1/tracks' && item.method === 'POST').length,
+  ).toBe(2);
+  const posts = fixture.requests.filter((item) => item.path === '/api/v1/tracks' && item.method === 'POST');
+  expect(posts[1]?.body).toMatchObject({ cwd: '/plain-folder', workspaceOptionId: 'copy' });
+  expect(posts[1]?.body).not.toHaveProperty('workspaceDriver');
 });
