@@ -36,5 +36,5 @@ export function useConversationInitialSend({ primaryPlanner, scopeId, plannerCar
       focusComposer(open.id);
     }
   }, [open, store.sendBlocked, store.historyReady, focusComposer]);
-
+  return pendingTrackInitialSend !== undefined;
 }

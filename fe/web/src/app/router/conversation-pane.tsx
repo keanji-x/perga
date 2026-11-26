@@ -28,6 +28,8 @@ import { Link } from '@tanstack/react-router';
 import { createRef,useCallback,useEffect,useMemo,useRef,type Dispatch,type SetStateAction } from 'react';
 
 import type { AgentProvider, AskAnswer } from '../../../../core/domain/presentation-types.ts';
+import { normalizeWireAgentProvider } from '../../../../core/api/schemas.ts';
+import { canSwitchSessionProvider } from '../../../../core/domain/conversation-models.ts';
 import type { ApiTransportPort } from '../../../../core/api/types.ts';
 import type { UnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
 import { approvalsForSession,type PendingApproval } from '../../../../core/domain/approval.ts';
@@ -53,6 +55,7 @@ import { ChatList } from '../../features/chat/list/public.tsx';
 import { ContextRing } from '../../features/chat/thread/context-ring.tsx';
 import { useMentionTrigger } from '../../features/chat/thread/mention-trigger.tsx';
 import { ModelPill,PermissionModePill } from '../../features/chat/thread/model-pill.tsx';
+import type { ModelGroup } from '../../features/chat/thread/model-selection.ts';
 import { MessageImages } from '../../features/chat/thread/message-images.tsx';
 import { OutgoingMessage, type MemoryMentionRenderer } from '../../features/chat/thread/outgoing-message.tsx';
 import {
@@ -125,11 +128,11 @@ export function useConversationPane(
   // Status priority chooses a destination only when there is no retained owner.
   const dockRowId = compactComposer ? options?.reportComposer?.conversationId ?? null : null;
   const composerRowId = openRowId ?? dockRowId;
-  const managed = useManagedProviders(transport, unauthorized, openTarget?.kind === 'draft');
   // The app owns provider metadata reads (permission modes and capabilities).
-  const managedProvidersQuery = useQuery({ ...managedProvidersQueryOptions(transport, unauthorized), enabled: composerRowId !== null });
-  const draftCapabilities = managed.version;
-  const supportsDraftModel = draftCapabilities.data?.conversationCreateModel === true;
+  const managedProvidersQuery = useQuery({
+    ...managedProvidersQueryOptions(transport, unauthorized, source.executionTargetId),
+    enabled: composerRowId !== null,
+  });
   useEffect(() => { if (openRowId === null) setComposerFocusFor(null); }, [openRowId]);
   const scope: PlannerConversationScope | null = composerRowId !== null
     ? source.scopeOf(composerRowId)
@@ -201,8 +204,11 @@ export function useConversationPane(
   /* The one readiness every response action and the continue guidance share. */
   const archived = rows.find(row => row.id === composerRowId)?.archivedAt != null;
   const canContinue = !archived && store.runReady && store.runError === null && store.historyReady && !store.sendBlocked && !store.working && !store.stopping;
-  /* A conversation's provider is fixed for its life; its model picker offers that provider's group alone. */
+  /* An existing conversation keeps its provider once it has history; before the first input it can switch freely. */
   const scopeProvider: AgentProvider = scope === null ? 'codex' : scope.provider;
+  const activeProvider: AgentProvider = (store.session?.id === composerRowId && store.session.provider
+    ? normalizeWireAgentProvider(store.session.provider)
+    : null) ?? scopeProvider;
   const go = useGo();
   const { openFile: openChatWorkspaceFile } = useTrackFileNavigation();
   const openChatLink = useCallback((target: ReportLinkTarget) => {
@@ -216,6 +222,27 @@ export function useConversationPane(
   const open = store.conversations.find((conversation) => conversation.id === openRowId) ?? null;
   const openTurns = open === null ? [] : store.turns;
   const hasPendingMessages = store.pendingQueue.length > 0 || store.pendingSends.length > 0;
+  const hasPendingInitialSend = useConversationInitialSend({
+    primaryPlanner: options?.slotId === undefined && source.planner != null && open?.id === source.planner.cardId,
+    scopeId: source.scopeId, plannerCardId: source.planner?.cardId, open, store, registry, focusComposer,
+  });
+  const canSwitchProvider = open !== null && canSwitchSessionProvider({
+    ready: store.historyReady && store.runReady,
+    sessionState: store.sessionState,
+    readonlyReason: store.readonlyReason,
+    taskId: store.taskId,
+    hasHistory: openTurns.length > 0 || store.hasEarlier || store.lastTurn !== null,
+    hasPendingInput: hasPendingMessages || hasPendingInitialSend || store.failedSend !== null,
+    busy: store.working || store.sending || store.recovering,
+  });
+  const managed = useManagedProviders(
+    transport,
+    unauthorized,
+    openTarget?.kind === 'draft' || canSwitchProvider,
+    source.executionTargetId,
+  );
+  const draftCapabilities = managed.version;
+  const supportsDraftModel = draftCapabilities.data?.conversationCreateModel === true;
   const threadAvailable = open !== null
     && (store.historyReady || openTurns.length > 0 || hasPendingMessages || store.stopFeedback !== null);
   const threadPresented = useContentAdmission(open?.id ?? null, threadAvailable);
@@ -291,8 +318,6 @@ export function useConversationPane(
   const draftOpen = options?.enabled !== false && openTarget?.kind === 'draft' && draft !== null;
 
   useConversationDraftAutoSend({ draftOpen, draft, creating: creating || managed.loading || draftCapabilities.isLoading, registry, sendDraft });
-  useConversationInitialSend({ primaryPlanner: options?.slotId === undefined && source.planner != null && open?.id === source.planner.cardId,
-    scopeId: source.scopeId, plannerCardId: source.planner?.cardId, open, store, registry, focusComposer });
 
   const existingId = open?.id ?? null;
   const retrySend = useCommittedCallback(existingId, () => {
@@ -360,8 +385,8 @@ export function useConversationPane(
   [existingId, threadPresented, store.pendingQueue, store.pendingSends, store.queueDisplayAccounting, store.sending, store.queueWriteOut, store.readonlyReason,
     deleteQueuedEntry, pendingPresenceChanged, canSteer, steerQueuedEntry]);
   const scopePermissionModes = useMemo(
-    () => permissionModesForProvider(managedProvidersQuery.data, scopeProvider),
-    [managedProvidersQuery.data, scopeProvider],
+    () => permissionModesForProvider(managedProvidersQuery.data, activeProvider),
+    [managedProvidersQuery.data, activeProvider],
   );
   const hasSideConversation = options?.onSide !== undefined;
   const composerView = useMemo(() => ({
@@ -448,13 +473,32 @@ export function useConversationPane(
   }), [allowNewConversation, options?.showSideCommand, newConversation, composerView.manualCompactSupported, composerView.historyReady,
     composerView.compact, hasSideConversation, sideQuestion, sideSourceReady, onTerminal, compactComposer, plannerCommands, composerStop,
     memorySave.commandBinding, plannerSwitchBinding, interrupt, compact, recover, commandEnabled]);
+  const sessionModelGroups = useMemo<readonly ModelGroup<AgentProvider>[]>(() => {
+    const currentGroup: ModelGroup<AgentProvider> = {
+      provider: activeProvider,
+      catalog: composerView.modelCatalog,
+      availability: null,
+      defaultAvailable: composerView.modelDefaultAvailable,
+    };
+    if (!canSwitchProvider || managed.groups.length === 0) return [currentGroup];
+    const groups: ModelGroup<AgentProvider>[] = managed.groups.map((group) => ({
+      provider: group.provider,
+      catalog: group.provider === activeProvider ? (group.catalog ?? composerView.modelCatalog) : group.catalog,
+      availability: group.availability,
+      acceptsUnavailableBlankTrack: true,
+      ...(group.provider === activeProvider ? { defaultAvailable: composerView.modelDefaultAvailable } : {}),
+    }));
+    if (!groups.some((group) => group.provider === activeProvider)) {
+      groups.unshift(currentGroup);
+    }
+    return groups;
+  }, [activeProvider, canSwitchProvider, composerView.modelCatalog, composerView.modelDefaultAvailable, managed.groups]);
   const sessionConfigurationControls = useMemo(() => <>
     <ModelPill key={`model-${existingId}`}
-      groups={[{ provider: scopeProvider, catalog: composerView.modelCatalog, availability: null,
-        defaultAvailable: composerView.modelDefaultAvailable }]}
-      provider={scopeProvider}
+      groups={sessionModelGroups}
+      provider={activeProvider}
       selection={composerView.model}
-      onChange={composerView.setModel}
+      onChange={(next, nextProvider) => composerView.setModel(next, canSwitchProvider ? nextProvider : undefined)}
       isDisabled={!composerView.historyReady || composerView.modelChangeDisabled}
       appliesNextTurn={composerView.working}
     />
@@ -466,7 +510,7 @@ export function useConversationPane(
         disabled={permissionControl.isDisabled}
       />
     )}
-  </>, [existingId, scopeProvider, composerView, permissionControl]);
+  </>, [existingId, sessionModelGroups, activeProvider, canSwitchProvider, composerView, permissionControl]);
 
   const composerNode = useMemo(() => existingId === null ? null : (
             <ConversationComposer target={{ kind: 'card', id: existingId }} layout={mobileSheet ? 'mobile' : 'standard'}
@@ -543,7 +587,7 @@ export function useConversationPane(
         open={open !== null || draftOpen}
         /* A draft has no name yet, and naming it after the words being typed
            would rename the drawer on every keystroke. */
-        title={options?.title ?? (options?.inline === true ? `Side conversation · ${providerPresentation(open?.provider ?? draft?.provider ?? scopeProvider).label}`
+        title={options?.title ?? (options?.inline === true ? `Side conversation · ${providerPresentation(open?.provider ?? draft?.provider ?? activeProvider).label}`
           : open !== null ? conversationName(open) : draftOpen ? 'Untitled' : '')}
         mobileBackLabel={options?.reportComposer?.returnLabel ?? 'Conversations'}
         onClose={closeDrawer}

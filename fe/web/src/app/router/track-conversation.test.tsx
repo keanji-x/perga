@@ -1538,6 +1538,80 @@ describe('registry write-through', () => {
     expect(errors.filter((error) => error !== null)).toEqual([]);
   });
 
+  it('preserves provider on rapid A->B->A switches and prevents stale in-flight GETs from reverting the switched provider', async () => {
+    let releaseFirstPatch!: () => void;
+    const firstPatchGate = new Promise<void>((done) => { releaseFirstPatch = done; });
+    let releaseStaleGet!: () => void;
+    const staleGetGate = new Promise<void>((done) => { releaseStaleGet = done; });
+    let session = fixtureSession(ASSISTANT_CARD.id, TRACK.id, { provider: 'codex', model: null });
+    let limitOneReads = 0;
+    const patchBodies: unknown[] = [];
+    const transport: ApiTransportPort = {
+      async send(request) {
+        if (request.method === 'PATCH' && request.path === `/api/v1/sessions/${ASSISTANT_CARD.id}`) {
+          patchBodies.push(request.body);
+          if (patchBodies.length === 1) await firstPatchGate;
+          const body = request.body as { provider?: string; model?: string | null; reasoningEffort?: string | null };
+          session = {
+            ...session,
+            provider: body.provider ?? session.provider,
+            model: body.model ?? null,
+            reasoningEffort: body.reasoningEffort ?? null,
+          };
+          return ok(session);
+        }
+        if (request.path.includes('limit=1')) {
+          limitOneReads += 1;
+          const snapshot = { ...session };
+          if (limitOneReads === 2) {
+            await staleGetGate;
+            if (request.signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+          }
+          return ok(sessionPage(snapshot));
+        }
+        return request.path.includes('/items?') ? ok(sessionPage(session)) : ok([]);
+      },
+    };
+    let latest: ReturnType<typeof useConversationStore> | null = null;
+    function StoreProbe() {
+      latest = useConversationStore(transport, unauthorized, SCOPE, { rows: ROWS, rememberOn: 'w1' });
+      return null;
+    }
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false, structuralSharing: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <CurrentUserScope value={{ userId: DEPLOYMENT_OWNER_USER_ID, displayName: 'Owner', username: 'owner', expiresAtMs: 2000000000000, role: 'owner', sessionId: 'test' }}>
+          <ConversationProvider><StoreProbe /></ConversationProvider>
+        </CurrentUserScope>
+      </QueryClientProvider>,
+    );
+    await waitFor(() => expect(latest?.runReady).toBe(true));
+
+    // Trigger a stale in-flight GET (read #2) captured while session is still codex.
+    void client.invalidateQueries({ queryKey: queryKeys.plannerRun(ASSISTANT_CARD.id) });
+    await waitFor(() => expect(limitOneReads).toBe(2));
+
+    // Switch codex -> claude, then rapidly back to codex while the first PATCH is still in flight.
+    await act(async () => {
+      latest?.setModel({ model: 'sonnet', reasoning_effort: null }, 'claude');
+      latest?.setModel({ model: 'gpt-5', reasoning_effort: null }, 'codex');
+      await Promise.resolve();
+    });
+    await act(async () => {
+      releaseFirstPatch();
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(patchBodies).toEqual([
+      { provider: 'claude', model: 'sonnet', reasoningEffort: null },
+      { provider: 'codex', model: 'gpt-5', reasoningEffort: null },
+    ]));
+    await act(async () => {
+      releaseStaleGet();
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(latest?.session).toMatchObject({ provider: 'codex', model: 'gpt-5' }));
+  });
+
   /* The confirmed send acquires authoritative first-input metadata; closing must keep
    * that metadata while the registry still owns its transcript and outbox. */
   it('[G5] keeps the server first-input title after the drawer closes', async () => {

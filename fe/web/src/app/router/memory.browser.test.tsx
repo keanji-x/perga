@@ -7,7 +7,7 @@ import entriesHtml from '../../../../../src/Perga.Kernel/Templates/Memory/widget
 import { sessionItem, sessionPage, sessionReply } from './conversation-session-data.ts';
 import { renderDailyFixture } from './daily-planner-fixture.tsx';
 import { renderMemoryShortcutFixture } from './memory-shortcut-fixture.ts';
-import { fixtureReport, fixtureSession, fixtureSnapshot, fixtureTrack, fixtureWidgetReport } from './session-contract-fixture.ts';
+import { fixtureBootstrap, fixtureReport, fixtureSession, fixtureSnapshot, fixtureTrack, fixtureWidgetReport } from './session-contract-fixture.ts';
 
 afterEach(async () => { cleanup(); await page.viewport(1280, 800); });
 
@@ -204,4 +204,56 @@ it('opens a native mobile outline anchor on the Area Memory URL', async () => {
   await expect.element(page.getByRole('heading', { name: 'Outline', exact: true })).toBeVisible();
   await page.getByRole('button', { name: /Notes & Topics/ }).click();
   await expect.poll(() => router.state.location.href).toBe('/area/project-area/memory#topics-heading-h1');
+});
+
+it('switches provider on an empty Memory session before the first input', async () => {
+  await page.viewport(1440, 900);
+  const bootstrap = fixtureBootstrap(['codex', 'claude'], ['gpt-5']);
+  bootstrap.providers[1] = { ...bootstrap.providers[1], models: ['sonnet'] };
+  const report = fixtureWidgetReport([
+    { title: 'Always Pinned', use: './widgets/entries.html', view: 'pinned' },
+  ]);
+  let lead = fixtureSession('ses_global', 'trk_global', { isLead: true, title: 'Lead', provider: 'codex' });
+  const { requests } = renderDailyFixture({
+    initial: '/memory',
+    reply: (request) => {
+      if (request.path.startsWith('/api/v1/bootstrap')) return sessionReply(bootstrap);
+      if (request.path === '/api/v1/memory/global/track') {
+        return sessionReply({ scopeKey: 'global', areaId: null, trackId: 'trk_global', leadSessionId: lead.id });
+      }
+      if (request.path === '/api/v1/tracks/trk_global') {
+        return sessionReply(fixtureSnapshot(fixtureTrack('trk_global', {
+          areaId: 'sys_memory', title: 'Global Memory', leadSessionId: lead.id, templateId: 'memory', templateTitle: 'Memory',
+        }), [lead], report));
+      }
+      if (request.path === '/api/v1/tracks/trk_global/views') {
+        return sessionReply({ templateId: 'memory', views: { pinned: { kind: 'pinned', entries: [] } }, widgets: { './widgets/entries.html': entriesHtml }, flow: { rev: 0, nodes: [], archived: [] } });
+      }
+      if (request.path.startsWith('/api/v1/sessions/ses_global/items?')) {
+        return sessionReply(sessionPage(lead, []));
+      }
+      if (request.method === 'PATCH' && request.path === '/api/v1/sessions/ses_global') {
+        const body = request.body as { provider?: string; model?: string | null; reasoningEffort?: string | null };
+        lead = {
+          ...lead,
+          provider: body.provider ?? lead.provider,
+          model: body.model ?? null,
+          reasoningEffort: body.reasoningEffort ?? null,
+        };
+        return sessionReply(lead);
+      }
+      return undefined;
+    },
+  });
+
+  await page.getByRole('complementary').getByRole('button', { name: /Conversation Lead/ }).click();
+  const trigger = page.getByRole('button', { name: /^Model: Codex/ });
+  await expect.element(trigger).toBeVisible();
+  await trigger.click();
+  await page.getByRole('group', { name: 'Providers' }).getByRole('radio', { name: 'Claude' }).click();
+  await page.getByRole('group', { name: 'Models' }).getByRole('radio', { name: 'sonnet', exact: true }).click();
+
+  await expect.poll(() => requests.filter(r => r.method === 'PATCH' && r.path === '/api/v1/sessions/ses_global').map(r => r.body))
+    .toEqual([{ provider: 'claude', model: 'sonnet', reasoningEffort: null }]);
+  await expect.element(page.getByRole('button', { name: 'Model: Claude sonnet', exact: true })).toBeVisible();
 });

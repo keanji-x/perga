@@ -20,7 +20,7 @@ import { answerAskOperation,openAsksOf } from '../domain/ask.js';
 import { buildConversationTranscript,conversationItemsOperation,conversationRunOperation } from '../domain/conversation-display.js';
 import { agentSessionDtoToConversation, createTrackConversationOperation, setConversationArchiveOperation } from '../domain/conversation.js';
 import { compactPlannerOperation, interruptPlannerOperation, sendPlannerInputOperation } from '../domain/conversation-commands.js';
-import { modelCatalogOperation, setPlannerModelOperation } from '../domain/conversation-models.js';
+import { canSwitchSessionProvider, modelCatalogOperation, setPlannerModelOperation } from '../domain/conversation-models.js';
 import { decodeEventFrame } from '../events/protocol.js';
 import { initialEventState,reduceEventFrame } from '../events/reducer.js';
 import { DEPLOYMENT_OWNER_USER_ID,loginOperation } from './auth.js';
@@ -207,6 +207,29 @@ describe('Perga /api/v1 protocol contracts', () => {
     expect(operation.responseSchema.parse({
       id: 'session/a', trackId: 'track', provider: 'codex', model: 'chosen', contextUsage: null, createdAtMs: 1, updatedAtMs: 2,
     })).toMatchObject({ id: 'session/a', model: 'chosen' });
+
+    const switched = setPlannerModelOperation('session/a', { model: 'sonnet', reasoning_effort: 'high' }, 'claude');
+    expect(switched.body).toEqual({ provider: 'claude', model: 'sonnet', reasoningEffort: 'high' });
+  });
+
+  it('allows switching session provider only while an unbound session is empty and idle', () => {
+    const emptyIdle = {
+      ready: true,
+      sessionState: 'idle',
+      readonlyReason: null,
+      taskId: null,
+      hasHistory: false,
+      hasPendingInput: false,
+      busy: false,
+    } as const;
+    expect(canSwitchSessionProvider(emptyIdle)).toBe(true);
+    expect(canSwitchSessionProvider({ ...emptyIdle, ready: false })).toBe(false);
+    expect(canSwitchSessionProvider({ ...emptyIdle, sessionState: 'running' })).toBe(false);
+    expect(canSwitchSessionProvider({ ...emptyIdle, readonlyReason: 'archived' })).toBe(false);
+    expect(canSwitchSessionProvider({ ...emptyIdle, taskId: 'tsk_1' })).toBe(false);
+    expect(canSwitchSessionProvider({ ...emptyIdle, hasHistory: true })).toBe(false);
+    expect(canSwitchSessionProvider({ ...emptyIdle, hasPendingInput: true })).toBe(false);
+    expect(canSwitchSessionProvider({ ...emptyIdle, busy: true })).toBe(false);
   });
 
   it('maps Area CRUD operations to /api/v1/areas with camelCase bodies and clearDefaultCwd', () => {

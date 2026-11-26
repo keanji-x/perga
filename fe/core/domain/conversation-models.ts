@@ -190,11 +190,36 @@ export function createSerialWriter<TArgs, TResult>(
   };
 }
 
-export function setPlannerModelOperation(cardId: string, selection: ModelSelection): ApiOperation<ModelSelectionResult> {
+/** Empty idle sessions without task ownership can switch providers before their first input. */
+export function canSwitchSessionProvider(params: Readonly<{
+  ready: boolean;
+  sessionState: string | null;
+  readonlyReason: string | null;
+  taskId: string | null;
+  hasHistory: boolean;
+  hasPendingInput: boolean;
+  busy: boolean;
+}>): boolean {
+  return params.ready
+    && params.sessionState === 'idle'
+    && params.readonlyReason === null
+    && params.taskId === null
+    && !params.hasHistory
+    && !params.hasPendingInput
+    && !params.busy;
+}
+
+export function setPlannerModelOperation(
+  cardId: string,
+  selection: ModelSelection,
+  provider?: AgentProvider,
+): ApiOperation<ModelSelectionResult> {
   return {
     method: 'PATCH',
     path: `/api/v1/sessions/${encodeURIComponent(cardId)}`,
-    body: { model: selection.model, reasoningEffort: selection.reasoning_effort },
+    body: provider === undefined
+      ? { model: selection.model, reasoningEffort: selection.reasoning_effort }
+      : { provider, model: selection.model, reasoningEffort: selection.reasoning_effort },
     responseSchema: agentSessionDtoSchema,
   };
 }

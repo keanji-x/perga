@@ -20,6 +20,8 @@ export type ConversationPanelSource = ConversationCreationSource & Readonly<{
     rows: readonly Conversation[];
     /** Default provider to seed new subagent drafts on this Track. */
     defaultProvider?: AgentProvider;
+    /** Execution target owning this Track's provider catalog. */
+    executionTargetId?: string;
     /** Whether this surface runs against Perga v1 endpoints. */
 
     /** The kernel's per-card verdicts for the track these rows are on; required, because a caller that passes no overlay has a list on which nothing can ever be working. */

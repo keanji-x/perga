@@ -34,6 +34,15 @@ internal static class SessionLaunchValidator
     internal static ProviderStatus? FindProvider(IReadOnlyList<ProviderStatus> providers, string provider) =>
         providers.FirstOrDefault(status => NormalizeProvider(status.Provider) == provider);
 
+    internal static string ResolvePreferredProvider(IReadOnlyList<ProviderStatus> providers, string defaultProvider)
+    {
+        var normalizedDefault = NormalizeProvider(defaultProvider);
+        if (FindProvider(providers, normalizedDefault) is { Available: true })
+            return normalizedDefault;
+        var fallback = providers.FirstOrDefault(candidate => candidate.Available);
+        return fallback is not null ? NormalizeProvider(fallback.Provider) : normalizedDefault;
+    }
+
     internal static KernelException UnknownProvider(string provider, IReadOnlyList<ProviderStatus> providers) =>
         KernelException.InvalidArgument(
             $"Unknown provider '{provider}'. Available providers: {AvailableProviders(providers)}.",

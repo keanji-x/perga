@@ -263,6 +263,7 @@ export function TrackRouteBody({
       scopeId: track.id,
       rows,
       defaultProvider: plannerCard === undefined ? undefined : agentSessionDtoToConversation(plannerCard).provider,
+      executionTargetId: snapshot.track.executionTargetId,
       /* The track's own overlay-derived verdicts (`toTrack(detail, detailActivity)`). */
       cards: track.cards,
       /* These rows are on a track the reader can be sent to, so Today may hold and

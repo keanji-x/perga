@@ -41,7 +41,8 @@ public sealed partial class PergaKernelService
             var now = NowMs();
             var systemArea = new AreaDto(MemoryTrackBinding.SystemAreaId, "Memory", "gray", null, [], 0, now, now);
             var title = area is null ? "Global Memory" : $"{area.Name} Memory";
-            var created = await CreateTrackCoreAsync(new(systemArea.Id, Title: title), ct, null,
+            var provider = await ResolveDefaultProviderAsync(systemArea.ExecutionTargetId, ct).ConfigureAwait(false);
+            var created = await CreateTrackCoreAsync(new(systemArea.Id, Title: title, Provider: provider), ct, null,
                 systemArea: systemArea, memoryScopeKey: scopeKey, memoryAreaId: areaId).ConfigureAwait(false);
             track = created.Track;
         }

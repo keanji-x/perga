@@ -718,15 +718,20 @@ public sealed partial class PergaKernelService : IPergaKernel, IFlowTrackSpawner
             ExecutionTargetId: trackTargetId,
             OriginTrackId: originTrackId);
 
-        var leadProvider = SessionLaunchValidator.NormalizeTaskProviderId(req.Provider) ?? _options.DefaultProvider;
+        var defaultProvider = SessionLaunchValidator.NormalizeProvider(_options.DefaultProvider);
+        var leadProvider = SessionLaunchValidator.NormalizeTaskProviderId(req.Provider) ?? defaultProvider;
         var leadPermissionMode = RuntimePermissionModes.Resolve(leadProvider, req.PermissionMode);
+        var leadModel = req.Model ?? (flowKey is null &&
+            SessionLaunchValidator.NormalizeProvider(leadProvider) == defaultProvider
+                ? _options.DefaultModel
+                : null);
         var leadSession = new AgentSessionDto(
             Id: leadSessionId,
             TrackId: trackId,
             IsLead: true,
             Title: "Lead",
             Provider: leadProvider,
-            Model: req.Model ?? (flowKey is null ? _options.DefaultModel : null),
+            Model: leadModel,
             NativeThreadId: null,
             Epoch: 1,
             Status: firstInput is null ? "idle" : "queued",
@@ -777,6 +782,22 @@ public sealed partial class PergaKernelService : IPergaKernel, IFlowTrackSpawner
                 await _eventHub.PublishSyncedAfterStoreWriteAsync(_store, evt, CancellationToken.None, allowFallback: false).ConfigureAwait(false);
         }
         return snapshot;
+    }
+
+    private async Task<string> ResolveDefaultProviderAsync(string targetId, CancellationToken ct)
+    {
+        var defaultProvider = SessionLaunchValidator.NormalizeProvider(_options.DefaultProvider);
+        IReadOnlyList<ProviderStatus> targetProviders = [];
+        try
+        {
+            targetProviders = (await GetCachedOrProbeProvidersAsync(ExecutionTargetIds.Normalize(targetId), forceRefresh: false, ct)
+                .ConfigureAwait(false)).Providers;
+        }
+        catch (Exception) when (!ct.IsCancellationRequested)
+        {
+            // Fall back to the configured default when provider discovery cannot be reached.
+        }
+        return SessionLaunchValidator.ResolvePreferredProvider(targetProviders, defaultProvider);
     }
 
     private async Task<TrackAggregateSnapshot> ReadCreatedTrackAsync(string id, CancellationToken ct)
