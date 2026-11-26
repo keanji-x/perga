@@ -51,8 +51,6 @@ Perga moves multi-day and multi-week work — maintaining a repository, driving 
 curl -fsSL https://keanji-x.github.io/perga/install.sh | bash
 ```
 
-> **Note:** Prebuilt release archives are published on version tags (`vX.Y.Z`). Before the first release is published, grab the `perga-linux-x64` / `perga-darwin-arm64` artifact from a [CI run](https://github.com/keanji-x/perga/actions/workflows/ci.yml) or [build from source](#build-from-source) below.
-
 Then create your local owner account once and start Perga:
 
 ```sh
@@ -61,6 +59,18 @@ perga
 ```
 
 Open [http://127.0.0.1:4041/](http://127.0.0.1:4041/) and sign in. The web app is installable as a PWA, and the Host starts the bundled native terminal bridge automatically when needed.
+
+### Upgrade, diagnostics, and uninstall
+
+```sh
+perga upgrade          # Upgrade to the latest release (keeps your data directory)
+perga upgrade v0.1.0   # Pin or roll back to a specific release tag
+perga version          # Show installed version and paths
+perga doctor           # Verify installation, Node.js 24+, and detected CLI providers
+perga uninstall        # Remove binaries (preserves ~/.local/share/perga)
+```
+
+Pending SQLite migrations run automatically when you restart `perga` after an upgrade.
 
 ### Manual archive install
 
@@ -141,7 +151,12 @@ The managed installer and hot-upgrade services use Linux systemd user units. See
 
 Pushes to `main`, pull requests targeting `main`, and manual runs of **CI and release** run the .NET, Rust, OAR, and frontend checks. Chromium tests run in a separate advisory job. Linux `x64` uses the tested static musl terminal bridge and verifies the self-contained Host binary without an external .NET runtime installed. The macOS `arm64` runner builds and tests its native self-contained package and bridge.
 
-Actions uploads `perga-linux-x64` and `perga-darwin-arm64`. Pushing a `vX.Y.Z` tag (for example `v0.1.0`) publishes both verified self-contained archives and their SHA-256 checksums to GitHub Releases.
+Actions uploads `perga-linux-x64` and `perga-darwin-arm64`. Pushing a `vX.Y.Z` tag (or prerelease `vX.Y.Z-rc.1`) publishes both verified self-contained archives, their SHA-256 checksums, and `install.sh` to GitHub Releases. Maintainers can verify and cut a release with:
+
+```sh
+bash tools/release.sh v0.1.0         # dry-run check (main sync, tag uniqueness, green CI)
+bash tools/release.sh v0.1.0 --push  # create and push annotated tag
+```
 
 ## Documentation
 

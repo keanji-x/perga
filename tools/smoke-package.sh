@@ -4,6 +4,7 @@ set -euo pipefail
 cd "${1:?usage: bash tools/smoke-package.sh EXTRACTED_PACKAGE_DIR}"
 test -x Perga.Host
 test -x perga-term-bridge
+test -s VERSION
 test -s templates/agents-delivery/template.perga.js
 echo '{"jsonrpc":"2.0","id":1,"method":"session/close"}' |
   node oar-bridge/perga-oar-bridge.mjs | jq -es '.[0] | .id == 1 and .result.closed == true'

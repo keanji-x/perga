@@ -5,7 +5,9 @@ on:
     branches: [main]
   push:
     branches: [main]
-    tags: ['v[0-9]+.[0-9]+.[0-9]+']
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+      - 'v[0-9]+.[0-9]+.[0-9]+-*'
   workflow_dispatch:
 
 permissions:
@@ -205,6 +207,12 @@ jobs:
         env:
           PACKAGE: ${{ matrix.package }}
         run: |
+          if [[ "${GITHUB_REF_TYPE:-}" == "tag" ]]; then
+            release_version="$GITHUB_REF_NAME"
+          else
+            release_version="dev-${GITHUB_SHA:0:8}"
+          fi
+          printf '%s\n' "$release_version" > perga/VERSION
           tar -czf "$PACKAGE.tar.gz" perga
           shasum -a 256 "$PACKAGE.tar.gz" > "$PACKAGE.tar.gz.sha256"
           shasum -a 256 -c "$PACKAGE.tar.gz.sha256"
@@ -229,6 +237,10 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+          sparse-checkout: install.sh
       - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
           name: perga-linux-x64
@@ -240,6 +252,38 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           sha256sum -c perga-linux-x64.tar.gz.sha256 perga-darwin-arm64.tar.gz.sha256
-          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --verify-tag --generate-notes \
-            perga-linux-x64.tar.gz perga-linux-x64.tar.gz.sha256 \
-            perga-darwin-arm64.tar.gz perga-darwin-arm64.tar.gz.sha256
+          test -s install.sh
+          cat > release-notes.md <<EOF
+          ### Install or Upgrade
+
+          **Fresh install (macOS Apple Silicon & Linux x64, no .NET runtime required):**
+          \`\`\`sh
+          curl -fsSL https://keanji-x.github.io/perga/install.sh | bash
+          \`\`\`
+
+          **Pin this exact release:**
+          \`\`\`sh
+          curl -fsSL https://keanji-x.github.io/perga/install.sh | PERGA_VERSION=${GITHUB_REF_NAME} bash
+          \`\`\`
+
+          **Already installed?**
+          \`\`\`sh
+          perga upgrade
+          \`\`\`
+          EOF
+          assets=(
+            perga-linux-x64.tar.gz
+            perga-linux-x64.tar.gz.sha256
+            perga-darwin-arm64.tar.gz
+            perga-darwin-arm64.tar.gz.sha256
+            install.sh
+          )
+          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --clobber "${assets[@]}"
+          else
+            flags=(--verify-tag --generate-notes --notes-file release-notes.md)
+            if [[ "$GITHUB_REF_NAME" == *-* ]]; then
+              flags+=(--prerelease)
+            fi
+            gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" "${flags[@]}" "${assets[@]}"
+          fi
