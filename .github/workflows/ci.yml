@@ -84,7 +84,8 @@ jobs:
         run: dotnet test Perga.sln --configuration Release --no-build --maxcpucount:1
       - name: Publish Host and bundle terminal bridge and templates
         run: |
-          bash tools/publish-host.sh perga "$PERGA_TERM_BRIDGE_BIN" linux-x64
+          if [[ "$GITHUB_REF_TYPE" == tag ]]; then version="$GITHUB_REF_NAME"; else version="dev-${GITHUB_SHA:0:8}"; fi
+          PERGA_RELEASE_VERSION="$version" bash tools/publish-host.sh perga "$PERGA_TERM_BRIDGE_BIN" linux-x64
           tar -czf host.tar.gz perga
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
@@ -194,28 +195,24 @@ jobs:
           (cd tools/perga-term-bridge && cargo test --locked --release && cargo build --locked --release)
           bridge="$PWD/tools/perga-term-bridge/target/release/perga-term-bridge"
           PERGA_TERM_BRIDGE_BIN="$bridge" dotnet test tests/Perga.TermClient.Tests --configuration Release
-          bash tools/publish-host.sh perga "$bridge" osx-arm64
+          if [[ "$GITHUB_REF_TYPE" == tag ]]; then version="$GITHUB_REF_NAME"; else version="dev-${GITHUB_SHA:0:8}"; fi
+          PERGA_RELEASE_VERSION="$version" bash tools/publish-host.sh perga "$bridge" osx-arm64
           lipo perga/Perga.Host -verify_arch arm64
           lipo perga/perga-term-bridge -verify_arch arm64
       - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
           name: perga-web
           path: perga/web/
-      - name: Stamp the package version
-        run: |
-          # `perga version` reports this; branch builds identify their commit.
-          if [[ "$GITHUB_REF_TYPE" == tag ]]; then version="$GITHUB_REF_NAME"; else version="dev-${GITHUB_SHA:0:8}"; fi
-          printf '%s\n' "$version" > perga/VERSION
-          echo "PERGA_EXPECTED_VERSION=$version" >> "$GITHUB_ENV"
       - name: Archive and verify the native package
         env:
           PACKAGE: ${{ matrix.package }}
         run: |
+          if [[ "$GITHUB_REF_TYPE" == tag ]]; then expected_version="$GITHUB_REF_NAME"; else expected_version="dev-${GITHUB_SHA:0:8}"; fi
           tar -czf "$PACKAGE.tar.gz" perga
           shasum -a 256 "$PACKAGE.tar.gz" > "$PACKAGE.tar.gz.sha256"
           shasum -a 256 -c "$PACKAGE.tar.gz.sha256"
           tar -xzf "$PACKAGE.tar.gz" -C "$RUNNER_TEMP"
-          bash tools/smoke-package.sh "$RUNNER_TEMP/perga"
+          PERGA_EXPECTED_VERSION="$expected_version" bash tools/smoke-package.sh "$RUNNER_TEMP/perga"
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: ${{ matrix.package }}

@@ -283,7 +283,7 @@ public sealed class AgentRuntime : IAgentRuntime
             {
                 var segments = (env.GetValueOrDefault("PATH") ?? string.Empty)
                     .Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries).ToList();
-                foreach (var extra in new[] { Path.Combine(home, ".local", "bin"), Path.Combine(home, ".opencode", "bin") })
+                foreach (var extra in GetExtraLocalPathDirectories(home))
                 {
                     if (Directory.Exists(extra) && !segments.Contains(extra, comparer))
                         segments.Add(extra);
@@ -294,6 +294,16 @@ public sealed class AgentRuntime : IAgentRuntime
 
         return env;
     }
+
+    internal static string[] GetExtraLocalPathDirectories(string? home) =>
+        string.IsNullOrWhiteSpace(home)
+            ? []
+            :
+            [
+                Path.Combine(home, ".local", "bin"),
+                Path.Combine(home, ".gemini", "antigravity-cli", "bin"),
+                Path.Combine(home, ".opencode", "bin")
+            ];
 
     internal static string? FindExecutableOnPath(string executable, IReadOnlyDictionary<string, string>? env)
     {

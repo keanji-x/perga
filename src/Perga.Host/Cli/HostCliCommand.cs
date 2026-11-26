@@ -16,9 +16,6 @@ public static partial class HostCliCommand
     private static readonly string[] RequiredExecutables = ["Perga.Host", "perga-term-bridge"];
     private static readonly string[] RequiredFiles = ["web/index.html", "oar-bridge/perga-oar-bridge.mjs"];
 
-    private static readonly string[] ProviderCommands =
-        ["claude", "codex", "agy", "antigravity", "opencode", "kimi", "qwen", "devin", "factory", "grok", "codebuddy", "qoder", "dsh"];
-
     private const string Usage = """
         Usage:
           perga [host args...]          Start Perga on http://127.0.0.1:4041 (override with --urls or PERGA_URLS)
@@ -112,10 +109,10 @@ public static partial class HostCliCommand
         Report(node.MeetsMinimum ? "ok" : "fail", "node",
             node.MeetsMinimum ? $"v{node.Version} ({node.ExecutablePath})" : node.Error ?? $"Node.js {OarNodeRuntimeProbe.MinimumMajorVersion}+ is required");
 
-        var providers = FindProviders(env);
+        var providers = env.DiscoverProviders(env.Variables, env.HomeDirectory);
         Report(providers.Count > 0 ? "ok" : "warn", "providers", providers.Count > 0
-            ? string.Join(", ", providers.Select(p => $"{p.Name} ({p.Path})"))
-            : $"no provider CLI found; install one of {string.Join(", ", ProviderCommands)}");
+            ? string.Join(", ", providers.Select(p => $"{p.Name} ({p.ExecutablePath})"))
+            : $"no provider CLI found; install one of {string.Join(", ", ProviderCliProbe.KnownCommands)}");
 
         env.Output.WriteLine(healthy ? "All required checks passed." : "Required checks failed.");
         return healthy ? 0 : 1;
@@ -234,19 +231,6 @@ public static partial class HostCliCommand
     private static bool IsExecutable(string path) =>
         File.Exists(path) && (OperatingSystem.IsWindows() ||
                               (File.GetUnixFileMode(path) & (UnixFileMode.UserExecute | UnixFileMode.GroupExecute | UnixFileMode.OtherExecute)) != 0);
-
-    private static List<(string Name, string Path)> FindProviders(HostCliEnvironment env)
-    {
-        var directories = (env.Get("PATH") ?? string.Empty).Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries)
-            .Append(Path.Combine(env.HomeDirectory, ".local", "bin"))
-            .Append(Path.Combine(env.HomeDirectory, ".opencode", "bin"))
-            .ToArray();
-        return ProviderCommands
-            .Select(name => (Name: name, Path: directories.Select(d => Path.Combine(d, name)).FirstOrDefault(IsExecutable)))
-            .Where(p => p.Path is not null)
-            .Select(p => (p.Name, p.Path!))
-            .ToList();
-    }
 
     [GeneratedRegex(@"^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\.(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?$")]
     internal static partial Regex ReleaseTagPattern();
