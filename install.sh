@@ -144,7 +144,6 @@ assert_outside_install_dir() {
           exit 1
         }
         link_target="${link_target%$'\n'x}"
-        link_target="${link_target%x}"
         if [[ "$link_target" != /* ]]; then
           if [[ "$resolved" == "/" ]]; then
             link_target="/${link_target}"
@@ -205,6 +204,11 @@ assert_outside_install_dir "$EFFECTIVE_DB_RAW" "$INSTALL_DIR" "database path"
 
 if [[ -e "$INSTALL_DIR" && ! -d "$INSTALL_DIR" ]]; then
   echo "error: PERGA_INSTALL_DIR (${INSTALL_DIR}) exists and is not a directory." >&2
+  exit 1
+fi
+
+if [[ -d "${BIN_DIR}/perga" ]]; then
+  echo "error: launcher destination ${BIN_DIR}/perga exists and is a directory." >&2
   exit 1
 fi
 
@@ -499,7 +503,6 @@ assert_outside_install_dir() {
           exit 1
         }
         link_target="\${link_target%\$'\\n'x}"
-        link_target="\${link_target%x}"
         if [[ "\$link_target" != /* ]]; then
           if [[ "\$resolved" == "/" ]]; then
             link_target="/\${link_target}"
