@@ -20,6 +20,7 @@ The runtime page is a harness, not a full-site scan. It deliberately injects one
 - Nested named layers inherit their top-level parent (for example `@layer ui { @layer alien {} }` belongs to `ui`); accepting the parent name is intentional because the entry order governs top-level layers.
 - Unlayered exception files waive only the requirement that rules belong to a layer; layer statements and layered imports must still name a layer from the entry order.
 - ID selectors are rejected only when unlayered. A selector such as `@layer ui { #some-id {} }` is allowed; the DOM-locator gate is concerned with runtime class lookup, not layered CSS specificity.
+- The production build cascade-order gate (`vite-cascade-order.ts`, run during `vite build`) inspects `<link rel="stylesheet">` and inline `<style>` tags in built `web/dist/index.html` and verifies top-level `@layer` registration order; runtime JS-injected `<style>` tags, dynamically appended stylesheets, unlayered selectors, and unbundled external `@import` contents remain covered by `auditStyleRepository` / `auditRuntimeStyles`.
 
 ## Stage 2 connection
 
