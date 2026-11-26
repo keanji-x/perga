@@ -4,6 +4,8 @@
 
 `Dialog` owns overlay, panel, header and body chrome so every modal uses one stacking and dismissal policy; `wide` and a pushed child view select the wide variant. `ConfirmDialog` composes the same panel and exposes only a danger/primary action variant so confirmation call sites cannot fork the modal mechanics.
 
+`placement="top"` anchors the panel at 12% of the viewport height and skips lift so a picker with changing results keeps its input in place. `flush` removes panel padding for a base view that supplies its own edge-to-edge chrome.
+
 ## Accessibility contract
 
 The panel alone owns `role="dialog"`, `aria-modal` and an accessible name from its title so assistive technology sees one modal surface. Initial focus resolves explicit ref → first visible focusable → panel; Tab is trapped, background siblings are inert, and close restores the latest override or prior focus. Child views form a LIFO stack; `pushView` returns an idempotent ownership disposer so one field cannot pop another field's view. Escape pops the top child before closing. The primitive avoids native `<dialog>` because browser top-layer/backdrop behavior would bypass the app-owned portal and inert policy; it avoids cached focusables because controls can appear after async rendering, and disables overlay dismissal for a child view because a nested workflow must cancel explicitly.

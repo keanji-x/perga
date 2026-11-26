@@ -11,11 +11,14 @@ public sealed partial class SshExecutionFileSystem
     public async Task<WorkspaceFileSearchResultDto> SearchWorkspaceFilesAsync(
         string workspaceRoot, string? query, int limit, CancellationToken ct = default)
     {
+        var filter = new WorkspaceFileSearch.Query(query);
         var command = BuildPythonCommand(SearchFilesScript, workspaceRoot, string.Empty,
             WorkspaceFileSearch.ScanLimit.ToString(CultureInfo.InvariantCulture),
             WorkspaceFileSearch.ScanTimeoutSeconds.ToString(CultureInfo.InvariantCulture),
             JsonSerializer.Serialize(WorkspaceFileSearch.SkippedDirectories),
-            JsonSerializer.Serialize(WorkspaceFileSearch.GitRepositoryOverrides));
+            JsonSerializer.Serialize(WorkspaceFileSearch.GitRepositoryOverrides),
+            JsonSerializer.Serialize(new { literal = filter.Literal, groups = filter.AsciiPrefilterGroups() }),
+            WorkspaceFileSearch.QueryScanLimit.ToString(CultureInfo.InvariantCulture));
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
         timeout.CancelAfter(TimeSpan.FromSeconds(15));
         try
@@ -42,13 +45,19 @@ public sealed partial class SshExecutionFileSystem
         if not stat.S_ISDIR(info.st_mode):
             fail("invalid_argument", "Workspace root is not a directory.")
 
-        scan_limit = int(sys.argv[3])
+        index_limit = int(sys.argv[3])
         scan_timeout_seconds = int(sys.argv[4])
         skipped = set(json.loads(sys.argv[5]))
         git_env = dict(os.environ, LC_ALL="C", GIT_OPTIONAL_LOCKS="0")
         for key in json.loads(sys.argv[6]):
             git_env.pop(key, None)
+        prefilter = json.loads(sys.argv[7])
+        literal = prefilter["literal"]
+        scan_limit = int(sys.argv[8]) if literal else index_limit
+        ascii_groups = [[term.upper() for term in group] for group in prefilter["groups"]]
         paths = []
+        root_prefix = real_root.rstrip(os.sep) + os.sep
+        directories = {real_root: True}
 
         class ScanTimeout(Exception):
             pass
@@ -65,15 +74,39 @@ public sealed partial class SshExecutionFileSystem
                 *records, pending = (pending + chunk).split(b"\0")
                 yield from records
 
-        def add_file(path):
-            if os.path.isabs(path):
+        def may_match(path):
+            # The Host owns ranking and Unicode matching. Drop only definite ASCII misses
+            # before spending time on metadata or sending results back over SSH.
+            if not ascii_groups or not path.isascii() or path == literal or path.rsplit("/", 1)[-1] == literal:
+                return True
+            upper = path.upper()
+            def is_subsequence(term):
+                chars = iter(upper)
+                return all(char in chars for char in term)
+            return all(any(is_subsequence(term) for term in group) for group in ascii_groups)
+
+        def relative_path(path):
+            return "./" + path if path == "~" or path.startswith("~/") else path
+
+        def real_directory(path):
+            if path not in directories:
+                try:
+                    directories[path] = (stat.S_ISDIR(os.lstat(path).st_mode)
+                                         and real_directory(os.path.dirname(path)))
+                except OSError:
+                    directories[path] = False
+            return directories[path]
+
+        def add_git_file(path):
+            relative = relative_path(path)
+            if os.path.isabs(path) or not may_match(relative):
                 return
-            full = os.path.join(real_root, path)
-            if os.path.realpath(full) != full or not within_workspace(full):
+            full = os.path.normpath(os.path.join(real_root, path))
+            if not full.startswith(root_prefix) or full == real_root:
                 return
             try:
-                if stat.S_ISREG(os.lstat(full).st_mode):
-                    paths.append(display_path(full))
+                if real_directory(os.path.dirname(full)) and stat.S_ISREG(os.lstat(full).st_mode):
+                    paths.append(relative)
             except OSError:
                 pass
 
@@ -87,15 +120,16 @@ public sealed partial class SshExecutionFileSystem
                     return None
 
                 try:
-                    for i, raw_path in enumerate(git_paths(process.stdout)):
-                        if i == scan_limit:
+                    scanned = 0
+                    for scanned, raw_path in enumerate(git_paths(process.stdout), start=1):
+                        if scanned > scan_limit:
                             return True
                         try:
-                            add_file(raw_path.decode("utf-8"))
+                            add_git_file(raw_path.decode("utf-8"))
                         except UnicodeDecodeError:
                             continue
                     if process.wait() == 0:
-                        return False
+                        return scanned > index_limit
                     errors.seek(0)
                     error = errors.read(4096)
                     if not error.startswith(b"fatal: not a git repository"):
@@ -124,13 +158,15 @@ public sealed partial class SshExecutionFileSystem
                                 if entry.is_dir(follow_symlinks=False) and entry.name not in skipped:
                                     pending.append(entry.path)
                                 elif entry.is_file(follow_symlinks=False):
-                                    add_file(os.path.relpath(entry.path, real_root))
+                                    relative = relative_path(entry.path[len(root_prefix):])
+                                    if may_match(relative):
+                                        paths.append(relative)
                             except (OSError, UnicodeEncodeError):
                                 continue
                 except OSError:
                     if directory == real_root:
                         raise
-            return False
+            return scanned > index_limit
 
         signal.signal(signal.SIGALRM, stop_scan)
         signal.setitimer(signal.ITIMER_REAL, scan_timeout_seconds)

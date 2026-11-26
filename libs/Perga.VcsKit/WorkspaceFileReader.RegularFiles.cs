@@ -22,16 +22,16 @@ public static partial class WorkspaceFileReader
         finally { Free(resolved); }
     }
 
-    public static EntryKind GetEntryKind(string path)
+    public static EntryKind GetEntryKind(string path, bool followSymlinks = true)
     {
         if (OperatingSystem.IsLinux())
-            return GetLinuxEntryKind(path);
+            return GetLinuxEntryKind(path, flags: followSymlinks ? 0 : 0x100); // AT_SYMLINK_NOFOLLOW
 
         if (OperatingSystem.IsMacOS())
         {
             var attributes = new MacAttributeList { BitmapCount = 5, Common = 0x8 }; // ATTR_CMN_OBJTYPE
             var result = new uint[2];
-            if (GetMacPathAttributes(path, ref attributes, result, 8, 0) != 0)
+            if (GetMacPathAttributes(path, ref attributes, result, 8, followSymlinks ? 0 : 1) != 0) // FSOPT_NOFOLLOW
                 throw UnixPathError(path);
             return GetMacEntryKind(result);
         }
@@ -40,6 +40,8 @@ public static partial class WorkspaceFileReader
             throw new UnauthorizedAccessException("File types cannot be validated on this platform.");
 
         var windowsAttributes = File.GetAttributes(path);
+        if (!followSymlinks && windowsAttributes.HasFlag(FileAttributes.ReparsePoint))
+            return EntryKind.Other;
         if (windowsAttributes.HasFlag(FileAttributes.Directory))
             return EntryKind.Directory;
         return windowsAttributes.HasFlag(FileAttributes.Device) ? EntryKind.Other : EntryKind.RegularFile;

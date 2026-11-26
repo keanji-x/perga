@@ -4,6 +4,7 @@ import { act, cleanup, waitFor } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
 import { commands, page, userEvent } from 'vitest/browser';
 
+import type { ApiTransportResponse } from '../../../../core/api/types.ts';
 import { decodeEventFrame } from '../../../../core/events/protocol.ts';
 import { EventStream, type EventStreamSink } from '../../systems/events/event-stream.ts';
 import { renderCommandFixture } from './composer-command-fixture.tsx';
@@ -92,6 +93,304 @@ function fileOpenEvents() {
   return { stream, emit };
 }
 
+function searchReply(paths: string[], truncated = false): ApiTransportResponse {
+  return { status: 200, statusText: 'OK', body: { paths, truncated } };
+}
+
+function activePath() {
+  const activeId = query().element().getAttribute('aria-activedescendant');
+  return activeId === null ? null : document.getElementById(activeId)?.getAttribute('aria-label');
+}
+
+function luminance(context: CanvasRenderingContext2D, ...colors: string[]) {
+  context.clearRect(0, 0, 1, 1);
+  for (const color of colors) {
+    context.fillStyle = color;
+    context.fillRect(0, 0, 1, 1);
+  }
+  const [r, g, b] = Array.from(context.getImageData(0, 0, 1, 1).data, byte => {
+    const value = byte / 255;
+    return value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
+  });
+  return r * 0.2126 + g * 0.7152 + b * 0.0722;
+}
+
+it('keeps the keyboard-focused Quick Open field flat and its keycaps legible in both themes', async () => {
+  await page.viewport(390, 800);
+  fileFixture();
+  await expect.element(page.getByRole('button', { name: 'Read report file' })).toBeVisible();
+  await userEvent.keyboard('{Control>}p{/Control}');
+  await expect.element(query()).toHaveFocus();
+  const field = getComputedStyle(query().element());
+  expect(field.outlineStyle).toBe('none');
+  expect(field.boxShadow).toBe('none');
+  expect(field.borderBottomWidth).toBe('0px');
+
+  const panel = dialog().element();
+  const keycaps = panel.querySelectorAll('kbd');
+  expect(keycaps).toHaveLength(6);
+  const context = document.createElement('canvas').getContext('2d')!;
+  const previous = document.documentElement.dataset.theme;
+  try {
+    for (const theme of ['light', 'dark']) {
+      document.documentElement.dataset.theme = theme;
+      const surface = getComputedStyle(panel).backgroundColor;
+      for (const keycap of keycaps) {
+        const style = getComputedStyle(keycap);
+        expect(style.borderTopWidth).toBe('1px');
+        expect(style.borderBottomWidth).toBe('1px');
+        expect(style.borderBottomColor).toBe(style.borderTopColor);
+        const background = luminance(context, surface, style.backgroundColor);
+        const foreground = luminance(context, surface, style.backgroundColor, style.color);
+        expect((Math.max(background, foreground) + 0.05) / (Math.min(background, foreground) + 0.05)).toBeGreaterThanOrEqual(4.5);
+      }
+    }
+  } finally {
+    if (previous === undefined) delete document.documentElement.dataset.theme;
+    else document.documentElement.dataset.theme = previous;
+  }
+});
+
+it('keeps filenames legible beside long directories and gives matches 4.5:1 contrast in both themes', async () => {
+  await page.viewport(390, 800);
+  const filename = 'public-config.ts';
+  const path = `src/${'extra-long-directory/'.repeat(10)}${filename}`;
+  fileFixture({ reply(request) {
+    return request.path.endsWith('/files/search?q=&limit=20000') ? searchReply([path]) : undefined;
+  } });
+  await expect.element(page.getByRole('button', { name: 'Read report file' })).toBeVisible();
+  await userEvent.keyboard('{Control>}p{/Control}');
+  await query().fill('public');
+  const row = dialog().getByRole('option', { name: path, exact: true });
+  await expect.element(row.getByText('public', { exact: true })).toBeVisible();
+  const match = row.element().querySelector('mark')!;
+  const name = match.parentElement!;
+  const directory = name.nextElementSibling!;
+  expect(name.textContent).toBe(filename);
+  expect(name.scrollWidth).toBe(name.clientWidth);
+  expect(directory.scrollWidth).toBeGreaterThan(directory.clientWidth);
+  const context = document.createElement('canvas').getContext('2d')!;
+  const previous = document.documentElement.dataset.theme;
+  try {
+    for (const theme of ['light', 'dark']) {
+      document.documentElement.dataset.theme = theme;
+      const surface = getComputedStyle(dialog().element()).backgroundColor;
+      const active = getComputedStyle(row.element()).backgroundColor;
+      for (const text of [match, name, directory]) {
+        const foreground = luminance(context, getComputedStyle(text).color);
+        for (const background of [luminance(context, surface), luminance(context, surface, active)]) {
+          expect((Math.max(background, foreground) + 0.05) / (Math.min(background, foreground) + 0.05)).toBeGreaterThanOrEqual(4.5);
+        }
+      }
+    }
+  } finally {
+    if (previous === undefined) delete document.documentElement.dataset.theme;
+    else document.documentElement.dataset.theme = previous;
+  }
+});
+
+it('anchors the input and filters a warm index locally across opens', async () => {
+  await page.viewport(1280, 800);
+  const indexPath = '/api/v1/tracks/daily/files/search?q=&limit=20000';
+  const filename = 'fe/web/src/features/report/quick-open/public.tsx';
+  const { requests } = fileFixture({ reply(request) {
+    if (request.path === indexPath) return searchReply(['README', 'src/code.ts', filename]);
+    return undefined;
+  } });
+  await expect.element(page.getByRole('button', { name: 'Read report file' })).toBeVisible();
+  await userEvent.keyboard('{Control>}p{/Control}');
+  await expect.element(dialog().getByRole('group', { name: 'Files' })).toBeVisible();
+  const y = query().element().getBoundingClientRect().top;
+  expect(dialog().element().getBoundingClientRect().top).toBeCloseTo(96, 0);
+  await query().fill('quick pub');
+  const row = dialog().getByRole('option', { name: filename, exact: true });
+  await expect.poll(() => [...row.element().querySelectorAll('mark')].map(mark => mark.textContent)).toEqual(['pub', 'quick']);
+  expect(row.element().firstElementChild?.children[1]?.textContent).toBe('public.tsx');
+  expect(query().element().getBoundingClientRect().top).toBe(y);
+  expect(dialog().getByRole('progressbar').query()).toBeNull();
+
+  await query().fill('does not match any file');
+  await expect.element(dialog().getByText('No matching files', { exact: true })).toBeVisible();
+  expect(query().element().getBoundingClientRect().top).toBe(y);
+  await userEvent.keyboard('{Escape}{Control>}p{/Control}');
+  await expect.element(dialog().getByRole('option', { name: 'README' })).toBeVisible();
+  await query().fill('code');
+  await expect.poll(activePath).toBe('src/code.ts');
+  expect(requests.filter(request => request.path.includes('/files/search')).map(request => request.path)).toEqual([indexPath]);
+});
+
+it('wraps arrow and Ctrl navigation and syncs a single highlight only on pointer movement', async () => {
+  await page.viewport(1280, 800);
+  fileFixture();
+  await expect.element(page.getByRole('button', { name: 'Read report file' })).toBeVisible();
+  await userEvent.keyboard('{Control>}p{/Control}');
+  const list = dialog().getByRole('listbox', { name: 'Files' });
+  const first = list.getByRole('option').first();
+  const last = list.getByRole('option').last();
+  await expect.element(first).toHaveAttribute('aria-selected', 'true');
+  await userEvent.keyboard('{ArrowUp}');
+  await expect.element(last).toHaveAttribute('aria-selected', 'true');
+  await userEvent.keyboard('{ArrowDown}');
+  await expect.element(first).toHaveAttribute('aria-selected', 'true');
+  await userEvent.keyboard('{Control>}p{/Control}');
+  await expect.element(last).toHaveAttribute('aria-selected', 'true');
+  await userEvent.keyboard('{Control>}n{/Control}');
+  await expect.element(first).toHaveAttribute('aria-selected', 'true');
+  await userEvent.keyboard('{PageDown}');
+  await expect.element(last).toHaveAttribute('aria-selected', 'true');
+  await userEvent.keyboard('{PageUp}');
+  await expect.element(first).toHaveAttribute('aria-selected', 'true');
+
+  await last.hover();
+  await expect.element(last).toHaveAttribute('aria-selected', 'true');
+  await userEvent.keyboard('{ArrowDown}');
+  await expect.element(first).toHaveAttribute('aria-selected', 'true');
+  expect(last.element().matches(':hover')).toBe(true);
+  expect(getComputedStyle(last.element()).backgroundColor).toBe('rgba(0, 0, 0, 0)');
+  expect(list.element().querySelectorAll('[aria-selected="true"]')).toHaveLength(1);
+  await first.hover();
+  await last.hover();
+  await expect.element(last).toHaveAttribute('aria-selected', 'true');
+});
+
+it('keeps local matches visible while a truncated index fetches additional results', async () => {
+  await page.viewport(1280, 800);
+  let finishSearch: (response: ApiTransportResponse) => void = () => {};
+  const pending = new Promise<ApiTransportResponse>(resolve => { finishSearch = resolve; });
+  const searchPath = '/api/v1/tracks/daily/files/search?q=quick%20pub&limit=200';
+  const { requests } = fileFixture({ reply(request) {
+    if (request.path.endsWith('/files/search?q=&limit=20000')) return searchReply(['quick-open/public.tsx', 'README'], true);
+    if (request.path === searchPath) return pending;
+    return undefined;
+  } });
+  await expect.element(page.getByRole('button', { name: 'Read report file' })).toBeVisible();
+  await userEvent.keyboard('{Control>}p{/Control}');
+  await expect.element(dialog().getByRole('option', { name: 'README' })).toBeVisible();
+  await query().fill('quick pub');
+  const local = dialog().getByRole('option', { name: 'quick-open/public.tsx', exact: true });
+  await expect.element(local).toBeVisible();
+  await expect.poll(() => requests.some(request => request.path === searchPath)).toBe(true);
+  expect(dialog().getByRole('progressbar').query()).toBeNull();
+  expect(local.element()).toBeVisible();
+  finishSearch(searchReply(['quick-open/public.tsx', 'extra/quick-open/public.tsx']));
+  await expect.element(dialog().getByRole('option', { name: 'extra/quick-open/public.tsx' })).toBeVisible();
+  await expect.element(local).toBeVisible();
+  expect(dialog().getByRole('option', { name: 'quick-open/public.tsx', exact: true }).elements()).toHaveLength(1);
+});
+
+it('commits the typed input before replacing results from a warm 20,000-path index', async () => {
+  await page.viewport(1280, 800);
+  const target = 'src/components/TrackSearch/public.tsx';
+  const paths = ['README.md', target, ...Array.from({ length: 19_998 }, (_, i) => `packages/p${i}/Settings/public.tsx`)];
+  fileFixture({ reply(request) {
+    return request.path.endsWith('/files/search?q=&limit=20000') ? searchReply(paths) : undefined;
+  } });
+  await expect.element(page.getByRole('button', { name: 'Read report file' })).toBeVisible();
+  await userEvent.keyboard('{Control>}p{/Control}');
+  const previous = dialog().getByRole('option', { name: 'README.md' });
+  await expect.element(previous).toHaveAttribute('aria-selected', 'true');
+  const input = query().element() as HTMLInputElement;
+  const commits: { value: string; previousVisible: boolean }[] = [];
+  const observer = new MutationObserver(() => commits.push({ value: input.value, previousVisible: previous.query() !== null }));
+  observer.observe(input, { attributeFilter: ['aria-activedescendant'] });
+  try {
+    await query().fill('track search');
+    await expect.element(dialog().getByRole('option', { name: target })).toHaveAttribute('aria-selected', 'true');
+    expect(commits[0]).toEqual({ value: 'track search', previousVisible: true });
+    await expect.element(previous).not.toBeInTheDocument();
+  } finally {
+    observer.disconnect();
+  }
+});
+
+it('aborts an obsolete supplemental search and ignores its late response', async () => {
+  await page.viewport(1280, 800);
+  let finishFirst: (response: ApiTransportResponse) => void = () => {};
+  const pending = new Promise<ApiTransportResponse>(resolve => { finishFirst = resolve; });
+  const firstPath = '/api/v1/tracks/daily/files/search?q=note&limit=200';
+  const { requests } = fileFixture({ reply(request) {
+    if (request.path.endsWith('/files/search?q=&limit=20000')) return searchReply(['README'], true);
+    if (request.path === firstPath) return pending;
+    if (request.path.endsWith('/files/search?q=notes&limit=200')) return searchReply(['docs/notes.ts']);
+    return undefined;
+  } });
+  await expect.element(page.getByRole('button', { name: 'Read report file' })).toBeVisible();
+  await userEvent.keyboard('{Control>}p{/Control}');
+  await expect.element(dialog().getByRole('option', { name: 'README' })).toBeVisible();
+  await query().fill('note');
+  await expect.poll(() => requests.some(request => request.path === firstPath)).toBe(true);
+  await query().fill('notes');
+  await expect.poll(() => requests.find(request => request.path === firstPath)?.signal?.aborted).toBe(true);
+  await expect.element(dialog().getByRole('option', { name: 'docs/notes.ts' })).toBeVisible();
+  await act(async () => {
+    finishFirst(searchReply(['obsolete/notes.ts']));
+    await pending;
+  });
+  expect(dialog().getByRole('option', { name: 'obsolete/notes.ts' }).query()).toBeNull();
+});
+
+it('completes folders with Tab, retaining the previous listing until the new folder loads', async () => {
+  await page.viewport(1280, 800);
+  let finishListing: (response: ApiTransportResponse) => void = () => {};
+  const pending = new Promise<ApiTransportResponse>(resolve => { finishListing = resolve; });
+  const { requests } = fileFixture({ reply(request) {
+    if (request.path.endsWith('/files?path=%2Ftmp%2Flogs')) return pending;
+    return undefined;
+  } });
+  await expect.element(page.getByRole('button', { name: 'Read report file' })).toBeVisible();
+  await userEvent.keyboard('{Control>}p{/Control}');
+  await query().fill('/tmp/lg:7-9');
+  const folder = dialog().getByRole('option', { name: '/tmp/logs' });
+  await expect.element(folder).toBeVisible();
+  expect(activePath()).toBeNull();
+  await userEvent.keyboard('{Tab}');
+  await expect.element(query()).toHaveValue('/tmp/logs/:7-9');
+  await expect.element(folder).toBeVisible();
+  await query().fill('/tmp/logs/srv:7-9');
+  await expect.element(folder).toBeVisible();
+  expect(dialog().getByRole('progressbar').query()).toBeNull();
+  finishListing({ status: 200, statusText: 'OK', body: {
+    relativePath: 'logs', isDirectory: true, entries: [{ name: 'server.log', relativePath: 'logs/server.log', isDirectory: false }],
+  } });
+  await expect.element(dialog().getByRole('option', { name: '/tmp/logs/server.log' })).toBeVisible();
+  expect(activePath()).toBeNull();
+  await userEvent.keyboard('{Tab}');
+  await expect.element(query()).toHaveValue('/tmp/logs/server.log:7-9');
+  expect(requests.filter(request => request.path.includes('/files?path=')).map(request => request.path)).toEqual([
+    '/api/v1/tracks/daily/files?path=%2Ftmp', '/api/v1/tracks/daily/files?path=%2Ftmp%2Flogs',
+  ]);
+});
+
+it('opens the typed home path from a warm listing unless a candidate is explicitly selected', async () => {
+  await page.viewport(1280, 800);
+  const { router, requests } = fileFixture({ reply(request) {
+    if (request.path.endsWith('/files?path=~')) return { status: 200, statusText: 'OK', body: {
+      relativePath: '/home/operator', isDirectory: true,
+      entries: [{ name: 'notes-old.md', relativePath: '/home/operator/notes-old.md', isDirectory: false }],
+    } };
+    return undefined;
+  } });
+  await expect.element(page.getByRole('button', { name: 'Read report file' })).toBeVisible();
+  await userEvent.keyboard('{Control>}p{/Control}');
+  await query().fill('~/');
+  const candidate = dialog().getByRole('option', { name: '~/notes-old.md' });
+  await expect.element(candidate).toHaveAttribute('aria-selected', 'true');
+  await query().fill('~/notes.md:42');
+  await expect.element(candidate).toBeVisible();
+  expect(activePath()).toBeNull();
+  await userEvent.keyboard('{Enter}');
+  await expect.poll(() => router.state.location.search as TrackSearch).toMatchObject({ file: '~/notes.md', line: 42 });
+  expect(requests.some(request => request.path.endsWith('/files?path=~%2Fnotes-old.md'))).toBe(false);
+
+  await userEvent.keyboard('{Control>}p{/Control}');
+  await query().fill('~/notes.md:42');
+  await expect.element(candidate).toBeVisible();
+  await userEvent.keyboard('{ArrowUp}');
+  await expect.element(candidate).toHaveAttribute('aria-selected', 'true');
+  await userEvent.keyboard('{Enter}');
+  await expect.poll(() => router.state.location.search as TrackSearch).toMatchObject({ file: '~/notes-old.md', line: 42 });
+});
+
 it('opens from Ctrl+P, positions the range, orders recent files, and pops back to the Report in one step', async () => {
   await page.viewport(1280, 410);
   const { router } = fileFixture();
@@ -108,7 +407,7 @@ it('opens from Ctrl+P, positions the range, orders recent files, and pops back t
 
   await userEvent.keyboard('{Control>}p{/Control}');
   await query().fill('example:125-127');
-  await expect.element(dialog().getByRole('option', { name: 'docs/example.txt' })).toBeVisible();
+  await expect.element(dialog().getByRole('option', { name: 'docs/example.txt' })).toHaveAttribute('aria-selected', 'true');
   await userEvent.keyboard('{Enter}');
   await expect.poll(() => router.state.location.search as TrackSearch).toMatchObject({ file: 'docs/example.txt', line: '125-127' });
   const fileHeader = page.getByText('docs/example.txt:125-127', { exact: true });
@@ -119,11 +418,12 @@ it('opens from Ctrl+P, positions the range, orders recent files, and pops back t
   await expect.poll(highlightIsCentered).toBe(true);
 
   await userEvent.keyboard('{Control>}p{/Control}');
-  await expect.element(dialog().getByRole('listbox', { name: 'Recent files' }).getByRole('option', { name: 'docs/example.txt' })).toBeVisible();
-  await userEvent.keyboard('{Tab}{Shift>}{Tab}{/Shift}');
+  await expect.element(dialog().getByRole('group', { name: 'Recent' }).getByRole('option', { name: 'docs/example.txt' })).toBeVisible();
+  await userEvent.keyboard('{Tab}');
+  await expect.element(query()).toHaveValue('docs/example.txt');
   await expect.element(query()).toHaveFocus();
   await query().fill('code:12');
-  await expect.element(dialog().getByRole('option', { name: 'src/code.ts' })).toBeVisible();
+  await expect.element(dialog().getByRole('option', { name: 'src/code.ts' })).toHaveAttribute('aria-selected', 'true');
   await userEvent.keyboard('{Enter}');
   await expect.poll(markedLines).toEqual(['content on line 12']);
   await back().click();
@@ -131,7 +431,7 @@ it('opens from Ctrl+P, positions the range, orders recent files, and pops back t
   await expect.element(reportLink).toHaveFocus();
 
   await userEvent.keyboard('{Control>}p{/Control}');
-  await expect.element(dialog().getByRole('option').first()).toHaveTextContent('src/code.ts');
+  await expect.element(dialog().getByRole('option').first()).toHaveAttribute('aria-label', 'src/code.ts');
 });
 
 it('opens the Daily Track from Today with Ctrl+P and ignores silent AI opens there', async () => {
@@ -145,7 +445,7 @@ it('opens the Daily Track from Today with Ctrl+P and ignores silent AI opens the
 
   await userEvent.keyboard('{Control>}p{/Control}');
   await expect.element(query()).toHaveFocus();
-  await expect.element(dialog().getByText('No recent files', { exact: true })).toBeVisible();
+  await expect.element(dialog().getByRole('group', { name: 'Files' })).toBeVisible();
   await query().fill('example:42');
   await dialog().getByRole('option', { name: 'docs/example.txt' }).click();
   await expect.poll(() => router.history.location.href).toBe('/track/daily?file=docs%2Fexample.txt&line=42');
@@ -323,7 +623,7 @@ it.each(['draft:notes.txt', 'draft\\notes.txt'])('opens the literal search resul
   await expect.poll(() => router.state.location.search as TrackSearch).toMatchObject({ file: path });
   await expect.element(page.getByRole('region', { name: 'File ' + path })).toBeVisible();
   await userEvent.keyboard('{Control>}p{/Control}');
-  await expect.element(dialog().getByRole('listbox', { name: 'Recent files' }).getByRole('option', { name: path, exact: true })).toBeVisible();
+  await expect.element(dialog().getByRole('group', { name: 'Recent' }).getByRole('option', { name: path, exact: true })).toBeVisible();
 });
 
 it('shares file reads between Report previews, embedded images and opened files', async () => {
@@ -409,7 +709,7 @@ it('shows the canonical path of an explicitly opened image in the page header an
     expect(header.element().parentElement).toBe(back().element().parentElement);
     expect(requests.filter(request => request.path === read)).toHaveLength(1);
     await userEvent.keyboard('{Control>}p{/Control}');
-    const recent = dialog().getByRole('listbox', { name: 'Recent files' });
+    const recent = dialog().getByRole('group', { name: 'Recent' });
     await expect.element(recent.getByRole('option', { name: canonical, exact: true })).toBeVisible();
     expect(recent.getByRole('option', { name: alias, exact: true }).query()).toBeNull();
     await query().fill('code');

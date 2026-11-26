@@ -31,6 +31,8 @@ export interface DialogProps {
   purpose: DialogPurpose;
   origin: DialogOrigin;
   open: boolean; onClose: () => void; title?: string; hideTitleRow?: boolean; children?: ReactNode; wide?: boolean | 'medium';
+  placement?: 'center' | 'top';
+  flush?: boolean;
   /** Present the dialog as a full-viewport surface (e.g. mobile full-screen settings) without modal chrome or lift motion. */
   fullscreen?: boolean;
   /** Drop the `×` while keeping the title; `hideTitleRow` can only remove both. */
@@ -67,7 +69,7 @@ function isVisibleWithin(element: HTMLElement, panel: HTMLElement): boolean {
   return true;
 }
 
-export function Dialog({ purpose, origin, open, onClose, title, hideTitleRow, hideClose, children, wide, fullscreen = false, initialFocusRef }: DialogProps) {
+export function Dialog({ purpose, origin, open, onClose, title, hideTitleRow, hideClose, children, wide, placement, flush = false, fullscreen = false, initialFocusRef }: DialogProps) {
   const viewport = useVisibleViewport(open);
   const [views, setViews] = useState<readonly (DialogChildView & { id: number })[]>([]);
   const nextViewId = useRef(0);
@@ -83,7 +85,8 @@ export function Dialog({ purpose, origin, open, onClose, title, hideTitleRow, hi
     ? { kind: 'anchor', anchor: { ref: origin.anchor.ref }, unavailable: origin.unavailable }
     : { kind: 'surface-center' });
   if (!open && presentation !== null) setPresentation(null);
-  useSurfacePresence({ open, present: open, enabled: !fullscreen, onExited: () => {},
+  // Content in the top-anchored picker changes while typing. Keep the input at a fixed position.
+  useSurfacePresence({ open, present: open, enabled: !fullscreen && placement !== 'top', onExited: () => {},
     parts: { kind: 'single', primary: { element: panelRef, readFrame: () => readSurfaceFrame(frameRef.current) } },
     geometry: { kind: 'lift', origin: presentation ?? origin },
   });
@@ -206,8 +209,12 @@ export function Dialog({ purpose, origin, open, onClose, title, hideTitleRow, hi
   if (!open) return null;
   const showingView = view !== null;
   const headerTitle = showingView ? view.title : title;
+  const top = !fullscreen && placement === 'top';
+  const overlayClass = fullscreen ? styles.fullscreenOverlay : top ? styles.topOverlay
+    : placement === undefined && (showingView || wide) ? 'dialog-overlay-wide' : '';
+  const maxBlockSize = fullscreen || top ? undefined : { maxBlockSize: `calc(${viewport.height}px - var(--space-6))` };
   const onPanelKeyDown: KeyboardEventHandler<HTMLDivElement> = (event) => {
-    if (event.key !== 'Tab' || !panelRef.current) return;
+    if (event.defaultPrevented || event.key !== 'Tab' || !panelRef.current) return;
     const panel = panelRef.current;
     const items = focusables(panel);
     if (items.length === 0) { event.preventDefault(); panel.focus(); return; }
@@ -217,13 +224,13 @@ export function Dialog({ purpose, origin, open, onClose, title, hideTitleRow, hi
     }
   };
   return createPortal(<>{dismissalLayer}<LayerDepthProvider><DialogViewContext.Provider value={controller}><div
-    className={fullscreen ? `dialog-overlay ${styles.fullscreenOverlay}` : showingView || wide ? 'dialog-overlay dialog-overlay-wide' : 'dialog-overlay'} role="presentation"
+    className={`dialog-overlay ${overlayClass}`} role="presentation"
     style={{ insetBlockStart: viewport.bottomEdge - viewport.height, insetBlockEnd: viewport.bottomInset }}
     onMouseDown={(event) => { if (purpose === 'info' && !showingView && event.target === event.currentTarget) onClose(); }}>
-    <div ref={frameRef} className={`${styles.frame} ${fullscreen ? styles.fullscreenFrame : showingView || wide === true ? styles.wide : wide === 'medium' ? styles.medium : ''}`}
-      style={fullscreen ? undefined : { maxBlockSize: `calc(${viewport.height}px - var(--space-6))` }}>
-    <CardFrame ref={panelRef} className={`${styles.panel} ${fullscreen ? `dialog-panel ${styles.fullscreenPanel}` : showingView || wide === true ? 'dialog-panel dialog-panel-wide' : 'dialog-panel'}`} data-nc-escape-layer=""
-      style={fullscreen ? undefined : { maxBlockSize: `calc(${viewport.height}px - var(--space-6))` }}
+    <div ref={frameRef} className={`${styles.frame} ${top ? styles.topFrame : ''} ${fullscreen ? styles.fullscreenFrame : showingView || wide === true ? styles.wide : wide === 'medium' ? styles.medium : ''}`}
+      style={maxBlockSize}>
+    <CardFrame ref={panelRef} className={`dialog-panel ${styles.panel} ${fullscreen ? styles.fullscreenPanel : showingView || wide === true ? 'dialog-panel-wide' : ''} ${flush && !showingView ? styles.flushPanel : ''}`} data-nc-escape-layer=""
+      style={maxBlockSize}
       role="dialog" aria-modal="true" aria-label={typeof headerTitle === 'string' ? headerTitle : undefined}
       aria-labelledby={headerTitle && typeof headerTitle !== 'string' ? titleId : undefined}
       tabIndex={-1} onMouseDown={(event) => event.stopPropagation()} onKeyDown={onPanelKeyDown}>
