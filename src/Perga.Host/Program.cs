@@ -119,9 +119,39 @@ app.Use(RequestOriginGuard.EnforceWriteSourceAsync);
 
 try
 {
+    var releases = app.Services.GetRequiredService<ReleaseSnapshotManager>();
+    MapWebAndEndpoints(app, releases);
+
     _ = app.Services.GetRequiredService<IAuthPasswordHasher>();
     _ = app.Services.GetRequiredService<SystemManagementAuthorization>();
-    var releases = app.Services.GetRequiredService<ReleaseSnapshotManager>();
+    var storagePaths = app.Services.GetRequiredService<ResolvedHostStoragePaths>();
+    var onboardingCode = await HostStartupOnboarding.EnsureInteractiveOwnerIfNeededAsync(
+        app.Services.GetRequiredService<IAuthStore>(),
+        storagePaths.DbPath,
+        storagePaths.IsEphemeral,
+        isTestHost,
+        isInteractive: HostStartupOnboarding.IsForegroundInteractiveTerminal(),
+        Console.In,
+        Console.Out,
+        Console.Error);
+    if (onboardingCode != 0)
+    {
+        await app.DisposeAsync();
+        return onboardingCode;
+    }
+
+    app.Run();
+}
+catch (Exception ex) when (!isTestHost && HostStartupOnboarding.FormatStartupError(ex) is { } message)
+{
+    await Console.Error.WriteLineAsync(message);
+    await app.DisposeAsync();
+    return 1;
+}
+return 0;
+
+static void MapWebAndEndpoints(WebApplication app, ReleaseSnapshotManager releases)
+{
     var contentTypeProvider = new FileExtensionContentTypeProvider();
     contentTypeProvider.Mappings[".webmanifest"] = "application/manifest+json";
     app.UseDefaultFiles(new DefaultFilesOptions { FileProvider = releases, RequestPath = string.Empty });
@@ -154,31 +184,6 @@ try
 
         await HttpErrorHandling.NotFound($"Route '{ctx.Request.Path}' was not found.").ExecuteAsync(ctx).ConfigureAwait(false);
     });
-
-    var storagePaths = app.Services.GetRequiredService<ResolvedHostStoragePaths>();
-    var onboardingCode = await HostStartupOnboarding.EnsureInteractiveOwnerIfNeededAsync(
-        app.Services.GetRequiredService<IAuthStore>(),
-        storagePaths.DbPath,
-        storagePaths.IsEphemeral,
-        isTestHost,
-        isInteractive: HostStartupOnboarding.IsForegroundInteractiveTerminal(),
-        Console.In,
-        Console.Out,
-        Console.Error);
-    if (onboardingCode != 0)
-    {
-        await app.DisposeAsync();
-        return onboardingCode;
-    }
-
-    app.Run();
 }
-catch (Exception ex) when (!isTestHost && HostStartupOnboarding.FormatStartupError(ex) is { } message)
-{
-    await Console.Error.WriteLineAsync(message);
-    await app.DisposeAsync();
-    return 1;
-}
-return 0;
 
 public partial class Program;

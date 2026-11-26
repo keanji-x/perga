@@ -21,7 +21,6 @@ resolve_safe_path() {
   while [[ "$path" == */ ]]; do path="${path%/}"; done
   [[ -n "$path" ]] || die "refusing to use '/' for ${name}."
   [[ ! -L "$path" ]] || die "${name} (${raw}) must not be a symlink."
-
   existing="$path"
   while [[ -n "$existing" && ! -d "$existing" ]]; do
     [[ ! -L "$existing" ]] || die "${name} (${raw}) has a broken symlink at ${existing}."
@@ -64,7 +63,6 @@ is_inside() {
 
 need_cmd curl
 need_cmd tar
-
 if [[ ! "$REPO" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*/[A-Za-z0-9][A-Za-z0-9_.-]*$ ]]; then die "PERGA_REPO must look like owner/repo (got '${REPO}')."; fi
 if [[ "$VERSION" != "latest" && ! "$VERSION" =~ $SEMVER_TAG ]]; then die "PERGA_VERSION must be 'latest' or a SemVer tag such as v0.1.0 (got '${VERSION}')."; fi
 
@@ -143,7 +141,6 @@ download() {
 echo "Downloading ${ARCHIVE} (${VERSION})..."
 download "${BASE_URL}/${ARCHIVE}" "${tmp}/${ARCHIVE}" 300
 download "${BASE_URL}/${ARCHIVE}.sha256" "${tmp}/${ARCHIVE}.sha256" 60
-
 echo "Verifying SHA-256 checksum..."
 expected_hash=$(awk -v target="$ARCHIVE" '
   NF >= 2 {
@@ -155,7 +152,6 @@ expected_hash=$(awk -v target="$ARCHIVE" '
   END { if (count != 1) exit 1 }
 ' "${tmp}/${ARCHIVE}.sha256") || die "${ARCHIVE}.sha256 did not contain a unique entry for ${ARCHIVE}."
 [[ "$expected_hash" =~ ^[0-9a-f]{64}$ ]] || die "invalid SHA-256 digest in ${ARCHIVE}.sha256."
-
 if command -v sha256sum >/dev/null 2>&1; then
   actual_hash=$(sha256sum "${tmp}/${ARCHIVE}" | awk '{print tolower($1)}')
 elif command -v shasum >/dev/null 2>&1; then
@@ -256,12 +252,16 @@ case ":${PATH}:" in
     echo ""; echo "Add ${BIN_DIR} to your PATH:"
     shell=$(basename "${SHELL:-sh}")
     export_line="export PATH=\"$BIN_DIR:\$PATH\""
-    [[ "$BIN_DIR" =~ ^[A-Za-z0-9_./+:@-]+$ ]] || export_line="export PATH=$(quote_sh "$BIN_DIR"):\"\$PATH\""
+    append_command=echo
+    if [[ ! "$BIN_DIR" =~ ^[A-Za-z0-9_./+:@-]+$ ]]; then
+      export_line="export PATH=$(quote_sh "$BIN_DIR"):\"\$PATH\""
+      append_command="printf '%s\n'"
+    fi
     case "$shell" in
       zsh|bash)
         rc="~/.${shell}rc"
         [[ "$shell" == bash && "$(uname -s)" == Darwin && -f "$HOME/.bash_profile" && ! -f "$HOME/.bashrc" ]] && rc="~/.bash_profile"
-        printf '  printf %s %s >> %s && source %s\n' "'%s\n'" "$(quote_sh "$export_line")" "$rc" "$rc" ;;
+        printf '  %s %s >> %s && source %s\n' "$append_command" "$(quote_sh "$export_line")" "$rc" "$rc" ;;
       fish) fish_q="${BIN_DIR//\\/\\\\}"; escaped="\\'"; printf "  fish_add_path '%s'\n" "${fish_q//\'/$escaped}" ;;
       *) printf '  %s\n' "$export_line" ;;
     esac

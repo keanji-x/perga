@@ -138,8 +138,7 @@ public sealed class AgentRuntime : IAgentRuntime
         var bridgeScript = _transport.ResolveBridgeScriptPath(_options.BridgeScriptPath);
         var (exeOverride, extraEnv) = ResolveOverride(provider, oarRuntimeId);
         var env = BuildProcessEnvironment(extraEnv);
-        var nodeExe = _transport.ResolveNodeExecutable(
-            _options.NodeExecutablePath, env, includeSystemLocations: _options.BaseEnvironment is null);
+        var nodeExe = ResolveNodeExecutable(env);
 
         var invocation = new CommandInvocation(nodeExe, [bridgeScript], fullCwd, env);
         lock (_sessionSync)
@@ -187,8 +186,7 @@ public sealed class AgentRuntime : IAgentRuntime
             var bridgeScript = _transport.ResolveBridgeScriptPath(_options.BridgeScriptPath);
             var (exeOverride, extraEnv) = ResolveOverride(provider, oarRuntimeId);
             var env = BuildProcessEnvironment(extraEnv);
-            var nodeExe = _transport.ResolveNodeExecutable(
-                _options.NodeExecutablePath, env, includeSystemLocations: _options.BaseEnvironment is null);
+            var nodeExe = ResolveNodeExecutable(env);
             var cwd = _transport.TempDirectory;
             var timeout = _options.ProbeTimeout > TimeSpan.Zero ? _options.ProbeTimeout : TimeSpan.FromSeconds(30);
 
@@ -247,6 +245,11 @@ public sealed class AgentRuntime : IAgentRuntime
         _options.ProviderOverrides.TryGetValue(oarRuntimeId, out configured)
             ? (configured.FileName, configured.Env)
             : (null, null);
+
+    private string ResolveNodeExecutable(IReadOnlyDictionary<string, string> env) =>
+        _options.BaseEnvironment is not null && _transport is LocalSubprocessTransport
+            ? OarNodeResolver.ResolveNode24Executable(_options.NodeExecutablePath, env, includeSystemLocations: false)
+            : _transport.ResolveNodeExecutable(_options.NodeExecutablePath, env);
 
     private Dictionary<string, string> BuildProcessEnvironment(IReadOnlyDictionary<string, string>? overrides)
     {

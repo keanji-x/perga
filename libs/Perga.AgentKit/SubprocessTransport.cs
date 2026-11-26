@@ -22,8 +22,6 @@ public interface ISubprocessTransport
 
     ISubprocessHandle StartInteractive(CommandInvocation invocation);
     string ResolveNodeExecutable(string? configuredExecutable, IReadOnlyDictionary<string, string>? environment);
-    string ResolveNodeExecutable(string? configuredExecutable, IReadOnlyDictionary<string, string>? environment, bool includeSystemLocations) =>
-        ResolveNodeExecutable(configuredExecutable, environment);
     string ResolveBridgeScriptPath(string? configuredBridgeScriptPath);
     bool DirectoryExists(string path);
 }
@@ -38,11 +36,7 @@ public sealed class LocalSubprocessTransport : ISubprocessTransport
         StdioSubprocess.Start(invocation);
 
     public string ResolveNodeExecutable(string? configuredExecutable, IReadOnlyDictionary<string, string>? environment) =>
-        ResolveNodeExecutable(configuredExecutable, environment, includeSystemLocations: true);
-
-    public string ResolveNodeExecutable(
-        string? configuredExecutable, IReadOnlyDictionary<string, string>? environment, bool includeSystemLocations) =>
-        OarNodeResolver.ResolveNode24Executable(configuredExecutable, environment, includeSystemLocations);
+        OarNodeResolver.ResolveNode24Executable(configuredExecutable, environment);
 
     public string ResolveBridgeScriptPath(string? configuredBridgeScriptPath)
     {
