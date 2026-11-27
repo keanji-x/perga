@@ -132,13 +132,13 @@ describe('Unified mobile headers', () => {
     await settlePaint();
     await Promise.all(document.getAnimations().filter((animation) => animation.effect?.getTiming().iterations !== Infinity).map((animation) => animation.finished.catch(() => undefined)));
     await page.screenshot({ path: '../../../../test-results/clean-390-areas.png' });
-    expect(page.getByRole('button', { name: 'Responsive mobile UI', exact: true }).query()).toBeNull();
+    expect(page.getByRole('button', { name: /^Responsive mobile UI\b/ }).query()).toBeNull();
     await page.elementLocator(area).click();
     await page.getByRole('heading', { name: 'Product', exact: true }).findElement();
     await settlePaint();
     await Promise.all(document.getAnimations().filter((animation) => animation.effect?.getTiming().iterations !== Infinity).map((animation) => animation.finished.catch(() => undefined)));
     await page.screenshot({ path: '../../../../test-results/clean-390-tracks.png' });
-    await page.getByRole('button', { name: 'Responsive mobile UI', exact: true }).findElement();
+    await page.getByRole('button', { name: /^Responsive mobile UI\b/ }).findElement();
     expect(document.querySelector('[data-nc-workspace-page="tracks"] [aria-label="Workspace actions"]')).toBeNull();
     await expect.element(page.getByRole('button', { name: 'New track', exact: true })).toBeVisible();
     expect(router.state.location.pathname).toBe('/');
@@ -165,7 +165,7 @@ describe('Unified mobile headers', () => {
     expect(tracks.getBoundingClientRect().width).toBe(390);
     expect(tracks.getBoundingClientRect().height).toBe(844);
     expect(areas.isConnected).toBe(true); expect(areas.inert).toBe(true);
-    await page.getByRole('button', { name: 'Responsive mobile UI', exact: true }).findElement();
+    await page.getByRole('button', { name: /^Responsive mobile UI\b/ }).findElement();
     await page.screenshot({ path: '../../../../test-results/direct-track-file-list.png' });
     const back = await page.getByRole('button', { name: 'Back to Workspace' }).findElement();
     (back as HTMLElement).focus();
@@ -251,8 +251,8 @@ describe('Unified mobile headers', () => {
     expect(selector.query()).not.toBeNull();
     await selector.click();
     expect(page.getByRole('textbox', { name: 'Track title', exact: true }).query()).toBeNull();
-    expect((await page.getByRole('button', { name: 'Responsive mobile UI', exact: true }).findElement()).getAttribute('aria-current')).toBe('page');
-    await page.getByRole('button', { name: 'Another track', exact: true }).click();
+    expect((await page.getByRole('button', { name: /^Responsive mobile UI\b/ }).findElement()).getAttribute('aria-current')).toBe('page');
+    await page.getByRole('button', { name: /^Another track\b/ }).click();
     await expect.poll(() => router.state.location.pathname).toBe('/track/w2');
     expect(writes).toEqual([]);
     await editTrack();
@@ -273,7 +273,7 @@ describe('Unified mobile headers', () => {
     const alert = await page.getByRole('alert').findElement();
     expect(alert.textContent).toContain(failure === 'areas' ? 'Areas are unavailable.' : 'Tracks are unavailable.');
     expect(alert.textContent).not.toContain('List unavailable');
-    expect(page.getByRole('button', { name: 'Another track', exact: true }).query()).toBeNull();
+    expect(page.getByRole('button', { name: /^Another track\b/ }).query()).toBeNull();
     await page.getByRole('button', { name: 'Retry', exact: true }).findElement();
     await userEvent.keyboard('{Escape}');
     await expect.poll(() => page.getByRole('dialog', { name: 'Tracks and settings' }).query()).toBeNull();
@@ -430,7 +430,7 @@ describe('Unified mobile headers', () => {
     expect(selector.getBoundingClientRect().right).toBeLessThanOrEqual(width - 16);
     await page.elementLocator(selector).click();
     const trackPage = await page.getByRole('dialog', { name: 'Tracks and settings' }).findElement();
-    await page.getByRole('button', { name: 'Responsive mobile UI', exact: true }).findElement();
+    await page.getByRole('button', { name: /^Responsive mobile UI\b/ }).findElement();
     await expect.poll(() => document.querySelector('#mobile-workspace-navigation')!.getAnimations({ subtree: true }).filter(animation => animation.effect?.getTiming().iterations !== Infinity).every(animation => animation.playState !== 'running')).toBe(true);
     expect(trackPage.getBoundingClientRect().left).toBeGreaterThanOrEqual(0);
     expect(trackPage.getBoundingClientRect().right).toBeLessThanOrEqual(width);

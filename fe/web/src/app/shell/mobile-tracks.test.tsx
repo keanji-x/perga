@@ -39,7 +39,7 @@ describe('MobileTracks', () => {
     expect(onEditArea).toHaveBeenCalledWith(area, expect.objectContaining({ kind: 'anchor' }));
     await userEvent.click(screen.getByRole('button', { name: 'New track' }));
     expect(onNewTrack).toHaveBeenCalledWith('c1');
-    const selected = screen.getByRole('button', { name: 'Responsive mobile UI' });
+    const selected = screen.getByRole('button', { name: /^Responsive mobile UI\b/ });
     expect(selected.getAttribute('aria-current')).toBe('page');
     await userEvent.click(selected);
     expect(onOpenTrack).toHaveBeenCalledWith('w1');
@@ -54,7 +54,7 @@ describe('MobileTracks', () => {
       areaId="c1" currentTrackId={undefined} onBack={onBack} onNewTrack={onNewTrack} onOpenSettings={onOpenSettings} onCreateArea={onCreateArea} onSelectArea={vi.fn()}
       onEditArea={onEditArea} onOpenTrack={vi.fn()} isUnread={() => false} readError={null} readLoading={false} onRetryRead={vi.fn()} />);
     expect(screen.queryByRole('button', { name: 'Product' })).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Responsive mobile UI' })).toBeNull();
+    expect(screen.queryByRole('button', { name: /^Responsive mobile UI\b/ })).toBeNull();
     expect(screen.queryByRole('button', { name: 'New area' })).toBeNull();
     expect(screen.getByRole<HTMLButtonElement>('button', { name: 'New track' }).disabled).toBe(true);
     expect(screen.queryByRole('button', { name: 'Area actions' })).toBeNull();
@@ -99,62 +99,46 @@ describe('MobileTracks', () => {
     expect(onRetryRead).toHaveBeenCalledOnce();
   });
 
-  // The fixtures disagree with the open/closed state in both directions, so a row that read activity from it reddens here.
-  it('track rows carry the activity indicator and name bit from the overlay, never the open/closed state', () => {
-    const marker = () => screen.getByRole('button', { name: /^Responsive mobile UI/ })
-      .querySelector('[data-nc-activity]')?.getAttribute('data-nc-activity') ?? null;
-    const name = () => screen.getByRole('button', { name: /^Responsive mobile UI/ }).getAttribute('aria-label');
-    /* What the row is described by (`aria-describedby` → an element's text), or `null`. */
-    const description = () => {
-      const id = screen.getByRole('button', { name: /^Responsive mobile UI/ }).getAttribute('aria-describedby');
-      return id === null ? null : document.getElementById(id)?.textContent ?? null;
-    };
-    const mount = (overrides: Partial<Track>, isUnread: (track: Track) => boolean = () => false) => (
+  it('announces overlay activity and unread receipts without status icons', () => {
+    const row = (name: RegExp) => screen.getByRole('button', { name });
+    const mount = (overrides: Partial<Track>, unread = false) => (
       <MobileTracks view="tracks" areas={[area]} tracksByArea={new Map([['c1', [{ ...track, ...overrides }]]])} areaId="c1" currentTrackId={undefined}
         onBack={vi.fn()} onNewTrack={vi.fn()} onOpenSettings={vi.fn()} onCreateArea={vi.fn()} onSelectArea={vi.fn()} onEditArea={vi.fn()} onOpenTrack={vi.fn()}
-        isUnread={isUnread} readError={null} readLoading={false} onRetryRead={vi.fn()} />
+        isUnread={() => unread} readError={null} readLoading={false} onRetryRead={vi.fn()} />
     );
+
     const view = render(mount({ working: false }));
-    expect(marker()).toBeNull();
-    expect(name()).toBe('Responsive mobile UI');
-    expect(description()).toBeNull();
+    expect(row(/^Responsive mobile UI No updates yet$/).querySelector('svg')).toBeNull();
 
     view.rerender(mount({ closedAt: 5, working: true }));
-    expect(marker()).toBe('working');
-    expect(name()).toBe('Responsive mobile UI, working, closed');
-    expect(description()).toBeNull();
+    expect(row(/^Responsive mobile UI.* Running Closed$/).querySelector('svg')).toBeNull();
 
     view.rerender(mount({ attention: 'input' }));
-    expect(marker()).toBe('attention');
-    expect(name()).toBe('Responsive mobile UI, waiting on you');
+    expect(row(/^Responsive mobile UI Waiting on you$/).querySelector('svg')).toBeNull();
 
     view.rerender(mount({ attention: 'failed' }));
-    expect(marker()).toBe('failed');
-    expect(name()).toBe('Responsive mobile UI, needs attention');
+    expect(row(/^Responsive mobile UI Needs repair$/).querySelector('svg')).toBeNull();
 
-    // Unread: a blue dot, nothing added to the name, and the fact is the button's description.
-    view.rerender(mount({ notifiableSessions: [{ sessionId: 's1', lastNotifiableTurnAtMs: 150 }] }, (candidate) => candidate.notifiableSessions.some((item) => item.lastNotifiableTurnAtMs > 100)));
-    expect(marker()).toBe('unread');
-    expect(name()).toBe('Responsive mobile UI');
-    expect(description()).toBe('Unread updates');
+    view.rerender(mount({}, true));
+    expect(row(/^Responsive mobile UI Unread update$/).querySelector('svg')).toBeNull();
 
-    // The description hangs on the FOLDED state, not on the receipt: unread under working is "working" and nothing describes it.
-    view.rerender(mount({ notifiableSessions: [{ sessionId: 's1', lastNotifiableTurnAtMs: 150 }], working: true }, (candidate) => candidate.notifiableSessions.some((item) => item.lastNotifiableTurnAtMs > 100)));
-    expect(marker()).toBe('working');
-    expect(name()).toBe('Responsive mobile UI, working');
-    expect(description()).toBeNull();
+    view.rerender(mount({ working: true }, true));
+    expect(row(/^Responsive mobile UI Running Unread$/).querySelector('svg')).toBeNull();
 
-    // An open track with an idle planner shows nothing at all, and no Closed meta.
-    view.rerender(mount({ working: false }));
-    expect(marker()).toBeNull();
-    expect(name()).toBe('Responsive mobile UI');
-    expect(description()).toBeNull();
-    expect(screen.getByRole('button', { name: 'Responsive mobile UI' }).textContent).not.toContain('Closed');
+    view.rerender(mount({ pinnedAt: 5 }, true));
+    expect(row(/^Responsive mobile UI Unread update$/).querySelector('svg')).toBeNull();
 
-    // A closed track says so in its meta, as a fact, not as activity.
-    view.rerender(mount({ closedAt: 5, working: false }));
-    expect(marker()).toBeNull();
-    expect(screen.getByRole('button', { name: 'Responsive mobile UI, closed' }).textContent).toContain('Closed');
+    view.rerender(mount({ pinnedAt: 5 }));
+    expect(row(/^Responsive mobile UI Pinned$/).querySelector('svg')).toBeNull();
+
+    view.rerender(mount({ pinnedAt: 5, previewKind: 'summary', previewText: 'Release notes' }));
+    expect(row(/^Responsive mobile UI Pinned · Summary:/).textContent).toContain('Pinned · Summary: Release notes');
+
+    view.rerender(mount({ pinnedAt: 5, previewKind: 'reply', previewText: 'Ready for review' }));
+    expect(row(/^Responsive mobile UI Pinned · Reply:/).textContent).toContain('Pinned · Reply: Ready for review');
+
+    view.rerender(mount({ closedAt: 5 }, true));
+    expect(row(/^Responsive mobile UI.* Closed Unread$/).querySelector('svg')).toBeNull();
   });
 });
 

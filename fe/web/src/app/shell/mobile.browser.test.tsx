@@ -139,7 +139,7 @@ describe('Track mobile presentation', () => {
     await expect.element(page.getByRole('dialog', { name: 'Tracks and settings' })).toBeVisible();
     const navigation = await page.getByRole('dialog', { name: 'Tracks and settings' }).findElement();
     expect(page.getByRole('button', { name: 'Settings', exact: true }).query()).toBeNull();
-    const currentTrack = await page.getByRole('button', { name: 'Responsive mobile UI', exact: true }).findElement();
+    const currentTrack = await page.getByRole('button', { name: /^Responsive mobile UI\b/ }).findElement();
     expect(currentTrack.getAttribute('aria-current')).toBe('page');
     expect(navigation.querySelector('button[aria-label="Back to Report"]')).not.toBeNull();
     const newTrack = await page.getByRole('button', { name: 'New track', exact: true }).findElement();
@@ -158,7 +158,7 @@ describe('Track mobile presentation', () => {
     expect(getComputedStyle(reportChatDock).display).toBe('none');
     openerElement.focus();
     expect(document.activeElement).not.toBe(openerElement);
-    await page.getByRole('button', { name: 'Responsive mobile UI', exact: true }).click();
+    await page.getByRole('button', { name: /^Responsive mobile UI\b/ }).click();
     expect(document.querySelector('nav[aria-label="Primary"]')).toBeNull();
 
     await router.navigate({ to: '/track/w1', search: { panel: 'outline' } });
@@ -469,7 +469,7 @@ describe('Track mobile presentation', () => {
     await page.getByRole('heading', { name: 'Frontend', exact: true }).findElement();
     expect(document.activeElement).not.toBe(document.body);
     expect(router.state.location.pathname).toBe('/');
-    expect(page.getByRole('button', { name: 'Responsive mobile UI', exact: true }).query()).toBeNull();
+    expect(page.getByRole('button', { name: /^Responsive mobile UI\b/ }).query()).toBeNull();
     await page.getByText('No tracks in this area').findElement();
     await page.getByRole('button', { name: 'Area actions' }).click();
     await page.getByRole('menuitem', { name: 'Edit area Frontend' }).click();
@@ -802,7 +802,7 @@ it('returns to the latest report opener and releases Track selection before pain
   await page.elementLocator(selector).click();
   await Promise.all(host.getAnimations().map(animation => animation.finished));
   const held = holdWorkspaceExit(host);
-  await page.getByRole('button', { name: 'Responsive mobile UI', exact: true }).click();
+  await page.getByRole('button', { name: /^Responsive mobile UI\b/ }).click();
   const exit = held();
   expectPaintOnly(host);
   expect(router.state.location.pathname).toBe('/track/w1');

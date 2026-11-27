@@ -1,16 +1,18 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, type Ref } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, type ReactNode, type Ref } from 'react';
 
 import { areaOf, visibleAreas, type Area } from '../../../../core/domain/area.ts';
 import { createRelativeTimeFormatters } from '../../../../core/domain/relative-time.ts';
 import { buildFocusFeed, FOCUS_TABS, type FocusTab } from '../../../../core/domain/track-groups.ts';
-import type { Track } from '../../../../core/domain/track.ts';
+import { isClosed, type Track } from '../../../../core/domain/track.ts';
 import { EmptyState } from '../../ui/empty-state/public.tsx';
 import { ErrorBox } from '../../ui/error-box/public.tsx';
 import { Icon } from '../../ui/icon/public.tsx';
 import { LoadingStatus } from '../../ui/loading-status/public.tsx';
 import { useState } from '../../ui/state/public.ts';
 import styles from './focus-home.module.css';
-import { focusEmptyCopy, FocusTrackRow } from './focus-rows.tsx';
+import { focusEmptyCopy, MobileTrackFeedRow } from './focus-rows.tsx';
+
+export { MobileTrackFeedRow };
 
 function tabLabel(tab: FocusTab): string {
   switch (tab) {
@@ -34,6 +36,7 @@ export type MobileFocusHomeProps = Readonly<{
   onOpenTrack: (trackId: string) => void;
   onNewTrack?: (areaId?: string) => void;
   onMarkAllRead?: (tracks: readonly Track[]) => void;
+  renderTrackTitle?: (track: Track, content: ReactNode) => ReactNode;
   nowMs?: number;
 }>;
 
@@ -50,6 +53,7 @@ export function MobileFocusHome({
   onOpenTrack,
   onNewTrack,
   onMarkAllRead,
+  renderTrackTitle,
   nowMs,
 }: MobileFocusHomeProps) {
   const shownAreas = useMemo(() => visibleAreas(areas), [areas]);
@@ -293,15 +297,16 @@ export function MobileFocusHome({
         {rows.length > 0 && (
           <ul className={styles.feed} aria-label="Tracks">
             {rows.map((track) => (
-              <FocusTrackRow
+              <MobileTrackFeedRow
                 key={track.id}
                 track={track}
-                areas={shownAreas}
+                areaName={areaOf(track.areaId, shownAreas)?.name}
                 query={query}
                 now={now}
-                unread={isUnread(track)}
+                unread={!isClosed(track) && isUnread(track)}
                 formatters={timeFormatters}
                 onOpenTrack={onOpenTrack}
+                renderTitle={renderTrackTitle}
               />
             ))}
           </ul>
