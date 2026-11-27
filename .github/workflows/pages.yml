@@ -8,6 +8,7 @@ on:
       - 'install.sh'
       - 'docs/product/vision.en.md'
       - 'docs/essays/**'
+      - 'docs/assets/hero.png'
       - 'templates/equity-research/widgets/range-axis.html'
       - 'src/Perga.Kernel/Templates/Memory/widgets/entries.html'
       - 'fe/web/src/ui/brand/**'
@@ -52,6 +53,7 @@ jobs:
           test -s site/dist/essays/index.html
           test -s site/dist/essays/rust-to-csharp.html
           test -s site/dist/essays/why-report-centric.html
+          test -s site/dist/assets/hero.png
           test -s site/dist/favicon.svg
           test -s site/dist/icon-192.png
           test -s site/dist/install.sh

@@ -32,6 +32,8 @@ To make **readability** and **maintainability** work in practice, Perga relies o
 
 **Separate data from presentation.** Task and domain state live as schema-validated structured data—exact, verifiable facts for AI to read and write. On top of it, Perga layers frontend widgets—tables, progress views, or custom charts—so humans can take in the state at a glance. When the underlying state changes, the views update automatically, and tweaking the presentation never corrupts the ground truth.
 
+![A Perga living report (custom valuation range widget, structured expectation table, and side-pane Lead chat) alongside the mobile Focus inbox](../assets/hero.png)
+
 **Version every block.** We can't stop AI from making bad edits, but we can at least undo them. Perga splits each report into independent blocks, recording every edit as a commit with full revision history.
 
 **Run multiple conversations around one report, separating execution from maintenance.** You can spin up a fresh conversation at any time to read the underlying data, walk you through what happened, get back on the same page, or tidy up the report—without polluting the context of the agent doing the actual work.
