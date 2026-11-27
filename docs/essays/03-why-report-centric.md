@@ -6,6 +6,8 @@ I want a proper boss morning: flipping through crisp briefs and charts prepared 
 
 So I built [Perga](https://github.com/keanji-x/perga)—a report-centric rather than chat-centric agent harness.
 
+![A Perga living report (custom valuation range widget, structured expectation table, and side-pane Lead chat) alongside the mobile Focus inbox](../assets/hero.png)
+
 ## Why report-centric
 
 The medium between you and your agents has to be bounded. Models can generate forever; human working memory can't keep up with an unbounded chat stream.
@@ -31,8 +33,6 @@ Anyone who has maintained a `SPEC.md` with an agent knows that moment of quiet f
 To make **readability** and **maintainability** work in practice, Perga relies on three primitives:
 
 **Separate data from presentation.** Task and domain state live as schema-validated structured data—exact, verifiable facts for AI to read and write. On top of it, Perga layers frontend widgets—tables, progress views, or custom charts—so humans can take in the state at a glance. When the underlying state changes, the views update automatically, and tweaking the presentation never corrupts the ground truth.
-
-![A Perga living report (custom valuation range widget, structured expectation table, and side-pane Lead chat) alongside the mobile Focus inbox](../assets/hero.png)
 
 **Version every block.** We can't stop AI from making bad edits, but we can at least undo them. Perga splits each report into independent blocks, recording every edit as a commit with full revision history.
 
