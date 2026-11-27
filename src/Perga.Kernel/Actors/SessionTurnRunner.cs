@@ -30,6 +30,7 @@ public sealed partial class TrackActor
             public bool Conclusive { get; set; }
             public StringBuilder Text { get; } = new();
             public StringBuilder Thinking { get; } = new();
+            public Dictionary<string, string> ToolNames { get; } = new(StringComparer.Ordinal);
         }
 
         public async Task<SessionTurnDto?> RunAsync(ITurnWorkItem work, CancellationToken ct, bool alreadyAdmitted = false, CancellationToken? startupCancellation = null, Action<int>? compactedEpoch = null)
@@ -284,6 +285,7 @@ public sealed partial class TrackActor
 
                 case UnifiedAgentEvent.ToolCallStarted tcs:
                     await FlushThinkingChunkAsync(active, outcome, now).ConfigureAwait(false);
+                    outcome.ToolNames[tcs.CallId] = tcs.Name;
                     actor.PublishTurnActivity(active,
                         KernelEventKinds.SessionToolProgress,
                         JsonHelpers.ToElement(new { sessionId = active.SessionId, turnId = active.TurnDto.Id, phase = "started", callId = tcs.CallId, name = tcs.Name, args = tcs.Args }),
@@ -294,9 +296,10 @@ public sealed partial class TrackActor
 
                 case UnifiedAgentEvent.ToolCallCompleted tcc:
                     await FlushThinkingChunkAsync(active, outcome, now).ConfigureAwait(false);
+                    outcome.ToolNames.TryGetValue(tcc.CallId, out var name);
                     actor.PublishTurnActivity(active,
                         KernelEventKinds.SessionToolProgress,
-                        JsonHelpers.ToElement(new { sessionId = active.SessionId, turnId = active.TurnDto.Id, phase = "completed", callId = tcc.CallId, isError = tcc.IsError, output = tcc.Output }),
+                        JsonHelpers.ToElement(new { sessionId = active.SessionId, turnId = active.TurnDto.Id, phase = "completed", callId = tcc.CallId, name, isError = tcc.IsError, output = tcc.Output }),
                         now);
                     await RecordActivityAsync(TurnItem(active, "tool_result",
                         JsonHelpers.ToElement(new { v = 1, callId = tcc.CallId, output = tcc.Output, isError = tcc.IsError }), now)).ConfigureAwait(false);
