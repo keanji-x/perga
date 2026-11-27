@@ -60,7 +60,7 @@ internal static class KernelMcpReportSupport
                 },
                 "wholeDocumentRead": { "type": "boolean" }
               },
-              "description": "ReadAnchor returned by report_read or the previous report_commit."
+              "description": "ReadAnchor returned by report_read or the previous report_commit. A compact receipt preserves observed revisions for untouched blocks and retains whole-document scope only if the caller's whole-document anchor was current."
             },
             "ops": {
               "type": "array",
@@ -74,7 +74,7 @@ internal static class KernelMcpReportSupport
                     "properties": {
                       "op": { "type": "string", "const": "replace_section" },
                       "sectionH1": { "type": "string", "minLength": 1, "description": "Single-line H1 title of the target section." },
-                      "markdown": { "type": "string", "description": "New section body. Omit to rename an existing section while preserving its blocks." },
+                      "markdown": { "type": "string", "description": "New section body. Use an empty or whitespace-only string to delete an existing section without newSectionH1 or placement fields. Omit to rename while preserving its blocks." },
                       "newSectionH1": { "type": "string", "minLength": 1, "description": "New single-line H1 title for the section." },
                       "beforeBlockId": { "type": "string", "minLength": 1, "description": "Place the section before this block, which must be outside the target section." },
                       "afterBlockId": { "type": "string", "minLength": 1, "description": "Place the section after this block, which must be outside the target section." }
@@ -99,7 +99,7 @@ internal static class KernelMcpReportSupport
                       "blockKind": { "type": "string", "enum": ["prose", "widget"], "description": "Omit to keep the existing kind on update or default to prose on insert." },
                       "markdown": { "type": "string" },
                       "payload": {},
-                      "position": { "type": "integer", "minimum": 0 },
+                      "position": { "type": "integer", "minimum": 0, "description": "Omit to place new blocks at the end of the target section, or at the end of the document if the section is new. An update that reassigns a block to another existing section moves it to the end of that section." },
                       "sectionH1": { "type": "string", "minLength": 1, "description": "Single-line H1 title to assign to the block." }
                     }
                   },
@@ -127,7 +127,7 @@ internal static class KernelMcpReportSupport
             "commitMessage": { "type": "string" },
             "includeDocument": {
               "type": "boolean",
-              "description": "Defaults to false (returns a compact commit receipt with docRev, summary, anchor, changes, active tasks, diagnostics). Set true to also include renderedMarkdown and blocks."
+              "description": "Defaults to false (returns a compact commit receipt with docRev, summary, anchor, changes, active tasks, diagnostics). Set true to also include renderedMarkdown, blocks, and a whole-document anchor."
             }
           }
         }
@@ -420,18 +420,52 @@ internal static class KernelMcpReportSupport
     internal static bool ParseIncludeDocumentArg(JsonElement args) =>
         ParseOptionalBool(args, ["includeDocument", "include_document"]);
 
-    internal static JsonElement FormatReportCommitResponse(ReportReadResult res, bool includeDocument)
+    internal static JsonElement FormatReportCommitResponse(ReportReadResult res, ReadAnchor callerAnchor, bool includeDocument)
     {
+        var changes = res.Changes ?? [];
+        var anchor = includeDocument || (callerAnchor.WholeDocumentRead && callerAnchor.DocRev == res.DocRev - 1)
+            ? res.Anchor
+            : BuildScopedCommitAnchor(res, callerAnchor, changes);
         var receipt = new McpReportCommitReceipt(
             DocRev: res.DocRev,
             Summary: res.Summary,
-            Anchor: res.Anchor,
-            Changes: res.Changes ?? [],
+            Anchor: anchor,
+            Changes: changes,
             Tasks: SummarizeTasks(res.Tasks),
             Diagnostics: res.Diagnostics,
             RenderedMarkdown: includeDocument ? res.RenderedMarkdown : null,
             Blocks: includeDocument ? res.Blocks : null);
         return JsonHelpers.ToElement(receipt);
+    }
+
+    private static ReadAnchor BuildScopedCommitAnchor(
+        ReportReadResult res, ReadAnchor callerAnchor, IReadOnlyList<BlockChangeRecord> changes)
+    {
+        var scopedRevs = new Dictionary<string, int>(StringComparer.Ordinal);
+        if (callerAnchor.KnownBlockRevs is { } knownRevs)
+        {
+            foreach (var block in res.Blocks)
+            {
+                if (knownRevs.TryGetValue(block.Id, out var observedRev))
+                {
+                    scopedRevs.Add(block.Id, observedRev);
+                }
+            }
+        }
+
+        foreach (var change in changes)
+        {
+            if (change.CurrentRev is { } currentRev)
+            {
+                scopedRevs[change.Id] = currentRev;
+            }
+            else
+            {
+                scopedRevs.Remove(change.Id);
+            }
+        }
+
+        return new ReadAnchor(res.DocRev, scopedRevs, WholeDocumentRead: false);
     }
 
     internal const int McpSummaryMaxChars = 400;
