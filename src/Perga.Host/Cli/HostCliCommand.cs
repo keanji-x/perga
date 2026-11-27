@@ -5,7 +5,7 @@ using Perga.AgentKit;
 namespace Perga.Host.Cli;
 
 /// <summary>
-/// Installation commands of the <c>perga</c> launcher: <c>version</c>, <c>doctor</c>, <c>upgrade</c>, <c>uninstall</c> and <c>help</c>.
+/// Installation and lifecycle commands of the <c>perga</c> launcher.
 /// </summary>
 public static partial class HostCliCommand
 {
@@ -18,8 +18,15 @@ public static partial class HostCliCommand
 
     private const string Usage = """
         Usage:
-          perga [host args...]          Start Perga on http://127.0.0.1:4041 (override with --urls or PERGA_URLS)
+          perga [host args...]          Start in the background on http://127.0.0.1:4041 (override with --urls or PERGA_URLS)
           perga start [host args...]    Same as 'perga'
+          perga --foreground            Run in this terminal (also 'perga serve')
+          perga --no-open               Start without opening a browser
+          perga status                  Show whether the background instance is running
+          perga logs [-f] [-n N]        Show recent background logs (use -f to follow)
+          perga stop                    Stop the background instance
+          perga restart [host args...]  Restart the background instance
+          perga open                    Open the running instance in your browser
           perga auth <subcommand>       Manage the owner account (see 'perga auth --help')
           perga version                 Print the installed version and paths
           perga doctor [--deep]         Check the package, Node.js 24+, and provider CLIs (--deep probes auth/models)
@@ -27,8 +34,9 @@ public static partial class HostCliCommand
           perga uninstall [--yes]       Remove the installed package and launcher; keep user data
         """;
 
-    public static bool Handles(string[] args) => args is [var first, ..] && first is
-        "version" or "-v" or "--version" or "doctor" or "upgrade" or "uninstall" or "help" or "-h" or "--help";
+    public static bool Handles(string[] args) => args is [var first, ..] &&
+        (first is "version" or "-v" or "--version" or "doctor" or "upgrade" or "uninstall" or "help" or "-h" or "--help" ||
+         HostDaemonCommand.Handles(first));
 
     public static async Task<int> RunAsync(string[] args, HostCliEnvironment env, CancellationToken ct = default)
     {
@@ -40,7 +48,9 @@ public static partial class HostCliCommand
                 ["version" or "-v" or "--version", .. var rest] => Version(env, rest),
                 ["doctor", .. var rest] => await DoctorAsync(env, rest, ct).ConfigureAwait(false),
                 ["upgrade", .. var rest] => await UpgradeAsync(env, rest, ct).ConfigureAwait(false),
-                ["uninstall", .. var rest] => Uninstall(env, rest),
+                ["uninstall", .. var rest] => await UninstallAsync(env, rest, ct).ConfigureAwait(false),
+                [var command, .. var rest] when HostDaemonCommand.Handles(command) =>
+                    await HostDaemonCommand.RunAsync(command, rest, env, ct).ConfigureAwait(false),
                 _ => throw new UsageException($"unknown command '{string.Join(' ', args)}'.", Usage)
             };
         }
@@ -214,6 +224,8 @@ public static partial class HostCliCommand
         var temp = Directory.CreateTempSubdirectory("perga-upgrade-");
         try
         {
+            var paths = InstallationPaths.From(env);
+            HostDaemonState? previous;
             var script = Path.Combine(temp.FullName, "install.sh");
             await env.Output.WriteLineAsync($"Downloading installer from {url}...").ConfigureAwait(false);
             var download = await env.RunProcessAsync("curl",
@@ -221,7 +233,39 @@ public static partial class HostCliCommand
                 childEnv, ct).ConfigureAwait(false);
             if (download != 0 || !File.Exists(script) || new FileInfo(script).Length == 0)
                 throw new CliException($"could not download the installer from {url} (curl exit {download}).");
-            return await env.RunProcessAsync("bash", [script], childEnv, ct).ConfigureAwait(false);
+            using (await HostDaemonCommand.AcquireLockAsync(paths.DataDir, ct).ConfigureAwait(false))
+            {
+                previous = RunningForInstallation(paths.DataDir, paths.InstallDir);
+                var installed = await env.RunProcessAsync("bash", [script], childEnv, ct).ConfigureAwait(false);
+                if (installed != 0 || previous is null)
+                    return installed;
+
+                try
+                {
+                    await HostDaemonCommand.StopInstanceAsync(paths.DataDir, previous, ct).ConfigureAwait(false);
+                }
+                catch (Exception ex) when (ex is IOException or Win32Exception or UnauthorizedAccessException)
+                {
+                    return ReportUpgradeRestartFailure(env, ex.Message);
+                }
+            }
+
+            try
+            {
+                using var restartTimeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                restartTimeout.CancelAfter(TimeSpan.FromSeconds(35));
+                var restarted = await env.RunProcessAsync(Path.Combine(paths.InstallDir, "Perga.Host"),
+                    ["start", "--no-open", .. previous.HostArgs], childEnv, restartTimeout.Token).ConfigureAwait(false);
+                return restarted == 0 ? 0 : ReportUpgradeRestartFailure(env);
+            }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+            {
+                return ReportUpgradeRestartFailure(env, "The upgraded Perga Host did not finish starting.");
+            }
+            catch (Exception ex) when (ex is IOException or Win32Exception or UnauthorizedAccessException)
+            {
+                return ReportUpgradeRestartFailure(env, ex.Message);
+            }
         }
         finally
         {
@@ -229,7 +273,19 @@ public static partial class HostCliCommand
         }
     }
 
-    private static int Uninstall(HostCliEnvironment env, string[] args)
+    private static int ReportUpgradeRestartFailure(HostCliEnvironment env, string? message = null)
+    {
+        if (message is not null)
+            env.Error.WriteLine($"error: {message}");
+        env.Error.WriteLine("Run 'perga restart' to switch to the new version.");
+        return 1;
+    }
+
+    private static HostDaemonState? RunningForInstallation(string dataDir, string installDir) =>
+        HostDaemonCommand.TryGetRunningInstance(dataDir, out _) is { } state &&
+        string.Equals(PhysicalPath(state.InstallDir), PhysicalPath(installDir), StringComparison.Ordinal) ? state : null;
+
+    private static async Task<int> UninstallAsync(HostCliEnvironment env, string[] args, CancellationToken ct)
     {
         const string usage = "Usage: perga uninstall [--yes]";
         if (args.Any(a => a is "-h" or "--help"))
@@ -262,6 +318,9 @@ public static partial class HostCliCommand
             }
         }
 
+        using var lifecycleLock = await HostDaemonCommand.AcquireLockAsync(plan.DataDir, ct).ConfigureAwait(false);
+        if (RunningForInstallation(plan.DataDir, plan.InstallDir) is { } running)
+            await HostDaemonCommand.StopInstanceAsync(plan.DataDir, running, ct).ConfigureAwait(false);
         if (plan.Launcher is not null)
             File.Delete(plan.Launcher);
         Directory.Delete(plan.InstallDir, recursive: true);
@@ -282,7 +341,7 @@ public static partial class HostCliCommand
         return false;
     }
 
-    private static string? ReadVersion(string installDir)
+    internal static string? ReadVersion(string installDir)
     {
         var path = Path.Combine(installDir, "VERSION");
         if (!File.Exists(path)) return null;
@@ -300,7 +359,7 @@ public static partial class HostCliCommand
     [GeneratedRegex(@"^[A-Za-z0-9][A-Za-z0-9_.-]*/[A-Za-z0-9][A-Za-z0-9_.-]*$")]
     private static partial Regex RepoPattern();
 
-    private sealed record InstallationPaths(string InstallDir, string DataDir, string DbPath, bool ExplicitDbPath)
+    internal sealed record InstallationPaths(string InstallDir, string DataDir, string DbPath, bool ExplicitDbPath)
     {
         public static InstallationPaths From(HostCliEnvironment env)
         {
@@ -470,9 +529,9 @@ public static partial class HostCliCommand
         return current;
     }
 
-    private class CliException(string message) : Exception(message);
+    internal class CliException(string message) : Exception(message);
 
-    private sealed class UsageException(string message, string usage) : CliException(message)
+    internal sealed class UsageException(string message, string usage) : CliException(message)
     {
         public string Usage { get; } = usage;
     }

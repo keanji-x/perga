@@ -50,21 +50,24 @@ public sealed class HostCliTests : IDisposable
         var result = await RunAsync(command);
 
         Assert.Equal(0, result.Code);
-        foreach (var usage in new[] { "perga [host args...]", "perga start", "perga auth", "perga version", "perga doctor", "perga upgrade [version]", "perga uninstall [--yes]" })
+        foreach (var usage in new[] { "perga [host args...]", "perga start", "perga --foreground", "perga --no-open",
+            "perga status", "perga stop", "perga restart", "perga logs", "perga open",
+            "perga auth", "perga version", "perga doctor", "perga upgrade [version]", "perga uninstall [--yes]" })
             Assert.Contains(usage, result.Output);
     }
 
     [Fact]
-    public void DispatchCoversOnlyInstallationCommands()
+    public void DispatchCoversInstallationAndExplicitLifecycleCommands()
     {
-        foreach (var command in new[] { "version", "-v", "--version", "doctor", "upgrade", "uninstall", "help", "-h", "--help" })
+        foreach (var command in new[] { "version", "-v", "--version", "doctor", "upgrade", "uninstall", "help", "-h", "--help",
+            "start", "serve", "status", "stop", "restart", "logs", "open" })
             Assert.True(HostCliCommand.Handles([command]), command);
-        foreach (var args in new[] { Array.Empty<string>(), ["auth"], ["start"], ["--urls", "http://127.0.0.1:0"] })
+        foreach (var args in new[] { Array.Empty<string>(), ["auth"], ["--urls", "http://127.0.0.1:0"] })
             Assert.False(HostCliCommand.Handles(args));
     }
 
     [Fact]
-    public async Task ProgramRoutesInstallationCommandsAndStripsALeadingStart()
+    public async Task ProgramRoutesInstallationCommandsAndSupportsDirectOpenApiExport()
     {
         CreatePackage(version: "v9.9.9\n");
         var version = await RunHostProcessAsync("version");
@@ -72,8 +75,8 @@ public sealed class HostCliTests : IDisposable
         Assert.StartsWith("perga v9.9.9\n", Normalize(version.Output));
 
         var openApi = Path.Combine(Root, "openapi.json");
-        var start = await RunHostProcessAsync("start", "--export-openapi", openApi);
-        Assert.True(start.Code == 0, start.Error);
+        var export = await RunHostProcessAsync("--export-openapi", openApi);
+        Assert.True(export.Code == 0, export.Error);
         Assert.True(new FileInfo(openApi).Length > 0);
     }
 

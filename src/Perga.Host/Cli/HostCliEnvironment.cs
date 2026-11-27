@@ -22,6 +22,8 @@ public sealed record HostCliEnvironment
     /// <summary>Whether a person can answer a confirmation prompt on <see cref="Input"/>.</summary>
     public bool IsInteractive { get; init; }
 
+    public bool IsOutputRedirected { get; init; }
+
     /// <summary>Whether filesystem path comparisons should be case-insensitive (macOS and Windows).</summary>
     public bool CaseInsensitivePaths { get; init; } = OperatingSystem.IsMacOS() || OperatingSystem.IsWindows();
 
@@ -49,6 +51,7 @@ public sealed record HostCliEnvironment
         Output = Console.Out,
         Error = Console.Error,
         IsInteractive = !Console.IsInputRedirected,
+        IsOutputRedirected = Console.IsOutputRedirected,
         ProbeNode = (configured, environment) => OarNodeRuntimeProbe.Probe(configured, environment, includeSystemLocations: true)
     };
 
@@ -64,7 +67,17 @@ public sealed record HostCliEnvironment
         try
         {
             using var process = Process.Start(start) ?? throw new IOException($"Could not start '{fileName}'.");
-            await process.WaitForExitAsync(ct).ConfigureAwait(false);
+            try
+            {
+                await process.WaitForExitAsync(ct).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                try { process.Kill(entireProcessTree: true); }
+                catch (InvalidOperationException) when (process.HasExited) { }
+                await process.WaitForExitAsync().ConfigureAwait(false);
+                throw;
+            }
             return process.ExitCode;
         }
         catch (Win32Exception ex)
