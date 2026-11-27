@@ -60,7 +60,7 @@ internal static class KernelMcpReportSupport
                 },
                 "wholeDocumentRead": { "type": "boolean" }
               },
-              "description": "ReadAnchor returned by report_read or the previous report_commit. A compact receipt preserves observed revisions for untouched blocks and retains whole-document scope only if the caller's whole-document anchor was current."
+              "description": "ReadAnchor from report_read or report_commit. Compact receipts keep whole-document scope only when the caller anchor was current."
             },
             "ops": {
               "type": "array",
@@ -74,7 +74,7 @@ internal static class KernelMcpReportSupport
                     "properties": {
                       "op": { "type": "string", "const": "replace_section" },
                       "sectionH1": { "type": "string", "minLength": 1, "description": "Single-line H1 title of the target section." },
-                      "markdown": { "type": "string", "description": "New section body. Use an empty or whitespace-only string to delete an existing section without newSectionH1 or placement fields. Omit to rename while preserving its blocks." },
+                      "markdown": { "type": "string", "description": "New section body. Omit with newSectionH1 to rename while keeping blocks; pass blank markdown alone to delete an existing section." },
                       "newSectionH1": { "type": "string", "minLength": 1, "description": "New single-line H1 title for the section." },
                       "beforeBlockId": { "type": "string", "minLength": 1, "description": "Place the section before this block, which must be outside the target section." },
                       "afterBlockId": { "type": "string", "minLength": 1, "description": "Place the section after this block, which must be outside the target section." }
@@ -99,7 +99,7 @@ internal static class KernelMcpReportSupport
                       "blockKind": { "type": "string", "enum": ["prose", "widget"], "description": "Omit to keep the existing kind on update or default to prose on insert." },
                       "markdown": { "type": "string" },
                       "payload": {},
-                      "position": { "type": "integer", "minimum": 0, "description": "Omit to place new blocks at the end of the target section, or at the end of the document if the section is new. An update that reassigns a block to another existing section moves it to the end of that section." },
+                      "position": { "type": "integer", "minimum": 0, "description": "Omit to append on insert (or when moving to another existing section) and keep position on in-section updates." },
                       "sectionH1": { "type": "string", "minLength": 1, "description": "Single-line H1 title to assign to the block." }
                     }
                   },
@@ -127,7 +127,7 @@ internal static class KernelMcpReportSupport
             "commitMessage": { "type": "string" },
             "includeDocument": {
               "type": "boolean",
-              "description": "Defaults to false (returns a compact commit receipt with docRev, summary, anchor, changes, active tasks, diagnostics). Set true to also include renderedMarkdown, blocks, and a whole-document anchor."
+              "description": "Defaults to false (compact receipt with docRev, summary, anchor, changes, active tasks, diagnostics). Set true to include renderedMarkdown, blocks, and a whole-document anchor."
             }
           }
         }

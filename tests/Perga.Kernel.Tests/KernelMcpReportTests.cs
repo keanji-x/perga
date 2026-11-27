@@ -23,7 +23,10 @@ public sealed class KernelMcpReportTests
         var commitTool = tools[KernelMcpToolNames.ReportCommit];
         Assert.Equal(["anchor", "ops"], commitTool.InputSchema.GetProperty("required").EnumerateArray().Select(key => key.GetString()));
         var commitProps = commitTool.InputSchema.GetProperty("properties");
-        var anchorProps = commitProps.GetProperty("anchor").GetProperty("properties");
+        var anchor = commitProps.GetProperty("anchor");
+        Assert.Equal("ReadAnchor from report_read or report_commit. Compact receipts keep whole-document scope only when the caller anchor was current.",
+            anchor.GetProperty("description").GetString());
+        var anchorProps = anchor.GetProperty("properties");
         Assert.True(anchorProps.TryGetProperty("docRev", out _));
         Assert.True(anchorProps.TryGetProperty("knownBlockRevs", out _));
         Assert.True(anchorProps.TryGetProperty("wholeDocumentRead", out _));
@@ -37,7 +40,7 @@ public sealed class KernelMcpReportTests
         Assert.Contains("Use at most one of beforeBlockId and afterBlockId.", sectionDescription, StringComparison.Ordinal);
         foreach (var field in new[] { "markdown", "newSectionH1", "beforeBlockId", "afterBlockId" })
             Assert.Equal("string", section.GetProperty("properties").GetProperty(field).GetProperty("type").GetString());
-        Assert.Contains("Use an empty or whitespace-only string to delete an existing section",
+        Assert.Equal("New section body. Omit with newSectionH1 to rename while keeping blocks; pass blank markdown alone to delete an existing section.",
             section.GetProperty("properties").GetProperty("markdown").GetProperty("description").GetString());
         var edit = opSchemas["edit_block"];
         Assert.Equal(["op", "id", "target", "replacement"], RequiredFields(edit));
@@ -48,10 +51,12 @@ public sealed class KernelMcpReportTests
         var upsert = opSchemas["upsert"];
         Assert.Equal(["op"], RequiredFields(upsert));
         Assert.Equal("string", upsert.GetProperty("properties").GetProperty("sectionH1").GetProperty("type").GetString());
-        Assert.Contains("Omit to place new blocks at the end of the target section",
+        Assert.Equal("Omit to append on insert (or when moving to another existing section) and keep position on in-section updates.",
             upsert.GetProperty("properties").GetProperty("position").GetProperty("description").GetString());
-        Assert.Equal("boolean", commitProps.GetProperty("includeDocument").GetProperty("type").GetString());
-        Assert.Contains("active tasks", commitProps.GetProperty("includeDocument").GetProperty("description").GetString());
+        var includeDocument = commitProps.GetProperty("includeDocument");
+        Assert.Equal("boolean", includeDocument.GetProperty("type").GetString());
+        Assert.Equal("Defaults to false (compact receipt with docRev, summary, anchor, changes, active tasks, diagnostics). Set true to include renderedMarkdown, blocks, and a whole-document anchor.",
+            includeDocument.GetProperty("description").GetString());
 
         var readSchema = tools[KernelMcpToolNames.ReportRead].InputSchema;
         Assert.False(readSchema.GetProperty("additionalProperties").GetBoolean());
@@ -90,10 +95,12 @@ public sealed class KernelMcpReportTests
         Assert.Contains("Cheatsheet:", tool.Description, StringComparison.Ordinal);
         Assert.Contains("anchor: { docRev, knownBlockRevs, wholeDocumentRead }", tool.Description, StringComparison.Ordinal);
         Assert.Contains("""{ op: "replace_section", sectionH1, markdown?, newSectionH1?, beforeBlockId?, afterBlockId? }""", tool.Description, StringComparison.Ordinal);
-        Assert.Contains("""markdown: "" on its own to delete the section""", tool.Description, StringComparison.Ordinal);
+        Assert.Contains("Omit markdown with newSectionH1 to rename while keeping blocks; pass blank markdown alone to delete. Use at most one placement ID outside the section.",
+            tool.Description, StringComparison.Ordinal);
         Assert.Contains("""{ op: "edit_block", id, target, replacement }""", tool.Description, StringComparison.Ordinal);
         Assert.Contains("""{ op: "upsert", id?, blockKind?: "prose"|"widget", markdown?, payload?, position?, sectionH1? }""", tool.Description, StringComparison.Ordinal);
-        Assert.Contains("Omit position to append new blocks to the target section", tool.Description, StringComparison.Ordinal);
+        Assert.Contains("Omit position to append on insert or section move, or keep position on in-section update; omit blockKind, markdown and payload on update to preserve them.",
+            tool.Description, StringComparison.Ordinal);
         Assert.Contains("""{ op: "delete", id }""", tool.Description, StringComparison.Ordinal);
         Assert.Contains("""{ op: "move", id, toIndex }""", tool.Description, StringComparison.Ordinal);
         Assert.Contains("summary, commitMessage, includeDocument", tool.Description, StringComparison.Ordinal);
@@ -872,6 +879,8 @@ public sealed class KernelMcpReportTests
         "'sectionH1' must be a single line.")]
     [InlineData("""{"op":"replace_section","sectionH1":"Notes","newSectionH1":"First\nSecond"}""",
         "'newSectionH1' must be a single line.")]
+    [InlineData("""{"op":"replace_section","sectionH1":"Notes","markdown":"# Notes"}""",
+        "Section body cannot be empty after the heading. Provide body content, or pass empty 'markdown' without a heading to delete the section.")]
     [InlineData("""{"op":"edit_block","id":"notes","target":"Missing text","replacement":""}""",
         "Target text was not found in block 'notes'.")]
     [InlineData("""{"op":"replace_section","sectionH1":"Other","markdown":"Body.","beforeBlockId":"notes","afterBlockId":"notes"}""",

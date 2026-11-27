@@ -461,9 +461,14 @@ public sealed partial class ReportDocEngine
             }
         }
 
-        var fullSectionSource = string.IsNullOrWhiteSpace(normalized)
-            ? $"# {finalSection}"
-            : $"# {finalSection}\n\n{normalized.Trim('\n')}";
+        if (string.IsNullOrWhiteSpace(normalized))
+        {
+            throw new ArgumentException(
+                "Section body cannot be empty after the heading. Provide body content, or pass empty 'markdown' without a heading to delete the section.",
+                OperationsParameterName);
+        }
+
+        var fullSectionSource = $"# {finalSection}\n\n{normalized.Trim('\n')}";
 
         // Allow reusing IDs from blocks that belonged to the section being replaced.
         var reservedOutsideSection = new HashSet<string>(state.UsedIds, StringComparer.Ordinal);
