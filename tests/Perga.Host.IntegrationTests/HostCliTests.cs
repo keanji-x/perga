@@ -159,14 +159,14 @@ public sealed class HostCliTests : IDisposable
 
         Assert.Equal(0, result.Code);
         Assert.Equal("/custom/node", probedWith);
-        Assert.Contains("[ok] version", result.Output);
-        Assert.Contains($"[ok] launcher   {Launcher}", result.Output);
-        Assert.Contains("[ok] package    all required files present", result.Output);
-        Assert.Contains("[ok] node       v24.4.1 (/custom/node)", result.Output);
+        Assert.Contains("[ok]   version", result.Output);
+        Assert.Contains($"[ok]   launcher   {Launcher}", result.Output);
+        Assert.Contains("[ok]   package    all required files present", result.Output);
+        Assert.Contains("[ok]   node       v24.4.1 (/custom/node)", result.Output);
         Assert.Contains($"codex ({Path.Combine(pathBin, "codex")})", result.Output);
         Assert.Contains($"claude ({Path.Combine(localBin, "claude")})", result.Output);
         Assert.DoesNotContain("kimi", result.Output.Split('\n').Single(l => l.Contains("providers", StringComparison.Ordinal)));
-        Assert.Contains("[warn] database", result.Output);
+        Assert.Contains($"[warn] database   {Path.Combine(Data, "perga.db")} not created yet (created on first 'perga' start, or run 'perga auth init-owner --username owner --allow-migrate')", result.Output);
         Assert.Contains("All required checks passed.", result.Output);
     }
 
@@ -194,7 +194,7 @@ public sealed class HostCliTests : IDisposable
         _node = _node with { MeetsMinimum = true, Version = new Version(24, 0, 0), Error = null };
         var healthy = await RunAsync("doctor");
         Assert.Equal(0, healthy.Code);
-        Assert.Contains($"[ok] database   {Path.Combine(Data, "perga.db")} (7 bytes)", healthy.Output);
+        Assert.Contains($"[ok]   database   {Path.Combine(Data, "perga.db")} (7 bytes)", healthy.Output);
     }
 
     [Fact]

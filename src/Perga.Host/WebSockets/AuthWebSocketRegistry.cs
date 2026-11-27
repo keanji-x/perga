@@ -56,13 +56,19 @@ internal sealed class AuthWebSocketRegistry(
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         using var timer = new PeriodicTimer(options.AuthWsRevalidationInterval, time);
-        while (await timer.WaitForNextTickAsync(stoppingToken))
+        try
         {
-            KeyValuePair<string, Registration>[] snapshot;
-            lock (_gate)
-                snapshot = [.. _sessions];
+            while (await timer.WaitForNextTickAsync(stoppingToken))
+            {
+                KeyValuePair<string, Registration>[] snapshot;
+                lock (_gate)
+                    snapshot = [.. _sessions];
 
-            await Parallel.ForEachAsync(snapshot, stoppingToken, (entry, ct) => new ValueTask(RevalidateAsync(entry, ct)));
+                await Parallel.ForEachAsync(snapshot, stoppingToken, (entry, ct) => new ValueTask(RevalidateAsync(entry, ct)));
+            }
+        }
+        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+        {
         }
     }
 

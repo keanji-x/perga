@@ -31,6 +31,7 @@ public static class AuthCliCommand
             var hash = await ReadPasswordHashAsync(values.GetValue(passwordStdin), input, error, token);
             await MutateAsync(store, values, token, owner => owner.CreateInitialOwnerAsync(name, display, hash, now, token),
                 "An owner already exists or the username is already in use.");
+            await output.WriteLineAsync($"Owner account '{name}' created.");
         }, username, displayName, passwordStdin, allowMigrate);
 
         Add("passwd", "Change the owner password and revoke browser sessions.", async (store, values, now, token) =>
@@ -135,12 +136,12 @@ public static class AuthCliCommand
             if (Console.IsInputRedirected)
                 throw new ArgumentException("Use --password-stdin to read a password from redirected input.");
             password = Prompt("Password (12+ characters)", error, ct);
-            if (password != Prompt("Confirm password", error, ct))
-                throw new ArgumentException("Passwords do not match.");
         }
 
         if (!AuthCredentials.IsValidPassword(password, 12))
             throw new ArgumentException("Password must contain 12–1024 Unicode characters, no NUL and at most 4096 UTF-8 bytes.");
+        if (!fromStdin && password != Prompt("Confirm password", error, ct))
+            throw new ArgumentException("Passwords do not match.");
 
         return AuthPasswordHasher.HashPassword(password!);
     }

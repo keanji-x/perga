@@ -70,6 +70,96 @@ public sealed class InstallAndReleaseScriptsTests : IDisposable
     }
 
     [Fact]
+    public async Task InstallerTellsNonBashShUsersHowToRunIt()
+    {
+        var shell = await RunAsync("sh", ["-c", "printf '%s' \"${BASH_VERSION:-}\""], BaseEnvironment(), Root);
+        Assert.True(shell.Code == 0, shell.Error);
+        if (shell.Output.Length > 0) return;
+
+        var result = await RunAsync("sh", [Installer], BaseEnvironment(), Root);
+
+        Assert.Equal(1, result.Code);
+        Assert.Contains("Perga's installer requires bash. Run: curl -fsSL https://keanji-x.github.io/perga/install.sh | bash", result.Error);
+        Assert.Empty(result.Output);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(1)]
+    public async Task InstallerRejectsMuslBeforeDownloading(int lddExitCode)
+    {
+        if (!OperatingSystem.IsLinux()) return;
+
+        var bin = Path.Combine(Root, "stubs");
+        WriteExecutable(Path.Combine(bin, "getconf"), "#!/bin/sh\nexit 1\n");
+        WriteExecutable(Path.Combine(bin, "ldd"), $"#!/bin/sh\necho 'musl libc (x86_64)' >&2\nexit {lddExitCode}\n");
+        WriteExecutable(Path.Combine(bin, "curl"), "#!/bin/sh\necho 'unexpected download' >&2\nexit 1\n");
+        var env = BaseEnvironment();
+        env["PATH"] = bin + Path.PathSeparator + env["PATH"];
+
+        var result = await RunAsync("bash", [Installer], env, Root);
+
+        Assert.Equal(1, result.Code);
+        Assert.Contains("Linux musl (for example Alpine Linux) is not supported. Perga's Linux x64 release requires glibc.", result.Error);
+        Assert.Empty(result.Output);
+    }
+
+    [Fact]
+    public async Task InstallerAcceptsGlibcWhenMuslLddIsOnPath()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+
+        var env = BaseEnvironment();
+        var libc = await RunAsync("bash", ["-c", "getconf GNU_LIBC_VERSION"], env, Root);
+        if (libc.Code != 0) return;
+
+        var bin = Path.Combine(Root, "stubs");
+        WriteExecutable(Path.Combine(bin, "ldd"), "#!/bin/sh\necho 'musl libc (x86_64)' >&2\n");
+        env["PATH"] = bin + Path.PathSeparator + env["PATH"];
+
+        var install = await InstallAsync(CreatePackage("v0.1.0"), env);
+
+        Assert.True(install.Code == 0, install.Error);
+        Assert.Contains("Installed Perga v0.1.0", install.Output);
+    }
+
+    [Fact]
+    public async Task InstallerPrintsThreeOnboardingStepsWithCopyableCommands()
+    {
+        var package = CreatePackage("v0.1.0");
+        var bin = Path.Combine(Root, "my bin");
+        var launcher = $"'{Path.Combine(bin, "perga")}'";
+        var env = BaseEnvironment();
+        env["PERGA_BIN_DIR"] = bin;
+
+        var install = await InstallAsync(package, env);
+
+        Assert.True(install.Code == 0, install.Error);
+        var steps = install.Output.Split("Next steps (first run):\n", 2);
+        Assert.Equal(2, steps.Length);
+        Assert.Equal($"""
+              1. Check Node.js 24+ and your provider CLIs: {launcher} doctor
+              2. Start Perga (prompts to create your owner account on first run): {launcher}
+              3. Open http://127.0.0.1:4041/ in your browser.
+            """ + "\n", steps[1]);
+        Assert.Equal("doctor", Values(await RunAsync("sh", ["-c", $"{launcher} doctor"], env, Root))["args"]);
+    }
+
+    [Fact]
+    public async Task InstallerReportsReinstallingTheSameVersion()
+    {
+        var package = CreatePackage("v0.1.0");
+        var first = await InstallAsync(package);
+        Assert.True(first.Code == 0, first.Error);
+
+        var reinstall = await InstallAsync(package);
+
+        Assert.True(reinstall.Code == 0, reinstall.Error);
+        Assert.Contains("Reinstalled Perga v0.1.0", reinstall.Output);
+        Assert.DoesNotContain("Upgraded Perga", reinstall.Output);
+    }
+
+    [Fact]
     public async Task FreshInstallWritesALauncherThatRoutesEveryCommand()
     {
         var package = CreatePackage("v0.1.0");
@@ -166,7 +256,9 @@ public sealed class InstallAndReleaseScriptsTests : IDisposable
 
         var fish = await InstallAsync(package, new() { ["SHELL"] = "fish", ["PERGA_BIN_DIR"] = bin });
         Assert.True(fish.Code == 0, fish.Error);
-        Assert.Contains($"  fish_add_path '{Root}/it\\'s \"$TESTVAR\" \\\\bin'\n", fish.Output);
+        var fishBin = $"""{Root}/it\'s "$TESTVAR" \\bin""";
+        Assert.Contains($"  fish_add_path '{fishBin}'\n", fish.Output);
+        Assert.Contains($"  1. Check Node.js 24+ and your provider CLIs: '{fishBin}/perga' doctor\n", fish.Output);
     }
 
     [Fact]
