@@ -35,12 +35,14 @@ public sealed class AuthCliTests
             var refused = await RunAsync(path, ["init-owner", "--username", "Owner", "--password-stdin"], "a sample password");
             Assert.Equal(1, refused.Code);
             Assert.Contains("--allow-migrate", refused.Error);
+            Assert.Empty(refused.Output);
             Assert.Equal(25, Status(await RunAsync(path, ["status"])).SchemaVersion);
 
             var created = await RunAsync(path,
                 ["init-owner", "--username", "Owner", "--display-name", "CLI Owner", "--password-stdin", "--allow-migrate"],
                 "a sample password");
             Assert.Equal(0, created.Code);
+            Assert.Equal("Owner account 'owner' created." + Environment.NewLine, created.Output);
             Assert.True(File.Exists(path + ".bak-v25"));
             var files = DatabaseFiles(directory);
             var status = Status(await RunAsync(path, ["status"]));

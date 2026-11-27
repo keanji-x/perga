@@ -16,6 +16,10 @@
     <PackageReference Include="Microsoft.Extensions.Identity.Core" Version="11.0.0" NoWarn="NU1510" />
     <PackageReference Include="System.CommandLine" Version="3.0.0" />
   </ItemGroup>
+  <ItemGroup Condition="'$(SelfContained)' == 'true' and '$(RuntimeIdentifier)' == 'linux-x64'">
+    <PackageReference Include="Microsoft.ICU.ICU4C.Runtime" Version="72.1.0.3" />
+    <RuntimeHostConfigurationOption Include="System.Globalization.AppLocalIcu" Value="72.1.0.3" />
+  </ItemGroup>
   <ItemGroup Condition="Exists('..\..\tools\perga-oar-bridge\dist\perga-oar-bridge.mjs')">
     <Content Include="..\..\tools\perga-oar-bridge\dist\perga-oar-bridge.mjs"
              Link="oar-bridge\perga-oar-bridge.mjs"

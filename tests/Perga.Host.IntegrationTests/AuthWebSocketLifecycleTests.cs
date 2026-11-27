@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Net.WebSockets;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using Perga.Contracts;
 using Perga.Host.Auth;
 using Perga.Host.IntegrationTests.Fixtures;
@@ -13,6 +14,20 @@ namespace Perga.Host.IntegrationTests;
 
 public sealed class AuthWebSocketLifecycleTests
 {
+    [Fact]
+    public async Task RegistryCompletesNormallyWhenTheHostStopsIt()
+    {
+        await using var host = new PergaHostTestCluster();
+        var registry = Assert.Single(host.Services.GetServices<IHostedService>().OfType<BackgroundService>(),
+            service => service.GetType().Name == "AuthWebSocketRegistry");
+        var execution = Assert.IsAssignableFrom<Task>(registry.ExecuteTask);
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+
+        await registry.StopAsync(deadline.Token);
+
+        await execution.WaitAsync(deadline.Token);
+    }
+
     [Theory]
     [InlineData("/api/v1/events")]
     [InlineData("/api/v1/terminals/missing/ws")]

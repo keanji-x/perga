@@ -53,12 +53,13 @@ curl -fsSL https://keanji-x.github.io/perga/install.sh | bash
 
 The installer verifies the archive's SHA-256 checksum, installs to `~/.local/share/perga-app`, and writes the `perga` launcher to `~/.local/bin`. Set `PERGA_VERSION=v0.1.0` to pin a release, or `PERGA_INSTALL_DIR`, `PERGA_BIN_DIR`, `PERGA_DATA_DIR`, and `PERGA_DB_PATH` to choose locations.
 
-Then create your local owner account once and start Perga:
+On first start in a terminal, Perga prompts you to create your local owner account.
 
 ```sh
-perga auth init-owner --username owner --allow-migrate
 perga
 ```
+
+For headless setups, create the account first with `perga auth init-owner --username owner --allow-migrate`. Add `--password-stdin` to supply the password through standard input.
 
 Open [http://127.0.0.1:4041/](http://127.0.0.1:4041/) and sign in. The web app is installable as a PWA, and the Host starts the bundled native terminal bridge automatically when needed.
 

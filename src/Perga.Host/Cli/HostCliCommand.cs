@@ -96,7 +96,7 @@ public static partial class HostCliCommand
 
         var paths = InstallationPaths.From(env);
         var healthy = true;
-        void Report(string status, string name, string detail) => env.Output.WriteLine($"[{status}] {name,-10} {detail}");
+        void Report(string status, string name, string detail) => env.Output.WriteLine($"{$"[{status}]",-6} {name,-10} {detail}");
 
         var version = ReadVersion(paths.InstallDir);
         Report(version is null ? "warn" : "ok", "version", version ?? "VERSION file is missing");
@@ -111,7 +111,7 @@ public static partial class HostCliCommand
             Directory.Exists(paths.DataDir) ? paths.DataDir : $"{paths.DataDir} (created on first start)");
         Report(File.Exists(paths.DbPath) ? "ok" : "warn", "database", File.Exists(paths.DbPath)
             ? $"{paths.DbPath} ({new FileInfo(paths.DbPath).Length} bytes)"
-            : $"{paths.DbPath} not created yet; run 'perga auth init-owner --username owner --allow-migrate'");
+            : $"{paths.DbPath} not created yet (created on first 'perga' start, or run 'perga auth init-owner --username owner --allow-migrate')");
 
         var missing = RequiredExecutables.Where(f => !IsExecutable(Path.Combine(paths.InstallDir, f)))
             .Concat(RequiredFiles.Where(f => !File.Exists(Path.Combine(paths.InstallDir, f))))
