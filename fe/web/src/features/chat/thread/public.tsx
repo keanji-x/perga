@@ -1,4 +1,3 @@
-import { InputCopy } from './input-copy.tsx';
 import { isImeKeyEvent } from '@astryxdesign/core/utils';
 import { useHistoryPrefetch, type HistoryPrefetch } from './history-prefetch.ts';
 import { PrependReading } from './prepend-reading.tsx';
@@ -311,21 +310,18 @@ export const ChatThread = memo(function ChatThread({ conversation, turns, pendin
           {opensAfterGap(turns, index) && index > 0 && (
             <p className={styles.gap}>{clockTime(gapClock, turn.atMs)}</p>
           )}
-          <SystemDisclosure turn={turn} />
-          {copyText !== undefined && <InputCopy id={turn.id} text={turn.text} copyText={copyText} />}
+          <SystemDisclosure turn={turn} copyText={copyText} />
         </div>
       );
     }
     // Outcomes retain their grouping boundary; only the current metadata row paints status.
     if (turn.author === 'turn') return turn.imported === true ? <HistoricalOutcomeNotice key={turn.id} outcome={turn} /> : null;
     return (
-      <Fragment key={turn.id}><MessageEntry mobile={compactViewport} atMs={turn.atMs} timestampFormatter={turn.author === 'agent' ? compactClock : null} id={turn.id} entryKey={key} author={turn.author} human={turn.human} imported={turn.imported === true} text={turn.text}
+      <MessageEntry key={turn.id} mobile={compactViewport} atMs={turn.atMs} timestampFormatter={turn.author === 'agent' ? compactClock : null} id={turn.id} entryKey={key} author={turn.author} human={turn.human} imported={turn.imported === true} text={turn.text}
         attachments={turn.attachments} deliveryError={turn.deliveryError} messageStatus={turn.messageStatus} opens={opensExchange(turns, index)}
         gapLabel={opensAfterGap(turns, index) && index > 0 ? clockTime(gapClock, turn.atMs) : null}
         queued={isQueuedConversationTurn(turn)} edited={edited.has(turn.id)} replacement={turn.id === replacement}
-        imageFiles={imageFiles} renderLink={renderLink} renderMemoryMention={renderMemoryMention} />
-      {turn.deliveryError !== undefined && copyText !== undefined && <InputCopy id={turn.id} text={turn.text} copyText={copyText} />}
-      </Fragment>
+        imageFiles={imageFiles} renderLink={renderLink} renderMemoryMention={renderMemoryMention} copyText={copyText} />
     );
   };
 

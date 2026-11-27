@@ -1,6 +1,7 @@
 import mobileStyles from './mobile-composer.module.css';
 import { memo } from 'react';
 import { messageStatusLabel, type ConversationTurn } from '../../../../../core/domain/conversation.ts';
+import { InputCopy } from './input-copy.tsx';
 import { MessageImages } from './message-images.tsx';
 import { OutgoingMessage, type MemoryMentionRenderer } from './outgoing-message.tsx';
 import { Reply, type ReplyImageFiles, type ReplyLinkRenderer } from './reply.tsx';
@@ -31,10 +32,11 @@ type MessageEntryProps = Readonly<{
   imageFiles: ReplyImageFiles | null;
   renderLink?: ReplyLinkRenderer;
   renderMemoryMention?: MemoryMentionRenderer;
+  copyText: ((text: string) => Promise<void>) | undefined;
 }>;
 
 export const MessageEntry = memo(function MessageEntry({ id, entryKey, author, human, imported, text, deliveryError, messageStatus, attachments,
-  opens, gapLabel, queued, edited, replacement, imageFiles, renderLink, renderMemoryMention, mobile, atMs, timestampFormatter,
+  opens, gapLabel, queued, edited, replacement, imageFiles, renderLink, renderMemoryMention, mobile, atMs, timestampFormatter, copyText,
 }: MessageEntryProps) {
   return (
     <div
@@ -59,9 +61,14 @@ export const MessageEntry = memo(function MessageEntry({ id, entryKey, author, h
               Queued · sends when this turn ends
             </p>
           )}
-          {(deliveryError !== undefined || (messageStatus !== undefined && messageStatus !== 'completed')) && <p className={styles.queuedNote} role="status">
-            {deliveryError ?? (messageStatus === undefined ? null : messageStatusLabel(messageStatus))}
-          </p>}
+          {deliveryError !== undefined ? (
+            <div className={`${styles.queuedNote} ${styles.deliveryNote}`}>
+              <span role="status">{deliveryError}</span>
+              {copyText !== undefined && <InputCopy id={id} text={text} copyText={copyText} />}
+            </div>
+          ) : messageStatus !== undefined && messageStatus !== 'completed' && (
+            <p className={styles.queuedNote} role="status">{messageStatusLabel(messageStatus)}</p>
+          )}
           {replacement && <p className={styles.queuedNote}>Replaces the marked message above</p>}
         </>
       ) : (

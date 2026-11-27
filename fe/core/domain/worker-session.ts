@@ -24,8 +24,8 @@ export function sessionModelCatalog(config: SessionCapabilities): ModelCatalog |
   };
 }
 
-const toolProgressSchema = z.object({ callId: z.string().optional(), name: z.string().nullish(), phase: z.string().optional(),
-  args: z.unknown().optional(), output: z.string().nullish(), isError: z.boolean().optional(), preview: z.string().optional() });
+const toolProgressSchema = z.object({ callId: z.string().min(1), name: z.string().nullish(), phase: z.string(),
+  args: z.unknown().optional(), output: z.string().nullish(), isError: z.boolean().optional() });
 
 /** One tool per call in the running turn. The most recent event may only carry completion. */
 export function workerToolActivity(events: SessionActivity['events']) {
@@ -36,16 +36,15 @@ export function workerToolActivity(events: SessionActivity['events']) {
     if (event.kind !== 'session.tool_progress') continue;
     const parsed = toolProgressSchema.safeParse(event.payload);
     if (!parsed.success) continue;
-    const { callId, name, phase, args, output, isError, preview } = parsed.data;
-    const id = callId ?? `event-${event.sequence}`;
-    const prior = tools.get(id);
-    tools.set(id, {
-      callId: id,
+    const { callId, name, phase, args, output, isError } = parsed.data;
+    const prior = tools.get(callId);
+    tools.set(callId, {
+      callId,
       name: name ?? prior?.name ?? null,
-      phase: phase ?? prior?.phase ?? (preview === undefined ? 'started' : 'completed'),
+      phase,
       isError: isError ?? prior?.isError ?? false,
       args: args ?? prior?.args ?? null,
-      output: preview ?? output ?? prior?.output ?? null,
+      output: output ?? prior?.output ?? null,
       atMs: prior?.atMs ?? event.createdAtMs,
     });
   }

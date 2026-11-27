@@ -1,4 +1,5 @@
 import { nativeTranscriptEntryId } from '../../../../core/domain/conversation-display.ts';
+import { conversationToolShape } from '../../../../core/domain/conversation-tool.ts';
 import { workerToolActivity } from '../../../../core/domain/worker-session.ts';
 import { hashKey, notifyManager, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useMemo, useRef, useSyncExternalStore } from 'react';
@@ -173,7 +174,13 @@ export function useLiveReplies({ transport, unauthorized, cardId, enabled, phase
       });
     }
     const tools = workerToolActivity(scope.turnId === turnId ? activity?.events ?? [] : []);
-    for (const update of stream?.tools ?? []) {
+    const streamedTools = stream?.tools ?? [];
+    const storedTools = new Map(items.filter(item => item.turnId === turnId && item.kind === 'tool_call')
+      .map(item => [item.itemId, item]));
+    // Polling may only see completions, which can arrive out of start order.
+    const firstStored = streamedTools.findIndex(tool => storedTools.has(tool.callId));
+    const pagedOut = new Set(firstStored > 0 ? streamedTools.slice(0, firstStored).map(tool => tool.callId) : []);
+    for (const update of streamedTools) {
       const prior = tools.get(update.callId);
       const useStreamState = prior?.phase !== 'completed' || update.phase === 'completed';
       tools.set(update.callId, {
@@ -188,19 +195,21 @@ export function useLiveReplies({ transport, unauthorized, cardId, enabled, phase
     }
     for (const tool of tools.values()) {
       const doneTool = tool.phase === 'completed';
-      const stored = items.find(item => item.turnId === turnId && item.itemId === tool.callId);
+      const stored = storedTools.get(tool.callId);
       if (stored !== undefined && (stored.completed || !doneTool)) continue;
+      if (stored === undefined && doneTool && pagedOut.has(tool.callId)) continue;
       const id = stored === undefined ? `live-tool-${tool.callId}`
         : stored.threadId !== undefined ? nativeTranscriptEntryId(stored.threadId, tool.callId, 0)
           : `activity-${tool.callId}`;
+      const shape = conversationToolShape(tool.name ?? 'tool', tool.args ?? {});
       const input = tool.args == null ? null : `Input\n${typeof tool.args === 'string' ? tool.args : JSON.stringify(tool.args, null, 2)}`;
       const output = tool.output === null ? null : `Output\n${tool.output}`;
       const content = [input, output].filter(Boolean).join('\n\n');
       activities.push({
         id,
         author: 'activity',
-        verb: doneTool ? 'Called' : 'Calling',
-        target: tool.name,
+        verb: doneTool ? shape.done : shape.running,
+        target: shape.target,
         state: tool.isError ? 'failed' : doneTool ? 'done' : 'running',
         durationMs: null,
         detail: null,

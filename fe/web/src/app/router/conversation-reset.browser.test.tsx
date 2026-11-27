@@ -62,12 +62,24 @@ it.each([390, 1280])('reads and copies interrupted inputs above the epoch bounda
     { id: 3, sessionId: 'daily-planner', turnId: null, kind: 'epoch_boundary', payload: { epoch: 2, reason: 'reset_context' }, createdAtMs: 3 },
   ]);
   await page.getByRole('button', { name: /Conversation Daily Planner conversation/ }).click();
-  await expect.element(page.getByText('Interrupted · Unsent', { exact: true }).first()).toBeVisible();
-  await page.getByRole('button', { name: 'Copy message', exact: true }).first().click();
+  const interrupted = page.getByText('Interrupted · Unsent', { exact: true });
+  await expect.element(interrupted.first()).toBeVisible();
+  const wakeEntry = page.elementLocator(interrupted.last().element().closest('[data-nc-entry]')!);
+  expect.soft(wakeEntry.getByRole('button', { name: 'Copy message', exact: true }).query()).toBeNull();
+  const userNote = interrupted.first().element();
+  const userCopy = page.elementLocator(userNote.parentElement!).getByRole('button', { name: 'Copy message', exact: true });
+  expect(userCopy.query()).not.toBeNull();
+  const noteBounds = userNote.getBoundingClientRect();
+  const copyBounds = userCopy.element().getBoundingClientRect();
+  expect(Math.abs(noteBounds.top + noteBounds.height / 2 - copyBounds.top - copyBounds.height / 2)).toBeLessThan(1);
+  expect(copyBounds.left).toBeGreaterThanOrEqual(noteBounds.right);
+  await userCopy.click();
   await expect.poll(() => copy.mock.calls.at(-1)?.[0]).toBe(userText);
-  await page.getByText('Interrupted · Unsent', { exact: true }).last().click();
-  await expect.element(page.getByText(wakeText, { exact: true })).toBeVisible();
-  await page.getByRole('button', { name: 'Copy message', exact: true }).click();
+  await interrupted.last().click();
+  const wakeDetail = page.getByText(wakeText, { exact: true });
+  await expect.element(wakeDetail).toBeVisible();
+  const result = page.elementLocator(wakeDetail.element().closest('[data-nc-detail]')!);
+  await result.getByRole('button', { name: 'Copy message', exact: true }).click();
   await expect.poll(() => copy.mock.calls.at(-1)?.[0]).toBe(wakeText);
   const entries = [...document.querySelectorAll('[data-nc-entry]')];
   const user = entries.find(el => el.getAttribute('data-nc-entry') === 'human:input');
@@ -77,6 +89,18 @@ it.each([390, 1280])('reads and copies interrupted inputs above the epoch bounda
   expect(user!.compareDocumentPosition(wake!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   expect(wake!.compareDocumentPosition(boundary) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   copy.mockRestore();
+});
+
+it('keeps quiet system observations free of copy actions', async () => {
+  const view = renderSessionFixture({ initial: '/track/daily?panel=conversations' });
+  view.items.set('daily-planner', [
+    { ...sessionItem('daily-planner', 1, '', 'memory_context'), payload: { mode: 'loaded', content: 'Loaded memory' } },
+  ]);
+  await page.getByRole('button', { name: /Conversation Daily Planner conversation/ }).click();
+  const observation = page.getByText('Memory context loaded', { exact: true });
+  await expect.element(observation).toBeVisible();
+  const entry = page.elementLocator(observation.element().closest('[data-nc-entry]')!);
+  await expect.element(entry.getByRole('group', { name: 'Original message actions' })).not.toBeInTheDocument();
 });
 
 it('withdraws an unknown queue entry while the session is unknown', async () => {
