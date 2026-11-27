@@ -1,7 +1,7 @@
 using System.Text.Json;
 using Dapper;
 using Perga.Contracts;
-using Perga.Kernel.Ports;
+using Perga.Kernel;
 
 namespace Perga.Storage.Tests;
 
@@ -40,6 +40,11 @@ public sealed class OverlayPreviewTests
             Questions = [new("  Which\t option?  ", []), new("Second question?", [])]
         }, evt, default);
         await AssertPreviewAsync(TrackOverlayPreviewKind.Ask, "Which option?");
+        var stored = Assert.Single(await h.Store.ListStoredTrackOverlaysAsync());
+        Assert.Equal((lead.Id, "turn"), stored.BlockedErrorSource);
+        Assert.Equal(("Run failed", TrackOverlayPreviewKind.Error),
+            TrackOverlayPreview.Select(stored.Previews with { Ask = null }, isOpen: true));
+        Assert.Equal(("Latest reply", TrackOverlayPreviewKind.Reply), TrackOverlayPreview.Select(stored.Previews, isOpen: false));
 
         await h.Store.UpdateTrackAndEmitAsync(track with { ClosedAtMs = 7000 }, null, default);
         await AssertPreviewAsync(TrackOverlayPreviewKind.Reply, "Latest reply", includeClosed: true);
@@ -82,9 +87,6 @@ public sealed class OverlayPreviewTests
         var released = Assert.Single(await h.Store.ListTrackOverlaysAsync());
         Assert.Equal(TrackOverlayPreviewKind.Reply, released.PreviewKind);
         Assert.Equal("Worker output", released.PreviewText);
-        var fallback = Assert.Single(await h.Store.ListTrackOverlayFallbacksAsync(
-            [new(track.Id, false, false), new("missing", false, false)], default));
-        Assert.Equal(new TrackOverlayFallback(track.Id, "Worker output", TrackOverlayPreviewKind.Reply), fallback);
     }
 
     [Fact]
@@ -139,45 +141,13 @@ public sealed class OverlayPreviewTests
         }
 
         await ExpectPreviewAsync(TrackOverlayPreviewKind.Error, "Blocking failure");
-        var workspaceOnly = Assert.Single(await h.Store.ListTrackOverlayFallbacksAsync(
-            [new(track.Id, IncludeBlockedSessionError: false, IncludeWorkspaceError: true)], default));
-        Assert.Equal(new TrackOverlayFallback(track.Id, "Workspace mount failed", TrackOverlayPreviewKind.Error), workspaceOnly);
+        var stored = Assert.Single(await h.Store.ListStoredTrackOverlaysAsync());
+        Assert.Equal("Workspace mount failed", stored.Previews.WorkspaceError);
+        Assert.Equal((lead.Id, "turn-" + lead.Id), stored.BlockedErrorSource);
         await h.Store.UpsertSessionAsync(lead, null, default);
         await ExpectPreviewAsync(TrackOverlayPreviewKind.Error, "Workspace mount failed");
         await conn.ExecuteAsync("UPDATE track_workspace_preparations SET intent_json = json_remove(intent_json, '$.FailureDetail');");
         await ExpectPreviewAsync(TrackOverlayPreviewKind.Summary, report.Summary);
-    }
-
-    [Fact]
-    public async Task FallbackIgnoresWorkspaceFailureWhileRetryClaimIsPending()
-    {
-        await using var h = await StorageTestHarness.CreateAsync();
-        await h.Store.UpsertAreaAsync(StorageTestHarness.CreateArea(), default);
-        var (track, report, lead) = StorageTestHarness.CreateSeedTrack();
-        var (blockedTrack, blockedReport, blockedLead) = StorageTestHarness.CreateSeedTrack(
-            trackId: "blocked", leadSessionId: "blocked-lead");
-        await h.Store.CreateTrackAsync(track, report, null, lead, default);
-        await h.Store.CreateTrackAsync(blockedTrack, blockedReport, null, blockedLead with { Status = "unknown" }, default);
-        await h.Store.AppendSessionItemsAsync(lead.Id, [Reply(lead.Id, "Usable reply", 3000)]);
-        await using var conn = h.OpenRawInspectConnection();
-        await conn.ExecuteAsync("""
-            INSERT INTO track_workspace_preparations(track_id, intent_json)
-            VALUES (@TrackId, '{"Phase":4,"FailureDetail":"Workspace mount failed"}'),
-                   (@BlockedTrackId, '{"Phase":4,"FailureDetail":"Workspace mount failed"}');
-            """, new { TrackId = track.Id, BlockedTrackId = blockedTrack.Id });
-        var stored = await h.Store.ListTrackOverlaysAsync();
-        Assert.All(stored, overlay => Assert.Equal(TrackOverlayPreviewKind.Error, overlay.PreviewKind));
-        Assert.False(Assert.Single(stored, overlay => overlay.TrackId == track.Id).HasBlockedSession);
-        Assert.True(Assert.Single(stored, overlay => overlay.TrackId == blockedTrack.Id).HasBlockedSession);
-
-        // The retry has set live workspace state to pending while the durable claim is still waiting.
-        var fallbacks = await h.Store.ListTrackOverlayFallbacksAsync(
-        [
-            new(track.Id, IncludeBlockedSessionError: false, IncludeWorkspaceError: false),
-            new(blockedTrack.Id, IncludeBlockedSessionError: true, IncludeWorkspaceError: false)
-        ], default);
-        Assert.Contains(new TrackOverlayFallback(track.Id, "Usable reply", TrackOverlayPreviewKind.Reply), fallbacks);
-        Assert.Contains(new TrackOverlayFallback(blockedTrack.Id, blockedReport.Summary, TrackOverlayPreviewKind.Summary), fallbacks);
     }
 
     [Fact]
@@ -199,17 +169,18 @@ public sealed class OverlayPreviewTests
         Assert.Equal((TrackOverlayPreviewKind.Summary, report.Summary), (overlay.PreviewKind, overlay.PreviewText));
 
         await h.Store.RecordTurnAndItemsAsync(current with { ErrorText = "Current turn failure" }, [], null, default);
-        var fallback = Assert.Single(await h.Store.ListTrackOverlayFallbacksAsync(
-            [new(track.Id, IncludeBlockedSessionError: true, IncludeWorkspaceError: false)], default));
-        Assert.Equal(new TrackOverlayFallback(track.Id, "Current turn failure", TrackOverlayPreviewKind.Error), fallback);
+        var stored = Assert.Single(await h.Store.ListStoredTrackOverlaysAsync());
+        Assert.Equal("Current turn failure", stored.Previews.BlockedSessionError);
+        Assert.Equal((lead.Id, current.Id), stored.BlockedErrorSource);
 
         await h.Store.UpsertSessionAsync(blocked with { UnknownLastError = "Current reconnect failure" }, null, default);
-        overlay = Assert.Single(await h.Store.ListTrackOverlaysAsync());
-        Assert.Equal((TrackOverlayPreviewKind.Error, "Current reconnect failure"), (overlay.PreviewKind, overlay.PreviewText));
+        stored = Assert.Single(await h.Store.ListStoredTrackOverlaysAsync());
+        Assert.Equal((TrackOverlayPreviewKind.Error, "Current reconnect failure"), (stored.Overlay.PreviewKind, stored.Overlay.PreviewText));
+        Assert.Null(stored.BlockedErrorSource);
     }
 
     [Fact]
-    public async Task ColdReplyWithAnUnpairedSurrogateInItsPreviewPropertyNameFallsThrough()
+    public async Task LegacyColdRepliesWithoutTextPreviewFallThrough()
     {
         await using var h = await StorageTestHarness.CreateAsync();
         await h.Store.UpsertAreaAsync(StorageTestHarness.CreateArea(), default);
@@ -221,7 +192,13 @@ public sealed class OverlayPreviewTests
             preview = """{"\uD800":0,"text":"Truncated"""
         });
         await h.Store.AppendSessionItemsAsync(lead.Id,
-            [Reply(lead.Id, "Usable reply", 3000), new(0, lead.Id, null, "assistant_text", damaged, 4000)]);
+        [
+            Reply(lead.Id, "Usable reply", 3000),
+            new(0, lead.Id, null, "assistant_text", StorageTestHarness.Json("""
+                {"blobRef":"blobs/legacy.zst","preview":"{\"text\":\"Old excerpt"}
+                """), 3500),
+            new(0, lead.Id, null, "assistant_text", damaged, 4000)
+        ]);
 
         var overlay = Assert.Single(await h.Store.ListTrackOverlaysAsync());
         Assert.Equal((TrackOverlayPreviewKind.Reply, "Usable reply"), (overlay.PreviewKind, overlay.PreviewText));
@@ -241,6 +218,9 @@ public sealed class OverlayPreviewTests
         var blobRef = await conn.ExecuteScalarAsync<string>(
             "SELECT json_extract(payload_json, '$.blobRef') FROM session_items ORDER BY id DESC LIMIT 1;");
         Assert.NotNull(blobRef);
+        var textPreview = await conn.ExecuteScalarAsync<string>(
+            "SELECT json_extract(payload_json, '$.textPreview') FROM session_items ORDER BY id DESC LIMIT 1;");
+        Assert.Equal(beginning + new string('x', 280 - beginning.Length), textPreview);
         var blobPath = Path.Combine(h.DataDir, blobRef);
         Assert.True(File.Exists(blobPath));
         File.Delete(blobPath);
@@ -248,6 +228,29 @@ public sealed class OverlayPreviewTests
         var overlay = Assert.Single(await h.Store.ListTrackOverlaysAsync());
         Assert.Equal(TrackOverlayPreviewKind.Reply, overlay.PreviewKind);
         Assert.Equal(beginning + new string('x', 280 - beginning.Length), overlay.PreviewText);
+    }
+
+    [Fact]
+    public async Task ColdReplyWithUnpairedSurrogatePersistsWithoutTextPreview()
+    {
+        await using var h = await StorageTestHarness.CreateAsync();
+        await h.Store.UpsertAreaAsync(StorageTestHarness.CreateArea(), default);
+        var (track, report, lead) = StorageTestHarness.CreateSeedTrack();
+        await h.Store.CreateTrackAsync(track, report, null, lead, default);
+        var payload = StorageTestHarness.Json("""{"text":"\uD800""" + new string('x', 70_000) + "\"}");
+        await h.Store.AppendSessionItemsAsync(lead.Id,
+            [Reply(lead.Id, "Usable reply", 3000), new(0, lead.Id, null, "assistant_text", payload, 4000)]);
+
+        await using var conn = h.OpenRawInspectConnection();
+        var (blobRef, textPreview) = await conn.QuerySingleAsync<(string? BlobRef, string? TextPreview)>("""
+            SELECT json_extract(payload_json, '$.blobRef'), json_extract(payload_json, '$.textPreview')
+            FROM session_items ORDER BY id DESC LIMIT 1;
+            """);
+        Assert.NotNull(blobRef);
+        Assert.True(File.Exists(Path.Combine(h.DataDir, blobRef)));
+        Assert.Null(textPreview);
+        var overlay = Assert.Single(await h.Store.ListTrackOverlaysAsync());
+        Assert.Equal((TrackOverlayPreviewKind.Reply, "Usable reply"), (overlay.PreviewKind, overlay.PreviewText));
     }
 
     private static SessionTurnDto FailedTurn(string sessionId, string detail, long completedAtMs) =>

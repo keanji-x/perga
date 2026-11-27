@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using Perga.Kernel;
 using ZstdSharp;
 
 namespace Perga.Storage.Sqlite;
@@ -107,6 +108,7 @@ internal sealed class ColdBlobStore
             writer.WriteNumber("bytes", rawBytes.Length);
             writer.WriteString("preview", preview);
             WriteToolResultIdentity(writer, payload);
+            WriteTextPreview(writer, payload);
             writer.WriteEndObject();
         }
 
@@ -117,52 +119,6 @@ internal sealed class ColdBlobStore
     {
         var element = _upcaster.UpcastObjectOrElement(storedJson, domain);
         return HydrateIfBlobEnvelope(element);
-    }
-
-    // The envelope stores a prefix of the serialized payload. Decode only the
-    // complete text characters and escapes available in that prefix.
-    internal static string? ReadTextPreview(string? preview)
-    {
-        if (string.IsNullOrEmpty(preview)) return null;
-
-        try
-        {
-            var bytes = Encoding.UTF8.GetBytes(preview);
-            var reader = new Utf8JsonReader(bytes, isFinalBlock: false, state: default);
-            while (reader.Read())
-            {
-                if (reader.TokenType != JsonTokenType.PropertyName || reader.CurrentDepth != 1 ||
-                    !reader.ValueTextEquals("text"u8)) continue;
-
-                var value = bytes.AsSpan((int)reader.BytesConsumed);
-                while (!value.IsEmpty && value[0] is (byte)' ' or (byte)'\t' or (byte)'\n' or (byte)'\r')
-                    value = value[1..];
-                if (value.IsEmpty || value[0] != '"') return null;
-
-                var end = 1;
-                while (end < value.Length && value[end] != '"')
-                {
-                    var width = 1;
-                    if (value[end] == '\\')
-                    {
-                        if (end + 1 == value.Length) break;
-                        width = value[end + 1] == 'u' ? 6 : 2;
-                        if (width == 6 && end + 6 <= value.Length &&
-                            value[end + 2] is (byte)'d' or (byte)'D' &&
-                            value[end + 3] is (byte)'8' or (byte)'9' or (byte)'a' or (byte)'A' or (byte)'b' or (byte)'B')
-                            width = 12;
-                    }
-                    if (end + width > value.Length) break;
-                    end += width;
-                }
-                return JsonSerializer.Deserialize<string>(Encoding.UTF8.GetString(value[..end]) + "\"");
-            }
-        }
-        catch (Exception error) when (error is JsonException or InvalidOperationException or ArgumentException)
-        {
-            // A missing or unusable excerpt has no reply preview.
-        }
-        return null;
     }
 
     public JsonElement? HydrateNullable(string? storedJson, string domain)
@@ -270,6 +226,24 @@ internal sealed class ColdBlobStore
         }
 
         return Encoding.UTF8.GetString(buffer.GetBuffer(), 0, (int)buffer.Length);
+    }
+
+    private static void WriteTextPreview(Utf8JsonWriter writer, JsonElement payload)
+    {
+        if (payload.ValueKind != JsonValueKind.Object ||
+            !payload.TryGetProperty("text", out var text) || text.ValueKind != JsonValueKind.String)
+            return;
+
+        string? value;
+        try { value = text.GetString(); }
+        catch (InvalidOperationException)
+        {
+            // Raw JSON can preserve unpaired surrogates even when the string cannot be decoded.
+            return;
+        }
+
+        if (TrackOverlayPreview.Normalize(value) is { } preview)
+            writer.WriteString("textPreview", preview);
     }
 
     private static bool WriteToolResultIdentity(Utf8JsonWriter writer, JsonElement payload)

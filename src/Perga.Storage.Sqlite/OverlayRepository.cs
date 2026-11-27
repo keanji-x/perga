@@ -1,6 +1,4 @@
-using System.Text.Json;
 using Dapper;
-using Microsoft.Data.Sqlite;
 using Perga.Contracts;
 using Perga.Kernel;
 using Perga.Kernel.Ports;
@@ -40,56 +38,23 @@ internal sealed class OverlayRepository
         CASE WHEN json_valid(i.payload_json) = 1 THEN
             NULLIF(LTRIM(CASE
                 WHEN json_type(i.payload_json, '$.text') = 'text' THEN json_extract(i.payload_json, '$.text')
-                WHEN json_type(i.payload_json, '$.blobRef') = 'text' AND json_type(i.payload_json, '$.preview') = 'text'
-                THEN overlay_blob_text(SUBSTR(json_extract(i.payload_json, '$.preview'), 1, @BlobPreviewReadLength))
+                WHEN json_type(i.payload_json, '$.textPreview') = 'text' THEN json_extract(i.payload_json, '$.textPreview')
             END, @Whitespace), '')
         END
         """;
 
-    // Seek the newest eligible item within each session, then compare IDs across sessions.
-    // The assistant-only index keeps the normal lookup independent of transcript length.
-    private static readonly string ReplyOrSummarySql = $"""
-        COALESCE(
-            (SELECT '{TrackOverlayPreviewKind.Reply}:' || SUBSTR({ReplyTextSql}, 1, @PreviewReadLength)
-             FROM session_items i WHERE i.id = (
-                 SELECT MAX((
-                     SELECT i.id
-                     FROM session_items i INDEXED BY idx_items_session_assistant_latest
-                     WHERE i.session_id = s.id AND i.kind = 'assistant_text' AND ({ReplyTextSql}) IS NOT NULL
-                     ORDER BY i.id DESC LIMIT 1
-                 ))
-                 FROM agent_sessions s
-                 WHERE s.track_id = tr.id AND s.archived_at_ms IS NULL AND {ExcludeTaskOwnedSessionSql}
-             )),
-            (SELECT '{TrackOverlayPreviewKind.Summary}:' || SUBSTR(NULLIF(LTRIM(r.summary, @Whitespace), ''), 1, @PreviewReadLength)
-             FROM reports r WHERE r.track_id = tr.id)
-        )
-        """;
-
-    private static string FallbackPreviewSql(string includeBlockedSessionError, string includeWorkspaceError) => $"""
-        COALESCE(
-            CASE WHEN tr.closed_at_ms IS NULL THEN COALESCE(
-                CASE WHEN {includeBlockedSessionError} = 1 THEN
-                    (SELECT '{TrackOverlayPreviewKind.Error}:' || SUBSTR(COALESCE(
-                        NULLIF(LTRIM(s.unknown_last_error, @Whitespace), ''),
-                        NULLIF(LTRIM(t.error_text, @Whitespace), '')), 1, @PreviewReadLength)
-                     FROM agent_sessions s
-                     LEFT JOIN session_turns t ON t.session_id = s.id AND t.id = s.unknown_turn_id
-                     WHERE s.track_id = tr.id AND s.archived_at_ms IS NULL AND ({BlockingSessionSql})
-                       AND (LTRIM(s.unknown_last_error, @Whitespace) <> '' OR LTRIM(t.error_text, @Whitespace) <> '')
-                     ORDER BY s.updated_at_ms DESC, s.id DESC LIMIT 1)
-                END,
-                CASE WHEN {includeWorkspaceError} = 1 THEN
-                    CASE WHEN {WorkspaceFailedSql} THEN
-                        '{TrackOverlayPreviewKind.Error}:' || SUBSTR(NULLIF(LTRIM(CASE
-                            WHEN json_type(p.intent_json, '$.FailureDetail') = 'text'
-                            THEN json_extract(p.intent_json, '$.FailureDetail')
-                        END, @Whitespace), ''), 1, @PreviewReadLength)
-                    END
-                END
-            ) END,
-            {ReplyOrSummarySql}
-        )
+    // Seek the latest eligible assistant item per session, then compare IDs across sessions.
+    private static readonly string ReplyPreviewSql = $"""
+        (SELECT SUBSTR({ReplyTextSql}, 1, @PreviewReadLength)
+         FROM session_items i WHERE i.id = (
+             SELECT MAX((
+                 SELECT i.id FROM session_items i INDEXED BY idx_items_session_assistant_latest
+                 WHERE i.session_id = s.id AND i.kind = 'assistant_text' AND ({ReplyTextSql}) IS NOT NULL
+                 ORDER BY i.id DESC LIMIT 1
+             ))
+             FROM agent_sessions s
+             WHERE s.track_id = tr.id AND s.archived_at_ms IS NULL AND {ExcludeTaskOwnedSessionSql}
+         ))
         """;
 
     private static readonly string ListTrackOverlaysSql = $$"""
@@ -116,36 +81,54 @@ internal sealed class OverlayRepository
                    COALESCE((SELECT MAX(COALESCE(a2.answered_at_ms, a2.created_at_ms)) FROM asks a2 WHERE a2.track_id = tr.id), tr.updated_at_ms),
                    COALESCE((SELECT MAX(m2.created_at_ms) FROM mails m2 WHERE m2.to_track_id = tr.id), tr.updated_at_ms)
                ) AS UpdatedAtMs,
-               COALESCE(
-                   CASE WHEN tr.closed_at_ms IS NULL THEN
-                       (SELECT '{{TrackOverlayPreviewKind.Ask}}:' || SUBSTR(NULLIF(LTRIM(CASE
-                           WHEN json_valid(a.questions_json) = 1 THEN CASE
-                               WHEN json_type(a.questions_json, '$[0].question') = 'text'
-                               THEN json_extract(a.questions_json, '$[0].question')
-                               WHEN json_type(a.questions_json, '$[0].Question') = 'text'
-                               THEN json_extract(a.questions_json, '$[0].Question')
-                           END
-                           END, @Whitespace), ''), 1, @PreviewReadLength)
-                        FROM asks a
-                        WHERE a.track_id = tr.id AND LOWER(a.status) = 'open' AND json_valid(a.questions_json) = 1
-                        ORDER BY a.created_at_ms DESC, a.id DESC LIMIT 1)
-                   END,
-                   {{FallbackPreviewSql("1", "1")}}
-               ) AS Preview
+               CASE WHEN tr.closed_at_ms IS NULL THEN (
+                   SELECT SUBSTR(LTRIM(CASE WHEN json_valid(a.questions_json) = 1 THEN CASE
+                       WHEN json_type(a.questions_json, '$[0].question') = 'text'
+                       THEN json_extract(a.questions_json, '$[0].question')
+                       WHEN json_type(a.questions_json, '$[0].Question') = 'text'
+                       THEN json_extract(a.questions_json, '$[0].Question')
+                   END END, @Whitespace), 1, @PreviewReadLength)
+                   FROM asks a
+                   WHERE a.track_id = tr.id AND LOWER(a.status) = 'open' AND json_valid(a.questions_json) = 1
+                   ORDER BY a.created_at_ms DESC, a.id DESC LIMIT 1
+               ) END AS AskPreview,
+               SUBSTR(COALESCE(NULLIF(LTRIM(blocker.unknown_last_error, @Whitespace), ''),
+                   LTRIM(blocked_turn.error_text, @Whitespace)), 1, @PreviewReadLength) AS BlockedErrorPreview,
+               blocker.id AS BlockedErrorSessionId,
+               CASE WHEN NULLIF(LTRIM(blocker.unknown_last_error, @Whitespace), '') IS NULL
+                    THEN blocked_turn.id END AS BlockedErrorTurnId,
+               CASE WHEN tr.closed_at_ms IS NULL AND {{WorkspaceFailedSql}} THEN
+                   SUBSTR(LTRIM(CASE WHEN json_type(p.intent_json, '$.FailureDetail') = 'text'
+                       THEN json_extract(p.intent_json, '$.FailureDetail') END, @Whitespace), 1, @PreviewReadLength)
+               END AS WorkspaceErrorPreview,
+               {{ReplyPreviewSql}} AS ReplyPreview,
+               SUBSTR(LTRIM(r.summary, @Whitespace), 1, @PreviewReadLength) AS SummaryPreview
         FROM tracks tr LEFT JOIN track_workspace_preparations p ON p.track_id = tr.id
+        LEFT JOIN agent_sessions blocker ON blocker.id = CASE WHEN tr.closed_at_ms IS NULL THEN (
+            SELECT s.id FROM agent_sessions s LEFT JOIN session_turns t ON t.session_id = s.id AND t.id = s.unknown_turn_id
+            WHERE s.track_id = tr.id AND s.archived_at_ms IS NULL AND ({{BlockingSessionSql}})
+              AND (LTRIM(s.unknown_last_error, @Whitespace) <> '' OR LTRIM(t.error_text, @Whitespace) <> '')
+            ORDER BY s.updated_at_ms DESC, s.id DESC LIMIT 1
+        ) END
+        LEFT JOIN session_turns blocked_turn ON blocked_turn.session_id = blocker.id AND blocked_turn.id = blocker.unknown_turn_id
+        LEFT JOIN reports r ON r.track_id = tr.id
         WHERE tr.area_id != @MemorySystemAreaId AND (@IncludeClosed = 1 OR tr.closed_at_ms IS NULL)
         ORDER BY tr.updated_at_ms DESC, tr.id ASC;
         """;
 
-    public async Task<IReadOnlyList<TrackOverlayDto>> ListTrackOverlaysAsync(
+    public async Task<IReadOnlyList<StoredTrackOverlay>> ListStoredTrackOverlaysAsync(
         bool includeClosed = false,
         CancellationToken ct = default)
     {
         _context.EnsureInitialized();
         await using var conn = await _context.OpenReadConnectionAsync(ct).ConfigureAwait(false);
-        RegisterPreviewFunctions(conn);
-        var filter = new DynamicParameters(new { IncludeClosed = includeClosed ? 1 : 0, MemorySystemAreaId = MemoryTrackBinding.SystemAreaId });
-        AddPreviewParameters(filter);
+        var filter = new
+        {
+            IncludeClosed = includeClosed ? 1 : 0,
+            MemorySystemAreaId = MemoryTrackBinding.SystemAreaId,
+            PreviewReadLength = TrackOverlayPreview.MaxLength * 4,
+            Whitespace = " \t\n\v\f\r\u0085\u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000"
+        };
         var rows = await conn.QueryAsync<TrackOverlayRow>(
             new CommandDefinition(
                 ListTrackOverlaysSql,
@@ -164,61 +147,20 @@ internal sealed class OverlayRepository
             .ToLookup(r => r.TrackId);
         return rows.Select(r =>
         {
-            var (text, kind) = ReadPreview(r.Preview);
-            return new TrackOverlayDto(r.TrackId, r.AreaId,
-                r.ClosedAtMs is null && r.IsWorking != 0,
-                r.ClosedAtMs is null ? (int)r.OpenAskCount : 0, 0,
-                r.ClosedAtMs is null && r.HasBlockedSession != 0,
-                r.ClosedAtMs is null && r.WorkspaceFailed != 0, r.UpdatedAtMs,
-                watermarks[r.TrackId].Select(w => new NotifiableSessionWatermarkDto(w.SessionId, w.LastNotifiableTurnAtMs)).ToArray(),
+            var open = r.ClosedAtMs is null;
+            var previews = new TrackOverlayPreviewCandidates(
+                r.AskPreview, r.BlockedErrorPreview, r.WorkspaceErrorPreview, r.ReplyPreview, r.SummaryPreview);
+            var (text, kind) = TrackOverlayPreview.Select(previews, open);
+            var overlay = new TrackOverlayDto(r.TrackId, r.AreaId, open && r.IsWorking != 0,
+                open ? (int)r.OpenAskCount : 0, 0, open && r.HasBlockedSession != 0, open && r.WorkspaceFailed != 0,
+                r.UpdatedAtMs, watermarks[r.TrackId].Select(w => new NotifiableSessionWatermarkDto(w.SessionId, w.LastNotifiableTurnAtMs)).ToArray(),
                 text, kind);
+            return new StoredTrackOverlay(overlay, previews)
+            {
+                BlockedErrorSource = r.BlockedErrorSessionId is { } sessionId && r.BlockedErrorTurnId is { } turnId
+                    ? (sessionId, turnId) : null
+            };
         }).ToList();
-    }
-
-    public async Task<IReadOnlyList<TrackOverlayFallback>> ListTrackOverlayFallbacksAsync(
-        IReadOnlyList<TrackOverlayFallbackRequest> requests, CancellationToken ct)
-    {
-        _context.EnsureInitialized();
-        await using var conn = await _context.OpenReadConnectionAsync(ct).ConfigureAwait(false);
-        RegisterPreviewFunctions(conn);
-        var filter = new DynamicParameters(new { Requests = JsonSerializer.Serialize(requests, JsonSerializerOptions.Web) });
-        AddPreviewParameters(filter);
-        var rows = await conn.QueryAsync<TrackOverlayRow>(new CommandDefinition($"""
-            SELECT tr.id AS TrackId, {FallbackPreviewSql(
-                "json_extract(req.value, '$.includeBlockedSessionError')",
-                "json_extract(req.value, '$.includeWorkspaceError')")} AS Preview
-            FROM json_each(@Requests) req JOIN tracks tr ON tr.id = json_extract(req.value, '$.trackId')
-            LEFT JOIN track_workspace_preparations p ON p.track_id = tr.id;
-            """, filter, cancellationToken: ct)).ConfigureAwait(false);
-
-        var fallbacks = new List<TrackOverlayFallback>();
-        foreach (var row in rows)
-        {
-            var (text, kind) = ReadPreview(row.Preview);
-            if (text is not null && kind is not null) fallbacks.Add(new(row.TrackId, text, kind.Value));
-        }
-        return fallbacks;
-    }
-
-    private static void RegisterPreviewFunctions(SqliteConnection conn) =>
-        conn.CreateFunction<string?, string?>("overlay_blob_text", ColdBlobStore.ReadTextPreview, isDeterministic: true);
-
-    private static void AddPreviewParameters(DynamicParameters parameters)
-    {
-        // Leave room for whitespace collapse and escaped Unicode in the bounded SQL reads.
-        parameters.Add("PreviewReadLength", TrackOverlayPreview.MaxLength * 4);
-        parameters.Add("BlobPreviewReadLength", TrackOverlayPreview.MaxLength * 12);
-        parameters.Add("Whitespace", " \t\n\v\f\r\u0085\u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000");
-    }
-
-    // SQL prefixes the first nonblank value with its kind so COALESCE can
-    // short-circuit the lower-priority reads and return both in one column.
-    private static (string? Text, TrackOverlayPreviewKind? Kind) ReadPreview(string? preview)
-    {
-        if (preview is null) return (null, null);
-        var separator = preview.IndexOf(':');
-        var text = TrackOverlayPreview.Normalize(preview[(separator + 1)..]);
-        return text is null ? (null, null) : (text, Enum.Parse<TrackOverlayPreviewKind>(preview.AsSpan(0, separator)));
     }
 
     private sealed class OverlayWatermarkRow
@@ -238,6 +180,12 @@ internal sealed class OverlayRepository
         public long HasBlockedSession { get; init; }
         public long WorkspaceFailed { get; init; }
         public long UpdatedAtMs { get; init; }
-        public string? Preview { get; init; }
+        public string? AskPreview { get; init; }
+        public string? BlockedErrorPreview { get; init; }
+        public string? BlockedErrorSessionId { get; init; }
+        public string? BlockedErrorTurnId { get; init; }
+        public string? WorkspaceErrorPreview { get; init; }
+        public string? ReplyPreview { get; init; }
+        public string? SummaryPreview { get; init; }
     }
 }

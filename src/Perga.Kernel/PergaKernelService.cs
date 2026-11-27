@@ -275,39 +275,17 @@ public sealed partial class PergaKernelService : IPergaKernel, IFlowTrackSpawner
         bool includeClosed = false,
         CancellationToken ct = default)
     {
-        var stored = await _store.ListTrackOverlaysAsync(includeClosed, ct).ConfigureAwait(false);
+        var stored = await _store.ListStoredTrackOverlaysAsync(includeClosed, ct).ConfigureAwait(false);
         return await MergeOverlaysAsync(stored, ct).ConfigureAwait(false);
     }
 
     internal async Task<TrackOverlaysResponseDto> MergeOverlaysAsync(
-        IReadOnlyList<TrackOverlayDto> stored, CancellationToken ct)
+        IReadOnlyList<StoredTrackOverlay> stored, CancellationToken ct)
     {
         var merged = new List<TrackOverlayDto>(stored.Count);
-        var invalidated = new Dictionary<string, int>(StringComparer.Ordinal);
         foreach (var item in stored)
-        {
-            var live = await MergeActiveOverlayAsync(item,
-                () => Actors.TryGetActive(item.TrackId, out var actor) ? actor : null, ct).ConfigureAwait(false);
-            if (live.PreviewKind is null && (live.HasBlockedSession ||
-                item.PreviewKind is TrackOverlayPreviewKind.Ask or TrackOverlayPreviewKind.Error))
-                invalidated.Add(item.TrackId, merged.Count);
-            merged.Add(live);
-        }
-
-        if (invalidated.Count > 0)
-        {
-            var requests = invalidated.Values.Select(position =>
-            {
-                var live = merged[position];
-                return new TrackOverlayFallbackRequest(live.TrackId, live.HasBlockedSession, live.WorkspaceFailed);
-            }).ToArray();
-            var fallbacks = await _store.ListTrackOverlayFallbacksAsync(requests, ct).ConfigureAwait(false);
-            foreach (var fallback in fallbacks)
-            {
-                var position = invalidated[fallback.TrackId];
-                merged[position] = merged[position] with { PreviewText = fallback.Text, PreviewKind = fallback.Kind };
-            }
-        }
+            merged.Add(await MergeActiveOverlayAsync(item,
+                () => Actors.TryGetActive(item.Overlay.TrackId, out var actor) ? actor : null, ct).ConfigureAwait(false));
 
         return new TrackOverlaysResponseDto(merged);
     }
@@ -315,7 +293,7 @@ public sealed partial class PergaKernelService : IPergaKernel, IFlowTrackSpawner
     // A registry lookup is not a lease: eviction can complete the actor's mailbox before enqueue.
     // Retry only a newer active actor, once; otherwise the durable overlay remains authoritative.
     internal static async Task<TrackOverlayDto> MergeActiveOverlayAsync(
-        TrackOverlayDto stored, Func<TrackActor?> getActive, CancellationToken ct)
+        StoredTrackOverlay stored, Func<TrackActor?> getActive, CancellationToken ct)
     {
         var actor = getActive();
         for (var attempt = 0; actor is not null && attempt < 2; attempt++)
@@ -333,10 +311,10 @@ public sealed partial class PergaKernelService : IPergaKernel, IFlowTrackSpawner
             {
                 // A cold actor can encounter damaged JSON during hydration.
                 // The storage projection has already guarded its preview reads.
-                return stored;
+                return stored.Overlay;
             }
         }
-        return stored;
+        return stored.Overlay;
     }
 
     public Task<ReadReceiptsResponseDto> GetReadReceiptsAsync(CancellationToken ct = default) =>

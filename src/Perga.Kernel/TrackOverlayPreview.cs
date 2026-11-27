@@ -1,11 +1,28 @@
 using System.Text;
+using Perga.Contracts;
 
 namespace Perga.Kernel;
 
-/// <summary>Shared text bound for stored and live Track overlay previews.</summary>
+public sealed record TrackOverlayPreviewCandidates(string? Ask = null, string? BlockedSessionError = null,
+    string? WorkspaceError = null, string? Reply = null, string? Summary = null);
+
+/// <summary>Shared selection and text bound for stored and live Track overlay previews.</summary>
 public static class TrackOverlayPreview
 {
     public const int MaxLength = 280;
+
+    public static (string? Text, TrackOverlayPreviewKind? Kind) Select(TrackOverlayPreviewCandidates candidates, bool isOpen)
+    {
+        if (isOpen)
+        {
+            if (Normalize(candidates.Ask) is { } ask) return (ask, TrackOverlayPreviewKind.Ask);
+            if ((Normalize(candidates.BlockedSessionError) ?? Normalize(candidates.WorkspaceError)) is { } error)
+                return (error, TrackOverlayPreviewKind.Error);
+        }
+        if (Normalize(candidates.Reply) is { } reply) return (reply, TrackOverlayPreviewKind.Reply);
+        if (Normalize(candidates.Summary) is { } summary) return (summary, TrackOverlayPreviewKind.Summary);
+        return (null, null);
+    }
 
     public static string? Normalize(string? text)
     {

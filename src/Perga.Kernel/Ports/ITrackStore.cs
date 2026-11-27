@@ -42,8 +42,11 @@ public sealed record WorkspacePreparation(WorkspaceProvisionRequest Request, str
     WorkspacePreparationPhase Phase = WorkspacePreparationPhase.Pending, WorkspaceSpec? Spec = null,
     bool RepeatableProvision = false, string? FailureDetail = null);
 
-public sealed record TrackOverlayFallbackRequest(string TrackId, bool IncludeBlockedSessionError, bool IncludeWorkspaceError);
-public sealed record TrackOverlayFallback(string TrackId, string Text, TrackOverlayPreviewKind Kind);
+public sealed record StoredTrackOverlay(TrackOverlayDto Overlay, TrackOverlayPreviewCandidates Previews)
+{
+    // Only set when the stored error came from a turn, not the session's reconnect error.
+    public (string SessionId, string TurnId)? BlockedErrorSource { get; init; }
+}
 
 public sealed record TrackCreation(TrackDto Track, ReportDocument Report, string? TemplateSnapshot,
     AgentSessionDto Lead, IReadOnlyList<TaskDto> Tasks, SessionInputRequest? FirstInput,
@@ -106,8 +109,9 @@ public interface ITrackReadStore
     Task<long> GetEventTipIdAsync(CancellationToken ct);
     Task<IReadOnlyList<EventEnvelopeDto>> ListEventsSinceAsync(long sinceEventId, string? trackId = null, int limit = 500, CancellationToken ct = default);
     Task<ReadReceiptsResponseDto> GetReadReceiptsAsync(CancellationToken ct = default);
-    Task<IReadOnlyList<TrackOverlayDto>> ListTrackOverlaysAsync(bool includeClosed = false, CancellationToken ct = default);
-    Task<IReadOnlyList<TrackOverlayFallback>> ListTrackOverlayFallbacksAsync(IReadOnlyList<TrackOverlayFallbackRequest> requests, CancellationToken ct);
+    Task<IReadOnlyList<StoredTrackOverlay>> ListStoredTrackOverlaysAsync(bool includeClosed = false, CancellationToken ct = default);
+    async Task<IReadOnlyList<TrackOverlayDto>> ListTrackOverlaysAsync(bool includeClosed = false, CancellationToken ct = default) =>
+        (await ListStoredTrackOverlaysAsync(includeClosed, ct).ConfigureAwait(false)).Select(stored => stored.Overlay).ToArray();
     Task<string?> FindTrackIdBySessionAsync(string sessionId, CancellationToken ct);
     Task<string?> FindTrackIdByTerminalAsync(string terminalId, CancellationToken ct) => Task.FromResult<string?>(null);
     Task<IReadOnlyList<StoredExecutionTarget>> ListExecutionTargetsAsync(CancellationToken ct = default)

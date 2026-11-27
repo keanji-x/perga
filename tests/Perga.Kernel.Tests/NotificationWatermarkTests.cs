@@ -18,10 +18,8 @@ public sealed class NotificationWatermarkTests
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         var ct = deadline.Token;
         var actor = ctx.Kernel.Actors.GetOrActivate(trackId);
-        var stored = Assert.Single((await ctx.Kernel.GetOverlaysAsync(ct: ct)).Tracks) with
-        {
-            PreviewKind = TrackOverlayPreviewKind.Reply, PreviewText = "Stored reply"
-        };
+        var overlay = Assert.Single((await ctx.Kernel.GetOverlaysAsync(ct: ct)).Tracks);
+        var stored = new StoredTrackOverlay(overlay, new(Reply: "Stored reply"));
 
         var older = actor.AskUserAsync(snap.Track.LeadSessionId, [new("Choose A?", ["Yes", "No"])], ct);
         var first = await actor.MergeOverlayAsync(stored, ct);
@@ -42,24 +40,22 @@ public sealed class NotificationWatermarkTests
             await ctx.Kernel.RespondInteractionAsync(lead, ask.Id,
                 new(Answers: TestJson.FromObject(new { choice = "Yes" })), new InteropPrincipal.Human(), ct);
         await Task.WhenAll(older, latest);
-        await ctx.Store.SaveReportAsync(trackId, snap.Report with { Summary = "Report fallback" }, [], lead, "test",
-            new(null, snap.Track.AreaId, trackId, "report.updated", TestJson.FromObject(new { }), 1), ct);
-        var answered = Assert.Single((await ctx.Kernel.MergeOverlaysAsync([active], ct)).Tracks);
+        var staleAsk = new StoredTrackOverlay(active, new(Ask: active.PreviewText, Summary: "Report fallback"));
+        var answered = Assert.Single((await ctx.Kernel.MergeOverlaysAsync([staleAsk], ct)).Tracks);
         Assert.Equal(0, answered.OpenAskCount);
         Assert.Equal((TrackOverlayPreviewKind.Summary, "Report fallback"), (answered.PreviewKind, answered.PreviewText));
 
         await ctx.Kernel.PatchTrackAsync(trackId, new(Closed: true), ct: ct);
-        foreach (var stale in new[] { active, stored with { PreviewKind = TrackOverlayPreviewKind.Error, PreviewText = "Old error" } })
-        {
-            var closed = Assert.Single((await ctx.Kernel.MergeOverlaysAsync([stale], ct)).Tracks);
-            Assert.Equal((TrackOverlayPreviewKind.Summary, "Report fallback"), (closed.PreviewKind, closed.PreviewText));
-        }
+        var closed = Assert.Single((await ctx.Kernel.MergeOverlaysAsync([staleAsk], ct)).Tracks);
+        Assert.Equal((TrackOverlayPreviewKind.Summary, "Report fallback"), (closed.PreviewKind, closed.PreviewText));
         var closedWithReply = await actor.MergeOverlayAsync(stored, ct);
         Assert.Equal((TrackOverlayPreviewKind.Reply, "Stored reply"), (closedWithReply.PreviewKind, closedWithReply.PreviewText));
     }
 
-    [Fact]
-    public async Task AnsweredAskRevealsTheLiveBlockerInTheSameOverlayRead()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task AnsweredAskRevealsTheLiveBlockerInTheSameOverlayRead(bool errorOnTurn)
     {
         await using var ctx = new KernelTestContext();
         var (_, snap) = await ctx.CreateDefaultTrackAsync();
@@ -69,7 +65,12 @@ public sealed class NotificationWatermarkTests
         var ct = deadline.Token;
         var session = Assert.Single(await ctx.Kernel.ListSessionsAsync(trackId, new(), new InteropPrincipal.Human(), ct)).Session;
         await ctx.Kernel.Actors.RemoveAndDisposeAsync(trackId);
-        await ctx.Store.UpsertSessionAsync(session with { Status = "unknown", UnknownLastError = "  Reconnect\n failed. " }, null, ct);
+        await ctx.Store.UpsertSessionAsync(session with
+        {
+            Status = "unknown",
+            UnknownLastError = errorOnTurn ? null : "  Reconnect\n failed. ",
+            UnknownTurnId = errorOnTurn ? "current-turn" : null
+        }, null, ct);
         var actor = ctx.Kernel.Actors.GetOrActivate(trackId);
         var waiting = actor.AskUserAsync(lead, [new("Continue?", ["Yes", "No"])], ct);
         var stored = Assert.Single((await ctx.Kernel.GetOverlaysAsync(ct: ct)).Tracks);
@@ -81,13 +82,58 @@ public sealed class NotificationWatermarkTests
             new(Answers: TestJson.FromObject(new { choice = "Yes" })), new InteropPrincipal.Human(), ct);
         await waiting;
 
-        var answered = Assert.Single((await ctx.Kernel.MergeOverlaysAsync([stored], ct)).Tracks);
+        var candidates = new StoredTrackOverlay(stored,
+            new(Ask: stored.PreviewText, BlockedSessionError: "Reconnect failed.", Reply: "Previous reply"))
+        {
+            BlockedErrorSource = errorOnTurn ? (lead, "current-turn") : null
+        };
+        var answered = Assert.Single((await ctx.Kernel.MergeOverlaysAsync([candidates], ct)).Tracks);
         Assert.True(answered.HasBlockedSession);
         Assert.Equal(0, answered.OpenAskCount);
         Assert.Equal((TrackOverlayPreviewKind.Error, "Reconnect failed."), (answered.PreviewKind, answered.PreviewText));
 
-        var refreshed = await actor.MergeOverlayAsync(answered with { PreviewText = "Previous blocker." }, ct);
-        Assert.Equal((TrackOverlayPreviewKind.Error, "Reconnect failed."), (refreshed.PreviewKind, refreshed.PreviewText));
+        var refreshed = await actor.MergeOverlayAsync(candidates with
+        {
+            Overlay = answered with { PreviewText = "Previous blocker." },
+            BlockedErrorSource = (lead, "previous-turn")
+        }, ct);
+        Assert.Equal(errorOnTurn ? (TrackOverlayPreviewKind.Reply, "Previous reply") : (TrackOverlayPreviewKind.Error, "Reconnect failed."),
+            (refreshed.PreviewKind, refreshed.PreviewText));
+    }
+
+    [Theory]
+    [InlineData(false, TrackOverlayPreviewKind.Reply, "Previous reply")]
+    [InlineData(true, TrackOverlayPreviewKind.Summary, "Report summary")]
+    public async Task WorkspaceRetryUsesStoredFallbackCandidates(bool blocked, TrackOverlayPreviewKind kind, string text)
+    {
+        await using var ctx = new KernelTestContext();
+        var (_, snap) = await ctx.CreateDefaultTrackAsync();
+        var trackId = snap.Track.Id;
+        var session = Assert.Single(snap.Sessions);
+        await ctx.Kernel.Actors.RemoveAndDisposeAsync(trackId);
+        if (blocked)
+            await ctx.Store.UpsertSessionAsync(session with { Status = "unknown", UnknownTurnId = "current-turn" }, null, default);
+        await ctx.Store.SaveWorkspacePreparationAsync(trackId,
+            new(new WorkspaceProvisionRequest(trackId, "/tmp/source", "/tmp/target", []), null,
+                WorkspacePreparationPhase.Failed, FailureDetail: "Workspace mount failed"), null, null, default);
+        ctx.Kernel.Actors.GetOrActivate(trackId);
+        var failed = Assert.Single((await ctx.Kernel.GetOverlaysAsync()).Tracks);
+        Assert.Equal((TrackOverlayPreviewKind.Error, "Workspace mount failed"), (failed.PreviewKind, failed.PreviewText));
+
+        var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        ctx.DirectDriver.ProvisionGate = gate.Task;
+        try
+        {
+            await ctx.Kernel.RetryWorkspaceAsync(trackId);
+            var stored = new StoredTrackOverlay(failed, new(WorkspaceError: failed.PreviewText,
+                Reply: blocked ? null : "Previous reply", Summary: "Report summary"));
+            var retrying = Assert.Single((await ctx.Kernel.MergeOverlaysAsync([stored], default)).Tracks);
+            Assert.True(retrying.IsWorking);
+            Assert.False(retrying.WorkspaceFailed);
+            Assert.Equal(blocked, retrying.HasBlockedSession);
+            Assert.Equal((kind, text), (retrying.PreviewKind, retrying.PreviewText));
+        }
+        finally { gate.TrySetResult(); }
     }
 
     [Fact]
@@ -119,7 +165,7 @@ public sealed class NotificationWatermarkTests
         var selected = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         using var release = new ManualResetEventSlim();
         var lookups = 0;
-        var merge = Task.Run(() => PergaKernelService.MergeActiveOverlayAsync(stored, () =>
+        var merge = Task.Run(() => PergaKernelService.MergeActiveOverlayAsync(new(stored, new()), () =>
         {
             ctx.Kernel.Actors.TryGetActive(snap.Track.Id, out var actor);
             if (Interlocked.Increment(ref lookups) == 1)
@@ -172,7 +218,7 @@ public sealed class NotificationWatermarkTests
         Assert.Equal(failed, overlay.WorkspaceFailed);
         // An active actor is the single source of truth over contradictory stored flags.
         var active = await PergaKernelService.MergeActiveOverlayAsync(
-            overlay with { IsWorking = !working, WorkspaceFailed = !failed, HasBlockedSession = true, OpenAskCount = 3 },
+            new(overlay with { IsWorking = !working, WorkspaceFailed = !failed, HasBlockedSession = true, OpenAskCount = 3 }, new()),
             () => ctx.Kernel.Actors.GetOrActivate(id), default);
         Assert.Equal(working, active.IsWorking);
         Assert.Equal(failed, active.WorkspaceFailed);

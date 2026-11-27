@@ -463,14 +463,11 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable, IS
         CancellationToken ct = default) =>
         _eventRepository.ListEventsSinceAsync(sinceEventId, trackId, limit, ct);
 
-    public Task<IReadOnlyList<TrackOverlayDto>> ListTrackOverlaysAsync(
-        bool includeClosed = false,
-        CancellationToken ct = default) =>
-        _overlayRepository.ListTrackOverlaysAsync(includeClosed, ct);
+    public async Task<IReadOnlyList<TrackOverlayDto>> ListTrackOverlaysAsync(bool includeClosed = false, CancellationToken ct = default) =>
+        (await ListStoredTrackOverlaysAsync(includeClosed, ct).ConfigureAwait(false)).Select(stored => stored.Overlay).ToArray();
 
-    public Task<IReadOnlyList<TrackOverlayFallback>> ListTrackOverlayFallbacksAsync(
-        IReadOnlyList<TrackOverlayFallbackRequest> requests, CancellationToken ct) =>
-        _overlayRepository.ListTrackOverlayFallbacksAsync(requests, ct);
+    public Task<IReadOnlyList<StoredTrackOverlay>> ListStoredTrackOverlaysAsync(bool includeClosed = false, CancellationToken ct = default) =>
+        _overlayRepository.ListStoredTrackOverlaysAsync(includeClosed, ct);
 
     public Task<IReadOnlyList<string>> MarkInFlightInterruptedOnBootAsync(CancellationToken ct) =>
         _bootRecoveryRepository.MarkInFlightInterruptedOnBootAsync(ct);

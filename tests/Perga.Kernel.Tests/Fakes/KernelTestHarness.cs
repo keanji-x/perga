@@ -334,7 +334,7 @@ internal sealed partial class InMemoryTrackStore : ITrackStore
 
     public string DatabaseId { get; } = Guid.NewGuid().ToString("N");
 
-    public Task<IReadOnlyList<TrackOverlayDto>> ListTrackOverlaysAsync(bool includeClosed = false, CancellationToken ct = default)
+    public Task<IReadOnlyList<StoredTrackOverlay>> ListStoredTrackOverlaysAsync(bool includeClosed = false, CancellationToken ct = default)
     {
         lock (_gate)
         {
@@ -344,29 +344,20 @@ internal sealed partial class InMemoryTrackStore : ITrackStore
                 .ThenBy(t => t.Id, StringComparer.Ordinal)
                 .ToArray();
 
-            var list = new List<TrackOverlayDto>(tracks.Length);
+            var list = new List<StoredTrackOverlay>(tracks.Length);
             foreach (var tr in tracks)
             {
                 var isWorking = _sessions.Values.Any(s => s.TrackId == tr.Id && s.Status is "queued" or "running")
                                 || (_tasksByTrack.TryGetValue(tr.Id, out var tl) && tl.Any(t => t.Status is TaskRunStatus.Running or TaskRunStatus.Verifying));
                 var openAsks = _asks.Values.Count(a => a.TrackId == tr.Id && a.Status == AskStatus.Open);
-                list.Add(new TrackOverlayDto(tr.Id, tr.AreaId, tr.ClosedAtMs is null && isWorking, tr.ClosedAtMs is null ? openAsks : 0, 0, false, false, tr.UpdatedAtMs));
+                var previews = new TrackOverlayPreviewCandidates(Summary: _reports.GetValueOrDefault(tr.Id)?.Summary);
+                var open = tr.ClosedAtMs is null;
+                var (text, kind) = TrackOverlayPreview.Select(previews, open);
+                list.Add(new(new(tr.Id, tr.AreaId, open && isWorking, open ? openAsks : 0, 0, false, false, tr.UpdatedAtMs,
+                    PreviewText: text, PreviewKind: kind), previews));
             }
 
-            return Task.FromResult<IReadOnlyList<TrackOverlayDto>>(list);
-        }
-    }
-
-    public Task<IReadOnlyList<TrackOverlayFallback>> ListTrackOverlayFallbacksAsync(
-        IReadOnlyList<TrackOverlayFallbackRequest> requests, CancellationToken ct)
-    {
-        lock (_gate)
-        {
-            var previews = new List<TrackOverlayFallback>();
-            foreach (var request in requests)
-                if (_reports.TryGetValue(request.TrackId, out var report) && TrackOverlayPreview.Normalize(report.Summary) is { } text)
-                    previews.Add(new(request.TrackId, text, TrackOverlayPreviewKind.Summary));
-            return Task.FromResult<IReadOnlyList<TrackOverlayFallback>>(previews);
+            return Task.FromResult<IReadOnlyList<StoredTrackOverlay>>(list);
         }
     }
 
