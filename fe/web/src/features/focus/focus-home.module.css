@@ -11,7 +11,6 @@
   }
 
   .header {
-    --mobile-header-inset: max(var(--space-1), calc(var(--space-4) - (var(--rail-w-collapsed) - var(--glyph-lg)) / 2));
     display: grid;
     grid-template-columns: calc(var(--rail-w-collapsed) * 2 + var(--space-half)) minmax(0, 1fr) calc(var(--rail-w-collapsed) * 2 + var(--space-half));
     align-items: center;

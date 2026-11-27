@@ -92,23 +92,21 @@ it('keeps the Track Report dock and Chat Sheet controls inside landscape safe ar
     renderDailyFixture({ initial: '/track/daily' });
     const dock = page.getByRole('form', { name: 'Quick chat' });
     const entry = dock.getByRole('textbox', { name: 'Chat message' });
-    const dockBounds = safeBounds(await dock.findElement());
+    safeBounds(await dock.findElement());
     safeBounds(await entry.findElement());
-    safeBounds(await dock.getByRole('button', { name: /^Switch conversation,/ }).findElement());
-    safeBounds(await dock.getByRole('button', { name: 'Send chat message' }).findElement());
+    const dockSwitch = safeBounds(await dock.getByRole('button', { name: /^Switch conversation,/ }).findElement());
+    const dockSend = safeBounds(await dock.getByRole('button', { name: 'Send chat message' }).findElement());
 
     await entry.click();
     const sheet = page.getByRole('dialog', { name: 'Daily Planner conversation' });
     safeBounds(await sheet.getByRole('button', { name: 'Expand conversation' }).findElement());
     safeBounds(await sheet.getByRole('button', { name: 'Close conversation' }).findElement());
     safeBounds(sheet.element().querySelector('[data-nc-drawer-scroll]')!);
-    safeBounds(await sheet.getByRole('button', { name: /^Switch conversation,/ }).findElement());
-    safeBounds(await sheet.getByRole('button', { name: 'Send', exact: true }).findElement());
+    const sheetSwitch = safeBounds(await sheet.getByRole('button', { name: /^Switch conversation,/ }).findElement());
+    const sheetSend = safeBounds(await sheet.getByRole('button', { name: 'Send', exact: true }).findElement());
+    expect(sheetSwitch.left).toBeCloseTo(dockSwitch.left, 0);
+    expect(sheetSend.right).toBeCloseTo(dockSend.right, 0);
     const message = await sheet.getByRole('combobox', { name: 'Message', exact: true }).findElement();
-    const composerRow = message.closest('[class*="vendorComposer"]')!.firstElementChild!;
-    const openBounds = safeBounds(composerRow);
-    expect(openBounds.left).toBeCloseTo(dockBounds.left, 0);
-    expect(openBounds.right).toBeCloseTo(dockBounds.right, 0);
 
     const footer = message.closest('[data-nc-sheet-footer]')!;
     const panel = sheet.element().querySelector('[data-nc-sheet-panel]')!;
