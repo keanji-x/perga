@@ -13,6 +13,8 @@ import {
 SETTINGS_SECTIONS,
 settingsSectionLabel,type SettingsSection
 } from '../../features/settings/navigation.tsx';
+import { OwnerSetupForm } from '../../features/auth/login-page/setup.tsx';
+import { AccountPane } from '../../features/settings/account.tsx';
 import { PlannersPane } from '../../features/settings/planners.tsx';
 import {
 AboutPane,AppearancePane,
@@ -25,6 +27,8 @@ import { useState } from '../../ui/state/public.ts';
 import { useCompactViewport } from '../../ui/viewport/public.ts';
 import { agentProvidersQueryOptions,useAgentProvidersRecheck } from '../providers/agent-providers.ts';
 import { managedProvidersQueryOptions } from '../providers/managed-providers.ts';
+import { useCurrentUser } from '../auth/current-user.tsx';
+import { setupOwnerWithTransport } from '../auth/login.ts';
 import { useUiPreferences } from '../providers/ui-preferences.tsx';
 import { useCurrentPath,useGo,type NavTarget } from '../router/navigation.ts';
 import { useTheme } from '../theme/public.tsx';
@@ -49,12 +53,12 @@ function targetForSection(section: SettingsSection, compact: boolean,): NavTarge
 export type SettingsOverlayProps = Readonly<{
   transport: ApiTransportPort;
   unauthorized: UnauthorizedChannel;
-
+  onOwnerSetupComplete?: (() => void) | undefined;
 }>;
 
 /** One Dialog body for a visit; compact presentation uses a full-page surface.
  * React retains the same pane host across responsive changes. */
-export function SettingsOverlay({ transport, unauthorized, }: SettingsOverlayProps) {
+export function SettingsOverlay({ transport, unauthorized, onOwnerSetupComplete }: SettingsOverlayProps) {
   const go = useGo();
   const router = useRouter();
   const path = useCurrentPath();
@@ -114,7 +118,7 @@ export function SettingsOverlay({ transport, unauthorized, }: SettingsOverlayPro
           sections={SETTINGS_SECTIONS}
           presentation={!compact ? 'desktop' : mobileIndex ? 'mobile-index' : 'mobile-detail'}
           onSelectSection={(next) => go(targetForSection(next, compact))}>
-          <SectionPane section={section} transport={transport} unauthorized={unauthorized} />
+          <SectionPane section={section} transport={transport} unauthorized={unauthorized} onOwnerSetupComplete={onOwnerSetupComplete} />
         </SettingsSurface>
       </div>
     </section>
@@ -122,15 +126,28 @@ export function SettingsOverlay({ transport, unauthorized, }: SettingsOverlayPro
 }
 
 /** One switch, so a new section cannot forget to be rendered. */
-function SectionPane({ section, transport, unauthorized, }: SettingsOverlayProps & {
+function SectionPane({ section, transport, unauthorized, onOwnerSetupComplete }: SettingsOverlayProps & {
   section: SettingsSection;
 }) {
   const system = useSystemUpgrade();
   switch (section) {
     case 'appearance': return <AppearancePaneHost />;
     case 'planners': return <PergaPlannersPaneHost transport={transport} unauthorized={unauthorized} />;
+    case 'account': return <AccountPaneHost transport={transport} onComplete={onOwnerSetupComplete} />;
     case 'about': return <AboutPane system={system} />;
   }
+}
+
+function AccountPaneHost({ transport, onComplete }: Readonly<{
+  transport: ApiTransportPort;
+  onComplete: (() => void) | undefined;
+}>) {
+  const user = useCurrentUser();
+  if (user === null) return null;
+  return <AccountPane user={user} setup={user.mode === 'local' && onComplete !== undefined &&
+    <OwnerSetupForm submitLabel="Enable password protection"
+      setup={(username, password, signal) => setupOwnerWithTransport(transport, username, password, signal)}
+      onComplete={onComplete} onConfigured={onComplete} />} />;
 }
 
 function PergaPlannersPaneHost({ transport, unauthorized }: SettingsOverlayProps) {

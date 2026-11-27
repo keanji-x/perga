@@ -1,5 +1,6 @@
 using Dapper;
 using Microsoft.Data.Sqlite;
+using Perga.Contracts;
 using Perga.Kernel.Ports;
 using Perga.Storage.Sqlite;
 
@@ -52,6 +53,25 @@ public sealed class SqliteAuthStoreTests
         Assert.True(await admin.SetOwnerDisabledAsync(false, Now + 5, default));
         Assert.True(await admin.RenameOwnerAsync("renamed", "Renamed", Now + 6, default));
         Assert.Equal("renamed", (await admin.GetStatusAsync(Now + 6, default)).Username);
+    }
+
+    [Fact]
+    public async Task InitialOwnerRollsBackIfSessionInsertFailsAndCanBeRetried()
+    {
+        await using var h = await StorageTestHarness.CreateAsync();
+        var owner = new NewInitialOwner("owner", "Owner", "hash");
+        var session = NewSession(1, Now, Now + Day);
+        Assert.Equal(AuthSetupState.NeedsWebSetup, await h.Store.GetSetupStateAsync(default));
+        await Assert.ThrowsAsync<SqliteException>(() => h.Store.TryCreateInitialOwnerWithSessionAsync(
+            owner, session with { TokenHash = "invalid-hash" }, allowExistingBusinessData: false, default));
+
+        Assert.Null(await h.Store.GetOwnerAsync(default));
+        Assert.Equal(AuthSetupState.NeedsWebSetup, await h.Store.GetSetupStateAsync(default));
+        var result = await h.Store.TryCreateInitialOwnerWithSessionAsync(owner, session, allowExistingBusinessData: false, default);
+        Assert.Equal(InitialOwnerSetupOutcome.Created, result.Outcome);
+        Assert.Equal(AuthSessionMode.Owner, result.Identity!.Mode);
+        Assert.Equal((await h.Store.GetOwnerAsync(default))!.Id, result.Identity.UserId);
+        Assert.Equal(result.Identity, await h.Store.GetValidOwnerSessionByTokenHashAsync(session.TokenHash, Now, default));
     }
 
     [Fact]

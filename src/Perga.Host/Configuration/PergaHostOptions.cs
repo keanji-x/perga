@@ -37,6 +37,7 @@ public sealed class PergaHostOptions
     public string[] AllowedOrigins { get; set; } = [];
     public string[] AllowedHosts { get; set; } = [];
 
+    public bool RequireAuth { get; set; }
     public AuthIngressMode AuthIngressMode { get; set; } = AuthIngressMode.Direct;
     public AuthCookieSecurePolicy AuthCookieSecurePolicy { get; set; } = AuthCookieSecurePolicy.Auto;
     public bool AuthAllowInsecureHttp { get; set; }
@@ -122,6 +123,8 @@ public sealed class PergaHostOptions
         var opts = new PergaHostOptions();
         var section = configuration.GetSection(SectionName);
         section.Bind(opts);
+        if (section[nameof(RequireAuth)] is null && configuration["PERGA_AUTH_REQUIRE"] is { } requireAuth)
+            opts.RequireAuth = bool.Parse(requireAuth);
         if (section[nameof(AuthIngressMode)] is null && configuration["PERGA_AUTH_INGRESS_MODE"] is { } ingress)
             opts.AuthIngressMode = Enum.Parse<AuthIngressMode>(ingress, ignoreCase: true);
         if (section[nameof(AuthCookieSecurePolicy)] is null && configuration["PERGA_AUTH_COOKIE_SECURE"] is { } secure)

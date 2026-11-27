@@ -148,7 +148,7 @@ it('interrupts the working Today conversation from the transcript with Escape', 
 
 it('keeps perga Today minimal without triage or Report changes', async () => {
   await page.viewport(1440, 900);
-  const { requests } = renderDailyFixture({ identity: { userId: 'local-owner', displayName: 'Owner', username: 'owner', expiresAtMs: 2000000000000, role: 'owner', sessionId: 'perga-owner' } });
+  const { requests } = renderDailyFixture({ identity: { userId: 'local-owner', displayName: 'Owner', username: 'owner', expiresAtMs: 2000000000000, mode: 'owner', role: 'owner', sessionId: 'perga-owner' } });
   await expect.element(page.getByRole('region', { name: 'Today Assistant' })).toBeVisible();
   expect(page.getByRole('region', { name: 'Today triage' }).query()).toBeNull();
   expect(page.getByText(/Waiting on you/).query()).toBeNull();

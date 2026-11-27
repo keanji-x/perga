@@ -7,6 +7,7 @@ import styles from './settings.module.css';
 export const SETTINGS_SECTIONS = Object.freeze([
   Object.freeze({ id: 'appearance', label: 'Appearance', icon: 'viewColumns' }),
   Object.freeze({ id: 'planners', label: 'Planners', icon: 'checkDouble' }),
+  Object.freeze({ id: 'account', label: 'Account', icon: 'wrench' }),
   Object.freeze({ id: 'about', label: 'About', icon: 'info' }),
 ] as const);
 

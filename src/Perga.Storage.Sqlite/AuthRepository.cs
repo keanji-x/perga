@@ -19,6 +19,25 @@ internal sealed class AuthRepository
         u.role AS Role, s.expires_at_ms AS ExpiresAtMs
         """;
 
+    private const string OwnerExists = "SELECT EXISTS(SELECT 1 FROM auth_users WHERE role = 'owner');";
+
+    private const string ExistingData = """
+        SELECT EXISTS(SELECT 1 FROM areas) OR EXISTS(SELECT 1 FROM tracks)
+            OR EXISTS(SELECT 1 FROM execution_targets) OR EXISTS(SELECT 1 FROM events)
+            OR EXISTS(SELECT 1 FROM auth_users);
+        """;
+
+    private const string InsertSession = """
+        INSERT INTO auth_sessions (id, user_id, token_hash, created_at_ms, last_seen_at_ms,
+                                   expires_at_ms, user_agent, created_ip)
+        """;
+
+    private sealed record StoredIdentity(
+        string SessionId, string UserId, string Username, string DisplayName, string Role, long ExpiresAtMs)
+    {
+        public SessionIdentityDto ToDto() => new(SessionId, UserId, Username, DisplayName, Role, ExpiresAtMs);
+    }
+
     private readonly SqliteStoreContext _context;
 
     internal AuthRepository(SqliteStoreContext context)
@@ -38,13 +57,50 @@ internal sealed class AuthRepository
             """, cancellationToken: ct)).ConfigureAwait(false);
     }
 
+    public Task<AuthSetupState> GetSetupStateAsync(CancellationToken ct) =>
+        _context.Writer.EnqueueAsync<AuthSetupState>(async (conn, tx, token) =>
+        {
+            if (await conn.ExecuteScalarAsync<bool>(new CommandDefinition(OwnerExists, transaction: tx, cancellationToken: token)))
+                return AuthSetupState.Configured;
+            return await conn.ExecuteScalarAsync<bool>(new CommandDefinition(ExistingData, transaction: tx, cancellationToken: token))
+                ? AuthSetupState.ExistingDataRequiresCli
+                : AuthSetupState.NeedsWebSetup;
+        }, ct);
+
+    public Task<InitialOwnerSetupResult> TryCreateInitialOwnerWithSessionAsync(
+        NewInitialOwner owner, NewAuthSession session, bool allowExistingBusinessData, CancellationToken ct) =>
+        _context.Writer.EnqueueAsync<InitialOwnerSetupResult>(async (conn, tx, token) =>
+        {
+            if (await conn.ExecuteScalarAsync<bool>(new CommandDefinition(OwnerExists, transaction: tx, cancellationToken: token)))
+                return new(InitialOwnerSetupOutcome.AlreadyConfigured);
+            if (!allowExistingBusinessData &&
+                await conn.ExecuteScalarAsync<bool>(new CommandDefinition(ExistingData, transaction: tx, cancellationToken: token)))
+                return new(InitialOwnerSetupOutcome.ExistingDataRequiresCli);
+
+            var userId = SqliteAuthAdministration.NewUserId();
+            var written = await conn.ExecuteAsync(new CommandDefinition(SqliteAuthAdministration.InsertInitialOwner,
+                new { Id = userId, owner.Username, owner.DisplayName, owner.PasswordHash, Now = session.CreatedAtMs },
+                tx, cancellationToken: token));
+            if (written == 0)
+                return new(InitialOwnerSetupOutcome.AlreadyConfigured);
+            await conn.ExecuteAsync(new CommandDefinition($"""
+                {InsertSession}
+                VALUES (@Id, @UserId, @TokenHash, @CreatedAtMs, @CreatedAtMs, @ExpiresAtMs, @UserAgent, @CreatedIp);
+                """, new
+                {
+                    session.Id, UserId = userId, session.TokenHash, session.CreatedAtMs,
+                    session.ExpiresAtMs, session.UserAgent, session.CreatedIp
+                }, tx, cancellationToken: token));
+            return new(InitialOwnerSetupOutcome.Created,
+                new(session.Id, userId, owner.Username, owner.DisplayName, "owner", session.ExpiresAtMs));
+        }, ct);
+
     public Task<SessionIdentityDto?> TryCreateSessionIfVersionMatchesAsync(
         AuthUserRecord owner, NewAuthSession session, CancellationToken ct) =>
         _context.Writer.EnqueueAsync<SessionIdentityDto?>(async (conn, tx, token) =>
         {
-            var written = await conn.ExecuteAsync(new CommandDefinition("""
-                INSERT INTO auth_sessions (id, user_id, token_hash, created_at_ms, last_seen_at_ms,
-                                           expires_at_ms, user_agent, created_ip)
+            var written = await conn.ExecuteAsync(new CommandDefinition($"""
+                {InsertSession}
                 SELECT @Id, id, @TokenHash, @CreatedAtMs, @CreatedAtMs, @ExpiresAtMs, @UserAgent, @CreatedIp
                 FROM auth_users
                 WHERE id = @UserId AND role = 'owner' AND disabled_at_ms IS NULL
@@ -54,9 +110,9 @@ internal sealed class AuthRepository
                     session.Id, UserId = owner.Id, owner.CredentialVersion, owner.SessionGeneration,
                     session.TokenHash, session.CreatedAtMs, session.ExpiresAtMs, session.UserAgent, session.CreatedIp
                 }, tx, cancellationToken: token)).ConfigureAwait(false);
-            return written == 0 ? null : await conn.QuerySingleAsync<SessionIdentityDto>(new CommandDefinition(
+            return written == 0 ? null : (await conn.QuerySingleAsync<StoredIdentity>(new CommandDefinition(
                 $"SELECT {SessionIdentityColumns} {ValidOwnerSession} AND s.id = @Id;",
-                new { session.Id, Now = session.CreatedAtMs }, tx, cancellationToken: token)).ConfigureAwait(false);
+                new { session.Id, Now = session.CreatedAtMs }, tx, cancellationToken: token)).ConfigureAwait(false)).ToDto();
         }, ct);
 
     public Task<bool> UpgradePasswordHashIfVersionMatchesAsync(AuthUserRecord owner, string hash, long nowMs, CancellationToken ct) =>
@@ -72,9 +128,10 @@ internal sealed class AuthRepository
     {
         _context.EnsureInitialized();
         await using var conn = await _context.OpenReadConnectionAsync(ct).ConfigureAwait(false);
-        return await conn.QuerySingleOrDefaultAsync<SessionIdentityDto>(new CommandDefinition(
+        var session = await conn.QuerySingleOrDefaultAsync<StoredIdentity>(new CommandDefinition(
             $"SELECT {SessionIdentityColumns} {ValidOwnerSession} AND s.token_hash = @TokenHash;",
             new { TokenHash = tokenHash, Now = nowMs }, cancellationToken: ct)).ConfigureAwait(false);
+        return session?.ToDto();
     }
 
     public async Task<bool> IsOwnerSessionValidAsync(string id, long nowMs, CancellationToken ct)

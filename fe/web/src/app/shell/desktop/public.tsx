@@ -29,6 +29,7 @@ export type DesktopShellChromeProps = Readonly<Pick<
   | 'onOpenSettings'
   | 'onOpenPlugins'
   | 'onSignOut'
+  | 'onSetupAccount'
   | 'userLabel'
 >>;
 

@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using Microsoft.Data.Sqlite;
 using Perga.Host.Serialization;
+using Perga.Kernel.Auth;
 using Perga.Kernel.Ports;
 using Perga.Storage.Sqlite;
 
@@ -112,17 +113,12 @@ public static class AuthCliCommand
     }
 
     private static string Username(string value) =>
-        AuthCredentials.NormalizeUsername(value) ?? throw new ArgumentException("Invalid owner username.");
+        OwnerCredentials.NormalizeUsername(value) ?? throw new ArgumentException(OwnerCredentials.UsernameError);
 
-    private static string? DisplayName(string? value)
-    {
-        if (value is null)
-            return null;
-        value = value.Trim();
-        if (value.Length is < 1 or > 128 || value.Any(char.IsControl))
-            throw new ArgumentException("Display name must contain 1–128 characters and no control characters.");
-        return value;
-    }
+    private static string? DisplayName(string? value) =>
+        OwnerCredentials.TryNormalizeDisplayName(value, out var displayName)
+            ? displayName
+            : throw new ArgumentException(OwnerCredentials.DisplayNameError);
 
     private static async Task<string> ReadPasswordHashAsync(bool fromStdin, TextReader input, TextWriter error, CancellationToken ct)
     {
@@ -135,11 +131,11 @@ public static class AuthCliCommand
         {
             if (Console.IsInputRedirected)
                 throw new ArgumentException("Use --password-stdin to read a password from redirected input.");
-            password = Prompt("Password (12+ characters)", error, ct);
+            password = Prompt($"Password ({OwnerCredentials.MinOwnerPasswordScalars}+ characters)", error, ct);
         }
 
-        if (!AuthCredentials.IsValidPassword(password, 12))
-            throw new ArgumentException("Password must contain 12–1024 Unicode characters, no NUL and at most 4096 UTF-8 bytes.");
+        if (!OwnerCredentials.IsValidPassword(password))
+            throw new ArgumentException(OwnerCredentials.PasswordError);
         if (!fromStdin && password != Prompt("Confirm password", error, ct))
             throw new ArgumentException("Passwords do not match.");
 

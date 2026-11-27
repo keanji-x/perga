@@ -5,6 +5,7 @@ using System.Net.WebSockets;
 using System.Runtime.CompilerServices;
 using System.Text;
 using System.Text.Json;
+using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -406,7 +407,8 @@ public sealed class PergaHostTestCluster : IAsyncDisposable
         string? explicitDataDir = null,
         Action<PergaHostOptions>? configureHostOptions = null,
         Action<IServiceCollection>? configureExtraServices = null,
-        Action<ScriptableAgentRuntime>? configureAgentRuntime = null)
+        Action<ScriptableAgentRuntime>? configureAgentRuntime = null,
+        Action<IWebHostBuilder>? configureHost = null)
     {
         if (string.IsNullOrWhiteSpace(explicitDataDir))
         {
@@ -437,7 +439,7 @@ public sealed class PergaHostTestCluster : IAsyncDisposable
             services.AddSingleton<IGitHubForgeService>(ForgeService);
 
             configureExtraServices?.Invoke(services);
-        });
+        }, configureHost);
 
         Client = Factory.CreateClient(new WebApplicationFactoryClientOptions
         {

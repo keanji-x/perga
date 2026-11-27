@@ -169,6 +169,11 @@ public sealed class AuthWebSocketLifecycleTests
 
         public Task<AuthUserRecord?> GetOwnerAsync(CancellationToken ct) => inner.GetOwnerAsync(ct);
 
+        public Task<AuthSetupState> GetSetupStateAsync(CancellationToken ct) => inner.GetSetupStateAsync(ct);
+        public Task<InitialOwnerSetupResult> TryCreateInitialOwnerWithSessionAsync(
+            NewInitialOwner owner, NewAuthSession session, bool allowExistingBusinessData, CancellationToken ct) =>
+            inner.TryCreateInitialOwnerWithSessionAsync(owner, session, allowExistingBusinessData, ct);
+
         public Task<SessionIdentityDto?> TryCreateSessionIfVersionMatchesAsync(AuthUserRecord owner,
             NewAuthSession session, CancellationToken ct) => inner.TryCreateSessionIfVersionMatchesAsync(owner, session, ct);
 

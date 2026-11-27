@@ -533,6 +533,13 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable, IS
     public Task<AuthUserRecord?> GetOwnerAsync(CancellationToken ct) =>
         _authRepository.GetOwnerAsync(ct);
 
+    public Task<AuthSetupState> GetSetupStateAsync(CancellationToken ct) =>
+        _authRepository.GetSetupStateAsync(ct);
+
+    public Task<InitialOwnerSetupResult> TryCreateInitialOwnerWithSessionAsync(
+        NewInitialOwner owner, NewAuthSession session, bool allowExistingBusinessData, CancellationToken ct) =>
+        _authRepository.TryCreateInitialOwnerWithSessionAsync(owner, session, allowExistingBusinessData, ct);
+
     public Task<SessionIdentityDto?> TryCreateSessionIfVersionMatchesAsync(AuthUserRecord owner, NewAuthSession session, CancellationToken ct) =>
         _authRepository.TryCreateSessionIfVersionMatchesAsync(owner, session, ct);
 

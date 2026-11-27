@@ -20,7 +20,7 @@ import { bootTestCardRuntime } from './test-card-runtime.ts';
 
 it('opens a confirmed Track after Chromium reloads the draft page', async () => {
   await page.viewport(1280, 800);
-  const identity = { userId: 'new-track-reload', displayName: 'Owner', username: 'owner', expiresAtMs: 2000000000000, role: 'owner', sessionId: 'one' } as const;
+  const identity = { userId: 'new-track-reload', displayName: 'Owner', username: 'owner', expiresAtMs: 2000000000000, mode: 'owner', role: 'owner', sessionId: 'one' } as const;
   const area = { id: 'work', name: 'Work', color: '#5B8DEF', sortOrder: 1, kind: 'user', createdAtMs: 1, updatedAtMs: 1 };
   const draftKey = createStorageKey('track-create-v1', identity.userId, area.id);
   const firstSendKey = createStorageKey('pending-track-initial-sends-v1');

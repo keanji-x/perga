@@ -6,7 +6,6 @@ import type { ApiTransportPort } from '../../../../core/api/types.ts';
 import { createUnauthorizedChannel,type UnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
 import type { TrackReport } from '../../../../core/domain/report.ts';
 import { IDB_DB_NAME } from '../../../../core/keys/storage.ts';
-import { LoginPage } from '../../features/auth/login-page/public.tsx';
 import type { PreparedReport } from '../../features/report/document/preparation.ts';
 import { createCardHost,createCardRegistry } from '../../systems/cards/public.js';
 import { runWorkerTask } from '../../systems/worker-task/public.ts';
@@ -26,7 +25,7 @@ import { createUiPreferences } from '../providers/ui-preferences.tsx';
 import { createAppRouter } from '../router/public.tsx';
 import { ThemeProvider } from '../theme/public.tsx';
 import { createAuthChanges, type AuthChanges } from './auth-changes.ts';
-import { loginWithTransport } from './login.ts';
+import { AuthGate } from './auth-gate.tsx';
 import { LogoutGate } from './logout-gate.tsx';
 import { clearSessionArtifacts,SessionGate, type SessionCleanupRuntime, type SessionProbeError } from './session-gate.tsx';
 
@@ -101,6 +100,7 @@ export function mountProductionApp(root: HTMLElement, browserInput: Readonly<{
     idbDatabaseName: IDB_DB_NAME, storage, submittedStorage: browser.submittedStorage,
   };
   const uiPreferences = createUiPreferences(storage);
+  const completeAuth = () => { authChanges.publish(); browser.reload(); };
   const buildRouter = () => createAppRouter({
     submittedStorage: browser.submittedStorage,
     prepareReport,
@@ -110,12 +110,12 @@ export function mountProductionApp(root: HTMLElement, browserInput: Readonly<{
     cards: { registry, host },
     recentFiles: createRecentFileHistory(storage),
     uiPreferences,
+    onOwnerSetupComplete: completeAuth,
   });
   const mounted = createRoot(root);
   mounted.render(<ProductionApp transport={transport} unauthorized={unauthorized} client={client}
     runtime={runtime} cursorStore={cursorStore} router={buildRouter()} authChanges={authChanges}
-    renderLogin={() => <LoginPage login={(username, password, signal) => loginWithTransport(transport, username, password, signal)}
-      reload={() => { authChanges.publish(); browser.reload(); }} />}
+    renderLogin={() => <AuthGate transport={transport} reload={completeAuth} />}
     renderError={renderSessionError}
     renderEventBridge={(server) => <SessionEventBridge createStream={createSessionStream} client={client}
       syncEventVersion={server.syncEventVersion} dbInstanceId={server.dbInstanceId} cursor={cursorStore} />}

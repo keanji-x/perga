@@ -264,6 +264,9 @@ it('publishes effective auth security for every operation', () => {
   const overrides = {
     'GET /healthz': [],
     'POST /api/v1/auth/login': [],
+    'POST /api/v1/auth/local': [],
+    'GET /api/v1/auth/setup': [cookie, {}],
+    'POST /api/v1/auth/setup': [cookie, {}],
     'POST /api/v1/auth/logout': [cookie, {}],
     'GET /api/v1/system/info': [cookie, bearer],
     'GET /api/v1/system/auth-status': [bearer],
@@ -293,7 +296,7 @@ it('publishes effective auth security for every operation', () => {
 it('matches auth schemas, response statuses, and headers to the Host wire contract', () => {
   const document = JSON.parse(readFileSync(new URL('../../core/api/generated/openapi.json', import.meta.url), 'utf8')) as JsonObject;
   const schema = (name: string) => z.fromJSONSchema(resolveRef(document, `#/components/schemas/${name}`) as z.core.JSONSchema.JSONSchema);
-  const identity = { sessionId: 'aus_1', userId: 'usr_1', username: 'owner', displayName: 'Owner', role: 'owner', expiresAtMs: 123456789 };
+  const identity = { sessionId: 'aus_1', userId: 'usr_1', username: 'owner', displayName: 'Owner', role: 'owner', expiresAtMs: 123456789, mode: 'owner' as const };
   for (const decoder of [schema('SessionIdentityDto'), sessionIdentitySchema]) {
     expect(decoder.parse(identity)).toEqual(identity);
     for (const key of Object.keys(identity) as (keyof typeof identity)[]) {

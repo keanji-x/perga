@@ -48,6 +48,7 @@ type MobileShellActions = Readonly<{
   onRequestEditArea: (area: Area, origin: DialogOrigin) => void;
   onOpenSettings: () => void;
   onSignOut?: (() => void) | undefined;
+  onSetupAccount?: (() => void) | undefined;
 }>;
 
 type MobileShellChromeProps = Readonly<{
@@ -251,6 +252,7 @@ export function MobileShellChrome({
                     accountLabel={userLabel ?? 'Account'}
                     accountInitial={userLabel?.slice(0, 1) ?? 'A'}
                     onSignOut={actions.onSignOut === undefined ? undefined : () => { navigation.close(); actions.onSignOut?.(); }}
+                    onSetupAccount={actions.onSetupAccount === undefined ? undefined : () => { navigation.close(); actions.onSetupAccount?.(); }}
                     shareMode={shareScope !== null}
                     nowMs={nowMs}
                     onOpenTrack={(trackId) => {

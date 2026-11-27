@@ -233,6 +233,7 @@ public sealed class HostDaemonTests : IDisposable
         var state = Assert.IsType<HostDaemonState>(HostDaemonState.Read(StatePath));
         Assert.Equal(["--urls", DynamicUrl, "--require-auth", "--Perga:AuthAllowInsecureHttp=true"], state.HostArgs);
         Assert.Contains(state.Url, started.Output);
+        Assert.False(File.Exists(TokenPath));
         using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(5) };
         Assert.Equal(HttpStatusCode.OK, (await client.GetAsync(new Uri(new Uri(state.Url), "/healthz"))).StatusCode);
         using var tokenRequest = await client.GetAsync(state.Url + "auth/local?token=" + Token);
@@ -249,7 +250,7 @@ public sealed class HostDaemonTests : IDisposable
         Assert.DoesNotContain(Token, logs.Output);
         Assert.DoesNotContain(Token, await File.ReadAllTextAsync(LogPath));
 
-        await CheckExplicitBrowserAsync(state.Url);
+        await CheckExplicitBrowserAsync(state.Url, state.Url);
         var bare = await RunProcessAsync(["start"]);
         Assert.Equal(0, bare.Code);
         Assert.Equal(Lines(alreadyRunning.Output), Lines(bare.Output));
@@ -293,6 +294,15 @@ public sealed class HostDaemonTests : IDisposable
         var old = Assert.IsType<HostDaemonState>(HostDaemonState.Read(StatePath));
         Assert.Empty(old.HostArgs);
         Assert.Equal(database, old.DbPath);
+        Assert.True(File.Exists(TokenPath));
+        var localToken = (await File.ReadAllTextAsync(TokenPath)).Trim();
+        Assert.Equal(64, localToken.Length);
+        Assert.DoesNotContain(localToken, start.Output);
+        using (var client = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false }) { Timeout = TimeSpan.FromSeconds(5) })
+        using (var exchange = await client.GetAsync(old.Url + "auth/local?token=" + localToken))
+            Assert.Equal(HttpStatusCode.Found, exchange.StatusCode);
+        Assert.DoesNotContain(localToken, await File.ReadAllTextAsync(LogPath));
+        await CheckExplicitBrowserAsync(old.Url, old.Url + "auth/local?token=" + localToken);
 
         var restart = await RunProcessAsync(["restart"]);
         Assert.True(restart.Code == 0, restart.Error);
@@ -301,6 +311,9 @@ public sealed class HostDaemonTests : IDisposable
         Assert.Equal(old.Url, current.Url);
         Assert.Equal(database, current.DbPath);
         Assert.False(File.Exists(Path.Combine(Data, "perga.db")));
+        var restartedToken = (await File.ReadAllTextAsync(TokenPath)).Trim();
+        Assert.Equal(64, restartedToken.Length);
+        Assert.NotEqual(localToken, restartedToken);
     }
 
     [Fact]
@@ -441,7 +454,7 @@ public sealed class HostDaemonTests : IDisposable
         Assert.Equal(daemon.Pid, HostDaemonState.Read(StatePath)?.Pid);
     }
 
-    private async Task CheckExplicitBrowserAsync(string url)
+    private async Task CheckExplicitBrowserAsync(string url, string expectedOpenedUrl)
     {
         var launcher = Path.Combine(Bin, OperatingSystem.IsMacOS() ? "open" : "xdg-open");
         await File.WriteAllTextAsync(launcher, """
@@ -457,7 +470,7 @@ public sealed class HostDaemonTests : IDisposable
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         while (!File.Exists(BrowserOutput))
             await Task.Delay(25, timeout.Token);
-        Assert.Equal(url + "auth/local?token=" + Token, (await File.ReadAllTextAsync(BrowserOutput, timeout.Token)).Trim());
+        Assert.Equal(expectedOpenedUrl, (await File.ReadAllTextAsync(BrowserOutput, timeout.Token)).Trim());
 
         File.Delete(BrowserOutput);
         var ssh = await RunProcessAsync(["open"], new() { ["DISPLAY"] = ":0", ["SSH_CONNECTION"] = "1" });

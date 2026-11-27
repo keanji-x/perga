@@ -9,7 +9,7 @@ import { NewTrackDraftProvider, useNewTrackSession } from './new-track-drafts.ts
 import { createMemoryStorage } from './share-reuse-fixture.ts';
 
 function draftFixture() {
-  const identity = { userId: 'create-replay-owner', displayName: 'Owner', username: 'owner', expiresAtMs: 2000000000000, role: 'owner', sessionId: 'one' } as const;
+  const identity = { userId: 'create-replay-owner', displayName: 'Owner', username: 'owner', expiresAtMs: 2000000000000, mode: 'owner', role: 'owner', sessionId: 'one' } as const;
   const area: Area = { id: 'create-replay-area', name: 'Area', color: '#112233', defaultCwd: null,
     defaultTemplateId: null, kind: 'user', sort: 0, createdAt: 0, updatedAt: 0 };
   const storage = createMemoryStorage();

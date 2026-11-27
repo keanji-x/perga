@@ -13,6 +13,20 @@ namespace Perga.Host.IntegrationTests;
 public sealed class SystemReloadTests
 {
     [Fact]
+    public async Task LaunchTokenFollowsDataDirectoryWhenInstallationRootDiffers()
+    {
+        using var installation = new Installation();
+        installation.AddRelease("active", "web-active", "active");
+        installation.Activate("active");
+        var data = Path.Combine(installation.Root, "data");
+        await using var host = new PergaHostTestCluster(data,
+            configureHostOptions: options => options.InstallationRoot = installation.Root);
+
+        Assert.True(File.Exists(Path.Combine(data, "runtime", "local-launch-token")));
+        Assert.False(File.Exists(Path.Combine(installation.Root, "runtime", "local-launch-token")));
+    }
+
+    [Fact]
     public async Task ReloadActivatesWebAndTemplatesWhileRetainingOldAssetsAndResidentIdentity()
     {
         using var installation = new Installation();

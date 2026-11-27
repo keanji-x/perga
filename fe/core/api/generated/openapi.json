@@ -991,6 +991,56 @@
         ],
         "type": "object"
       },
+      "AuthSetupStatusDto": {
+        "properties": {
+          "canSetupInBrowser": {
+            "type": "boolean"
+          },
+          "mode": {
+            "enum": [
+              "configured",
+              "setup_required",
+              "local_token_required"
+            ],
+            "type": "string"
+          },
+          "needsOwnerSetup": {
+            "type": "boolean"
+          },
+          "nextStep": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "setupBlockedReason": {
+            "anyOf": [
+              {
+                "enum": [
+                  "non_loopback",
+                  "existing_data"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "canSetupInBrowser",
+          "mode",
+          "needsOwnerSetup",
+          "nextStep",
+          "setupBlockedReason"
+        ],
+        "type": "object"
+      },
       "BootstrapDto": {
         "properties": {
           "areas": {
@@ -2683,6 +2733,25 @@
         ],
         "type": "object"
       },
+      "LocalTokenExchangeRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "token": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "token"
+        ],
+        "type": "object"
+      },
       "LoginRequest": {
         "additionalProperties": false,
         "properties": {
@@ -4005,6 +4074,13 @@
           "expiresAtMs": {
             "type": "integer"
           },
+          "mode": {
+            "enum": [
+              "owner",
+              "local"
+            ],
+            "type": "string"
+          },
           "role": {
             "type": "string"
           },
@@ -4021,6 +4097,7 @@
         "required": [
           "displayName",
           "expiresAtMs",
+          "mode",
           "role",
           "sessionId",
           "userId",
@@ -4583,6 +4660,47 @@
           "lastError",
           "reason",
           "recovering"
+        ],
+        "type": "object"
+      },
+      "SetupOwnerRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "displayName": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "password": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "username": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "displayName",
+          "password",
+          "username"
         ],
         "type": "object"
       },
@@ -6430,6 +6548,106 @@
         }
       }
     },
+    "/api/v1/auth/local": {
+      "post": {
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LocalTokenExchangeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionIdentityDto"
+                }
+              }
+            },
+            "description": "HTTP 200",
+            "headers": {
+              "Set-Cookie": {
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Perga-Session-Id": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "HTTP 400"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "HTTP 403"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "HTTP 409"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "HTTP 413"
+          },
+          "415": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "HTTP 415"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Error mapped by Host exception handling or request guards"
+          }
+        },
+        "security": []
+      }
+    },
     "/api/v1/auth/login": {
       "post": {
         "parameters": [],
@@ -6617,6 +6835,159 @@
             "description": "Error mapped by Host exception handling or request guards"
           }
         }
+      }
+    },
+    "/api/v1/auth/setup": {
+      "get": {
+        "parameters": [],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthSetupStatusDto"
+                }
+              }
+            },
+            "description": "HTTP 200"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Error mapped by Host exception handling or request guards"
+          }
+        },
+        "security": [
+          {
+            "pergaSessionCookie": []
+          },
+          {}
+        ]
+      },
+      "post": {
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetupOwnerRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionIdentityDto"
+                }
+              }
+            },
+            "description": "HTTP 201",
+            "headers": {
+              "Set-Cookie": {
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Perga-Session-Id": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "HTTP 400"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "HTTP 403"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "HTTP 409"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "HTTP 413"
+          },
+          "415": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "HTTP 415"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "HTTP 429",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Error mapped by Host exception handling or request guards"
+          }
+        },
+        "security": [
+          {
+            "pergaSessionCookie": []
+          },
+          {}
+        ]
       }
     },
     "/api/v1/bootstrap": {
