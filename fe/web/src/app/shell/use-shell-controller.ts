@@ -29,7 +29,7 @@ import { useTrackLifecycleMutations } from '../providers/track-lifecycle-mutatio
 import { useUiPreferences } from '../providers/ui-preferences.tsx';
 import { useWorkspace } from '../providers/workspace-queries.ts';
 import {
-  routeParamFromPath, useCurrentPath, useGo, useNewTrackBack, useRouteCardId, useRouteFilePath,
+  routeParamFromPath, useCurrentPath, useGo, useMobileFocusHomeLocation, useNewTrackBack, useRouteCardId, useRouteFilePath,
   useTrackPanelNavigation,
 } from '../router/navigation.ts';
 import { useNewTrackDraftArea, usePrepareNewTrack } from '../router/new-track-drafts.tsx';
@@ -82,6 +82,7 @@ export function useShellController({
   const areaEditorNameRef = useRef<HTMLInputElement | null>(null);
 
   const currentPath = useCurrentPath();
+  const routeOwnsMobileChrome = useMobileFocusHomeLocation();
   const settingsOpen = settingsSectionForPath(currentPath) !== null;
   const routeCardId = useRouteCardId();
   const routeFilePath = useRouteFilePath();
@@ -276,6 +277,7 @@ export function useShellController({
     manualRailCollapsed,
     drawerWidth,
     currentPath,
+    routeOwnsMobileChrome,
     settingsOpen,
     mobileOverlayRoute,
     routeTrackId,

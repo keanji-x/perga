@@ -116,10 +116,17 @@ export function useSurfacePresence(input: SurfacePresenceInput): SurfaceBinding 
     // Read the latest declarations, even if their ref objects changed while the
     // actual elements stayed equal. Completion belongs to current paint nodes.
     const declarations = input.parts.kind === 'single' ? [input.parts.primary] : [input.parts.primary, input.parts.peer];
-    if (declarations.length !== current.snapshot.parts.length || !declarations.every((part, index) => {
-      const element = current.snapshot.parts[index].element;
-      return part.element.current === element && element.isConnected;
-    }) || declarations.some(part => part.readFrame() === null)) { current.target = null; notify(false); return; }
+    try {
+      if (declarations.length !== current.snapshot.parts.length || !declarations.every((part, index) => {
+        const element = current.snapshot.parts[index].element;
+        return part.element.current === element && element.isConnected;
+      }) || declarations.some(part => part.readFrame() === null)) {
+        current.playback.cancel(); current.target = null; notify(false); return;
+      }
+    } catch (error) {
+      cancel(); binding.current = null;
+      throw error;
+    }
     if (target === 0) exit();
   });
   const update = useEffectEvent(() => {
@@ -134,7 +141,7 @@ export function useSurfacePresence(input: SurfacePresenceInput): SurfaceBinding 
     if (open) {
       if (exited.current) { cancel(); binding.current = null; }
       exited.current = false;
-    } else if (exited.current) return;
+    }
     const declarations = parts.kind === 'single' ? [parts.primary] : [parts.primary, parts.peer];
     const elements = declarations.map(part => part.element.current);
     if (elements.some(element => element === null || !element.isConnected)) { suspend(); return; }
@@ -148,6 +155,13 @@ export function useSurfacePresence(input: SurfacePresenceInput): SurfaceBinding 
       if (frames.some(frame => frame === null)) { suspend(); return; }
       const finalFrames = frames as SurfaceFrame[];
       for (const frame of finalFrames) validateFrame(frame, document);
+      const animate = view !== null && enabled && !view.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      if (exited.current) {
+        const boundParts = binding.current?.snapshot.parts;
+        if (!animate || boundParts?.length !== surfaces.length || boundParts.some((part, index) =>
+          part.element !== surfaces[index] || part.frame.document !== document)) suspend();
+        return;
+      }
       const frame = finalFrames[0];
       const origin = geometry.origin;
       let point: Point;
@@ -180,7 +194,7 @@ export function useSurfacePresence(input: SurfacePresenceInput): SurfaceBinding 
       ready = true;
       const owned = binding.current;
       const changed = owned === null || !sameSnapshot(owned.snapshot, next);
-      if (view === null || !enabled || view.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      if (!animate) {
         const moving = owned?.playback.moving() ?? false;
         cancel(); binding.current = { snapshot: next, target, sample: rest(target, surfaces.length), playback: createPlaybackTarget<SurfaceState>() };
         if (moving) visualChange(); if (!open) exit(); return;
@@ -195,7 +209,7 @@ export function useSurfacePresence(input: SurfacePresenceInput): SurfaceBinding 
       if (from.value.progress === target && from.velocity.progress === 0
         && [...from.value.offsets, ...from.velocity.offsets].every(point => point.x === 0 && point.y === 0)) { if (!open) exit(); return; }
       const active = playSurface(surfaces, next, from, target, input.onVisualChange === undefined ? undefined : visualChange);
-      current.playback.replace(active, () => { complete(current, target); });
+      current.playback.replace(active, () => { complete(current, target); }, { retainOnSettle: target === 0 });
     } catch (error) {
       ready = false; cancel(); binding.current = null;
       throw error;

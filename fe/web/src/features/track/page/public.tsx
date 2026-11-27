@@ -116,6 +116,7 @@ export type TrackPageProps = Readonly<{
   onMobileBack?: () => void;
   /** Optional app-owned phone header slot; this feature keeps ownership of actions and focus. */
   mobileHeaderActionsHost?: HTMLElement | null;
+  /** `null` reserves the shell header while its title host mounts. */
   mobileHeaderTitleHost?: HTMLElement | null;
   mobileAreaName?: string;
   mobileTitleReadView?: EditableTitleProps['readView'];
@@ -161,7 +162,7 @@ export function TrackPage({ fillReading = false, articleMasthead = !fillReading,
   shareLinks, onShareTrack, onStartConversation, conversationOpen = false, mobilePanelObscured, unread = false, onReply,
   cardsAction, recentFiles, onOpenCard, onDeleteCard, onSetWorkbench, onOpenTask, onOpenOutline, board, onCloseBoard, fileViewer,
   panel = null, onOpenPanel, onClosePanel,
-  mobileBackLabel = 'Workspace', onMobileBack, mobileHeaderActionsHost = null, mobileHeaderTitleHost = null, mobileAreaName, mobileTitleReadView,
+  mobileBackLabel = 'Workspace', onMobileBack, mobileHeaderActionsHost = null, mobileHeaderTitleHost, mobileAreaName, mobileTitleReadView,
   canReopenTrack, canCloseTrack, onRenameTrack, onOpenOriginTrack, closedControl, onDeleteTrack, onTrackDeleted,
 }: TrackPageProps) {
   const compactViewport = useCompactViewport();
@@ -176,10 +177,11 @@ export function TrackPage({ fillReading = false, articleMasthead = !fillReading,
     setCanEditMobileTitle(begin !== null);
   }, []);
   const closeSurface = fileViewer?.onClose ?? onCloseBoard;
-  const titleInHeader = compactViewport && mobileHeaderTitleHost !== null && closeSurface === undefined;
+  const usesShellHeader = compactViewport && mobileHeaderTitleHost !== undefined && closeSurface === undefined;
+  const titleInHeader = usesShellHeader && mobileHeaderTitleHost !== null;
   useLayoutEffect(() => {
     const slot = titleSlotRef.current;
-    if (slot === null || !titleInHeader || mobileHeaderTitleHost === null) return;
+    if (slot === null || !titleInHeader || mobileHeaderTitleHost == null) return;
     // Only the title slot is measured. The live editor stays in its React host;
     // responsive positioning changes geometry without removing the focused input.
     const place = () => {
@@ -488,7 +490,7 @@ export function TrackPage({ fillReading = false, articleMasthead = !fillReading,
 
       {titleInHeader && createPortal(<span aria-hidden="true" style={{ position: 'absolute' }} />, mobileHeaderTitleHost)}
       {headerActionsHost !== null && mobileActions !== undefined && createPortal(mobileActions, headerActionsHost)}
-      {titleInHeader && closeSurface === undefined ? null : <div className={styles.mobileTrackHeader} ref={mobileHeaderRef}>
+      {usesShellHeader ? null : <div className={styles.mobileTrackHeader} ref={mobileHeaderRef}>
         <MobileHeader
           title={trackDisplayTitle(track.title)}
           {...(compactViewport && fileTitle !== undefined

@@ -17,7 +17,8 @@ vi.mock('@tanstack/react-router', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@tanstack/react-router')>();
   const router = actual.createRouter({
     routeTree: actual.createRootRoute(),
-    history: actual.createMemoryHistory({ initialEntries: ['/'] }),
+    // Today uses the shell header. Bare `/` delegates its header to the Focus outlet.
+    history: actual.createMemoryHistory({ initialEntries: ['/?view=today'] }),
   });
   return {
     ...actual,

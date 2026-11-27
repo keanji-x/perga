@@ -74,26 +74,15 @@ export const DrawerResizeProvider = DrawerResizeContext.Provider;
 /** The resize contract for the route's conversation drawer (`./drawer-width.tsx`); `undefined` outside the shell, which means no handle. */
 export function useConversationDrawerResize(): DrawerResize | undefined { return useContext(DrawerResizeContext); }
 
-const MobileHeaderTitleContext = createContext<HTMLElement | null>(null);
-export function useMobileHeaderTitleHost(): HTMLElement | null {
+const MobileHeaderTitleContext = createContext<HTMLElement | null | undefined>(undefined);
+/** `null` while the shell's title slot mounts, `undefined` when the shell has no header. */
+export function useMobileHeaderTitleHost(): HTMLElement | null | undefined {
   return useContext(MobileHeaderTitleContext);
 }
 
 const MobileWorkspaceTriggerRefContext = createContext<RefCallback<HTMLButtonElement> | undefined>(undefined);
 export function useMobileWorkspaceTriggerRef(): RefCallback<HTMLButtonElement> | undefined {
   return useContext(MobileWorkspaceTriggerRefContext);
-}
-
-const MobileRouteChromeOwnerContext = createContext<((token: object | null, previous?: object) => void) | null>(null);
-/** Declares that the active mobile route renders its own top header and workspace opener. */
-export function useMobileRouteChromeOwner(owned = true) {
-  const register = useContext(MobileRouteChromeOwnerContext);
-  const [token] = useState(() => ({}));
-  useLayoutEffect(() => {
-    if (!owned) return;
-    register?.(token);
-    return () => { register?.(null, token); };
-  }, [owned, register, token]);
 }
 
 function noOpenMobileSection(): void { /* no shell above this consumer */ }
@@ -110,14 +99,6 @@ export function AppShell({
   const visibleViewport = useVisibleViewport(narrowRail);
   const [mobileHeaderActionsHost, setMobileHeaderActionsHost] = useState<HTMLDivElement | null>(null);
   const [mobileHeaderTitleHost, setMobileHeaderTitleHost] = useState<HTMLDivElement | null>(null);
-  const [mobileChromeOwner, setMobileChromeOwner] = useState<object | null>(null);
-  const registerMobileChromeOwner = useCallback((next: object | null, previous?: object) => {
-    setMobileChromeOwner((current) => {
-      if (next !== null) return next;
-      return previous === undefined || current === previous ? null : current;
-    });
-  }, []);
-  const routeOwnsMobileChrome = mobileChromeOwner !== null;
   const mobileWorkspaceTriggerRef = useRef<HTMLButtonElement | null>(null);
   const setMobileWorkspaceTriggerRef = useCallback((node: HTMLButtonElement | null) => {
     mobileWorkspaceTriggerRef.current = node;
@@ -133,6 +114,7 @@ export function AppShell({
       resetMobileNavigationRef.current();
     },
   });
+  const mobileFullBleedRoute = controller.settingsOpen || controller.mobileOverlayRoute || controller.routeOwnsMobileChrome;
 
   const mobileNavigation = useMobileNavigation({
     compact: narrowRail,
@@ -156,7 +138,7 @@ export function AppShell({
 
   return (
     <div
-      className={`${styles.shell} ${narrowRail ? mobileFontClassName : ''} ${narrowRail && (controller.settingsOpen || controller.mobileOverlayRoute || routeOwnsMobileChrome) ? styles.settingsPageShell : ''} ${railCollapsed ? styles.shellCollapsed : styles.shellExpanded}`}
+      className={`${styles.shell} ${narrowRail ? mobileFontClassName : ''} ${narrowRail && mobileFullBleedRoute ? styles.settingsPageShell : ''} ${railCollapsed ? styles.shellCollapsed : styles.shellExpanded}`}
       style={shellStyle}
     >
       {narrowRail ? (
@@ -176,7 +158,7 @@ export function AppShell({
           }}
           route={{
             currentPath: controller.currentPath,
-            routeOwnsMobileChrome,
+            showHeader: !mobileFullBleedRoute,
             settingsOpen: controller.settingsOpen,
             mobileOverlayRoute: controller.mobileOverlayRoute,
             routeTrackId: controller.routeTrackId,
@@ -243,11 +225,9 @@ export function AppShell({
           <CreateAreaContext.Provider value={controller.requestCreateArea}>
             <MobileSectionContext.Provider value={mobileNavigation.open}>
               <MobileHeaderActionsContext.Provider value={narrowRail ? mobileHeaderActionsHost : null}>
-                <MobileHeaderTitleContext.Provider value={narrowRail ? mobileHeaderTitleHost : null}>
+                <MobileHeaderTitleContext.Provider value={narrowRail && !mobileFullBleedRoute ? mobileHeaderTitleHost : undefined}>
                   <MobileWorkspaceTriggerRefContext.Provider value={narrowRail ? setMobileWorkspaceTriggerRef : undefined}>
-                    <MobileRouteChromeOwnerContext.Provider value={narrowRail ? registerMobileChromeOwner : null}>
-                      <DrawerResizeProvider value={controller.drawerWidth.resize}><Outlet /></DrawerResizeProvider>
-                    </MobileRouteChromeOwnerContext.Provider>
+                    <DrawerResizeProvider value={controller.drawerWidth.resize}><Outlet /></DrawerResizeProvider>
                   </MobileWorkspaceTriggerRefContext.Provider>
                 </MobileHeaderTitleContext.Provider>
               </MobileHeaderActionsContext.Provider>

@@ -31,7 +31,7 @@ type MobileShellWorkspace = Readonly<{
 
 type MobileShellRoute = Readonly<{
   currentPath: string;
-  routeOwnsMobileChrome: boolean;
+  showHeader: boolean;
   settingsOpen: boolean;
   mobileOverlayRoute: boolean;
   routeTrackId: string | undefined;
@@ -69,7 +69,7 @@ export function MobileShellChrome({
   onActionsHostRef, onTitleHostRef, workspaceReturnRef: routeWorkspaceReturnRef,
   shareScope = null, nowMs, userLabel,
 }: MobileShellChromeProps) {
-  const { currentPath, routeOwnsMobileChrome, settingsOpen, mobileOverlayRoute } = route;
+  const { currentPath, showHeader, settingsOpen, mobileOverlayRoute } = route;
   const mobileSectionKind = navigation.section?.kind;
 
   const workspaceReturnRef = useRef<HTMLButtonElement | null>(null);
@@ -178,7 +178,7 @@ export function MobileShellChrome({
   return (
     <>
       {dismissalLayer}
-      {!settingsOpen && !mobileOverlayRoute && !routeOwnsMobileChrome && (
+      {showHeader && (
         <MobileWorkspaceHeader
           shareMode={shareScope !== null}
           areas={workspace.visibleAreas}

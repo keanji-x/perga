@@ -141,6 +141,45 @@ it('settles reduced motion immediately and disposes a running close once', async
   view.unmount(); await geometryEvent(); expect(primary.node.getAnimations()).toHaveLength(0);
 });
 
+it.each(['release', 'reopen', 'unmount', 'disable', 'reduce', 'frame loss', 'paint replacement'])('holds the paired exit paint until %s', async action => {
+  const { primary, props } = fixture(); const peer = part(500, 100);
+  const paired: SurfacePresenceInput = { ...props, parts: { kind: 'paired', primary, peer } };
+  const view = render(<Probe {...paired} />);
+  const nodes = [primary.node, peer.node];
+  const enter = nodes.map(node => node.getAnimations()[0]);
+  enter.forEach(animation => animation.finish());
+  await expect.poll(() => nodes.flatMap(node => node.getAnimations()).length).toBe(0);
+
+  view.rerender(<Probe {...paired} open={false} />);
+  const exits = nodes.map(node => node.getAnimations()[0]);
+  exits.forEach(animation => animation.finish());
+  await expect.poll(() => vi.mocked(props.onExited).mock.calls.length).toBe(1);
+  expect(nodes.map(node => getComputedStyle(node).opacity)).toEqual(['0', '0']);
+
+  if (action === 'release') view.rerender(<Probe {...paired} open={false} present={false} />);
+  if (action === 'unmount') view.unmount();
+  if (action === 'disable') view.rerender(<Probe {...paired} open={false} enabled={false} />);
+  if (action === 'reduce') await commands.emulateReducedMotion(true);
+  if (action === 'frame loss') {
+    primary.readFrame.mockReturnValue(null);
+    view.rerender(<Probe {...paired} open={false} />);
+  }
+  if (action === 'paint replacement') {
+    const replacement = part(700, 500);
+    view.rerender(<Probe {...paired} open={false} parts={{ kind: 'paired', primary: replacement, peer }} />);
+    expect(replacement.node.getAnimations()).toHaveLength(0);
+  }
+  if (action === 'reopen') {
+    view.rerender(<Probe {...paired} />);
+    nodes.forEach(node => freeze(node, 0));
+    expect(nodes.map(node => getComputedStyle(node).opacity)).toEqual(['0', '0']);
+    nodes.forEach(node => node.getAnimations()[0].finish());
+  }
+  await expect.poll(() => nodes.flatMap(node => node.getAnimations()).length).toBe(0);
+  expect(exits.map(exit => exit.playState)).toEqual(['idle', 'idle']);
+  expect(props.onExited).toHaveBeenCalledOnce();
+});
+
 it('cleans acquired effects on failed paired start and rejects foreign frames and unsupported mappings', () => {
   const { primary, props } = fixture(); const peer = part(500, 100);
   vi.spyOn(peer.node, 'animate').mockImplementation(() => { throw new Error('Native pair refused'); });

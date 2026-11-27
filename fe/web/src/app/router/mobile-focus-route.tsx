@@ -9,7 +9,7 @@ import { workspaceActivityErrorText, workspaceReadErrorText } from '../providers
 import { useReadReceipts } from '../providers/read-receipts.tsx';
 import { useWorkspace } from '../providers/workspace-queries.ts';
 import {
-  useMobileRouteChromeOwner, useMobileWorkspaceTriggerRef, useOpenMobileSection, useRequestCreateArea,
+  useMobileWorkspaceTriggerRef, useOpenMobileSection, useRequestCreateArea,
 } from '../shell/public.tsx';
 import { useGo } from './navigation.ts';
 
@@ -29,7 +29,6 @@ export function MobileFocusRoute({
   const openMobileSection = useOpenMobileSection();
   const requestCreateArea = useRequestCreateArea();
   const workspaceTriggerRef = useMobileWorkspaceTriggerRef();
-  useMobileRouteChromeOwner(true);
 
   const shownAreas = visibleAreas(workspace.areas);
   const readError = workspaceReadErrorText(workspace)
