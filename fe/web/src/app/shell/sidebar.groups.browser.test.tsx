@@ -84,9 +84,9 @@ it('renders fixed folder icons and inline chevrons across Focus, Pinned and Area
   for (const width of ['15rem', '11rem']) {
     rail.style.inlineSize = width;
     const todayLabel = page.getByRole('button', { name: 'Today', exact: true }).element().querySelector('[title="Today"]')!;
-    const area = page.getByRole('button', { name: 'Collapse area Work', exact: true }).element();
-    expect(area.querySelectorAll('svg').length).toBe(2);
-    expect(textBounds(area.querySelector('[title]')!).left).toBeCloseTo(textBounds(todayLabel).left, 1);
+    const area = page.getByRole('button', { name: 'Collapse area Work', exact: true });
+    expect(area.element().querySelectorAll('svg').length).toBe(2);
+    expect(textBounds(area.getByText('Work', { exact: true }).element()).left).toBeCloseTo(textBounds(todayLabel).left, 1);
     for (const title of ['Focus', 'Pinned']) {
       for (const action of ['Collapse', 'Expand']) {
         const disclosure = page.getByRole('button', { name: `${action} ${title}`, exact: true });
@@ -101,9 +101,9 @@ it('renders fixed folder icons and inline chevrons across Focus, Pinned and Area
 it('indents child tracks clear of the left tree guide while aligning labels on the shared spine', async () => {
   await scene();
   const group = page.getByRole('group', { name: 'area Work', exact: true });
-  const areaButton = group.getByRole('button', { name: 'Collapse area Work', exact: true }).element();
-  const areaTitle = areaButton.querySelector('[title]')!;
-  const folderBox = areaButton.querySelector('svg')!.parentElement!.getBoundingClientRect();
+  const areaButton = group.getByRole('button', { name: 'Collapse area Work', exact: true });
+  const areaTitle = areaButton.getByText('Work', { exact: true }).element();
+  const folderBox = areaButton.element().querySelector('svg')!.parentElement!.getBoundingClientRect();
   const guideX = folderBox.left + folderBox.width / 2;
   const selected = group.getByRole('button', { name: /^Track Build frontend/ }).element();
   const trackList = selected.parentElement!.parentElement!;
@@ -192,10 +192,10 @@ it.each(['light', 'dark'] as const)('preserves label alignment and trailing stat
   rail.style.setProperty('--control-h-sm', '24px');
   rail.style.setProperty('--space-2', '6px');
   const group = page.getByRole('group', { name: 'area Work', exact: true });
-  const area = group.getByRole('button', { name: 'Collapse area Work', exact: true }).element();
+  const areaTitle = group.getByRole('button', { name: 'Collapse area Work', exact: true }).getByText('Work', { exact: true }).element();
   const rows = group.getByRole('button', { name: /^Track / }).elements();
   const childStart = rows[0].querySelector('[title]')!.getBoundingClientRect().left;
-  expect(childStart).toBeCloseTo(area.querySelector('[title]')!.getBoundingClientRect().left, 1);
+  expect(childStart).toBeCloseTo(areaTitle.getBoundingClientRect().left, 1);
   for (const row of rows) expect(row.querySelector('[title]')!.getBoundingClientRect().left).toBeCloseTo(childStart, 1);
   for (const marker of document.querySelectorAll('[data-nc-activity]')) {
     const title = marker.parentElement!.parentElement!.querySelector('[title]')!;
@@ -216,7 +216,7 @@ it('keeps long rail labels within the shared columns without horizontal scrollin
     const expected = today.element().lastElementChild!.getBoundingClientRect().left;
     const areaButton = page.getByRole('button', { name: `Collapse area ${areaName}`, exact: true });
     await areaButton.hover();
-    const areaTitle = areaButton.element().querySelector<HTMLElement>('[title]')!;
+    const areaTitle = areaButton.getByText(areaName, { exact: true }).element();
     expect(areaTitle.getBoundingClientRect().left).toBeCloseTo(expected, 1);
     const areaMenu = page.getByRole('button', { name: `Area actions for ${areaName}`, exact: true });
     expect(areaTitle.getBoundingClientRect().right).toBeLessThanOrEqual(areaMenu.element().getBoundingClientRect().left);
@@ -249,8 +249,8 @@ it('lets clicks in a decorative status slot reach Track navigation', async () =>
 it('places view options and preserves disclosure and keyboard navigation', async () => {
   const { onGo, options, collapse, today, focusDisclosure } = await scene();
   const focusTitle = focusDisclosure.element().querySelector<HTMLElement>('[title="Focus"]')!;
-  const areaTitle = page.getByRole('button', { name: 'Collapse area Work', exact: true }).element()
-    .querySelector<HTMLElement>('[title="Work"]')!;
+  const areaTitle = page.getByRole('button', { name: 'Collapse area Work', exact: true })
+    .getByText('Work', { exact: true }).element() as HTMLElement;
   expect(textBounds(areaTitle).left).toBeCloseTo(textBounds(focusTitle).left, 1);
 
   const focusButton = focusDisclosure.element();
@@ -590,7 +590,7 @@ function textBounds(node: Element) {
 it('aligns Level 1 and Level 2 labels on one spine while differentiating folder and child Track typography', async () => {
   await scene();
   const primaryToday = page.getByRole('button', { name: 'Today', exact: true }).element().querySelector('[title="Today"]')!;
-  const area = page.getByRole('button', { name: 'Collapse area Work', exact: true }).element().querySelector('[title]')!;
+  const area = page.getByRole('button', { name: 'Collapse area Work', exact: true }).getByText('Work', { exact: true }).element();
   const childRow = page.getByRole('group', { name: 'Focus', exact: true }).getByRole('button', { name: /^Track Review result/ }).element();
   const child = childRow.querySelector('[title="Review result"]')!;
   const rail = page.getByRole('navigation', { name: 'Workspace' }).element();

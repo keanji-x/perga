@@ -20,7 +20,7 @@ export function AreaGroup({
   management: GroupManagement;
   area: Area;
   targetLabel?: string | undefined;
-  areaTracks: readonly Track[];
+  areaTracks: readonly Track[] | undefined;
   activeTrackId: string | null;
   expanded: boolean;
   onToggle: (expanded: boolean) => void;
@@ -37,7 +37,9 @@ export function AreaGroup({
   const preferences = useUiPreferences();
   const showMemory = memoryEnabled && preferences.areaShowsMemory(area.id);
   const memoryRow = navigationRowPresentation({ kind: 'entry', depth: 1 });
-  const ordered = areaPinnedTracks(areaTracks, (track) => preferences.areaTrackPinned(area.id, track.id));
+  const ordered = areaPinnedTracks(areaTracks ?? [], (track) => preferences.areaTrackPinned(area.id, track.id));
+  const tracks = railAreaTracks(ordered, activeTrackId, rowProps.isUnread, showClosed);
+  const count = tracks.length;
   const areaTitle = area.executionTargetId && area.executionTargetId !== 'local'
     ? `${area.name} · ${targetLabel ?? area.executionTargetId}`
     : area.name;
@@ -47,7 +49,11 @@ export function AreaGroup({
     label={`area ${area.name}`}
     icon="folder"
     level="area"
-    tracks={railAreaTracks(ordered, activeTrackId, rowProps.isUnread, showClosed)}
+    tracks={tracks}
+    disclosurePreview={areaTracks === undefined ? undefined : <div className={ownStyles.preview}>
+      <strong>{areaTitle}</strong>
+      <span>{count} {count === 1 ? 'Track' : 'Tracks'}</span>
+    </div>}
     activeTrackId={activeTrackId}
     expanded={expanded}
     onToggle={onToggle}

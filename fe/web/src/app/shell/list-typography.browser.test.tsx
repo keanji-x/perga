@@ -72,7 +72,7 @@ it.each(['light', 'dark'])('uses the same named type hierarchy in both %s side p
   expect(getComputedStyle(name).fontFamily).toBe(getComputedStyle(primary[0]).fontFamily);
   expect(getComputedStyle(name).fontSize).toBe('13px');
   for (const node of primary) assertRole(node, '--type-content');
-  const group = element(document.querySelector<HTMLElement>('[title="Work"]'));
+  const group = page.getByRole('button', { name: 'Collapse area Work', exact: true }).getByText('Work', { exact: true }).element() as HTMLElement;
   assertRole(group, '--type-content');
   assertRole(element(document.querySelector<HTMLElement>('[title="Today"]')), '--type-content');
   const inventoryGroup = element(document.querySelector<HTMLElement>('[data-nc-work-inventory] h2'));
@@ -107,7 +107,8 @@ it('uses configured sidebar density and uses compact single-line contextual tool
   expect(element(document.querySelector<HTMLElement>('[data-nc-module="cards"] [data-nc-card-inventory]')).getBoundingClientRect().top
     - panelHeader.getBoundingClientRect().bottom).toBeCloseTo(0, 0);
 
-  expect(element(document.querySelector<HTMLElement>('[title="Work"]')).getBoundingClientRect().left).toBeCloseTo(element(document.querySelector<HTMLElement>('[title="Left first"]')).getBoundingClientRect().left, 1);
+  const areaTitle = page.elementLocator(area).getByText('Work', { exact: true }).element();
+  expect(areaTitle.getBoundingClientRect().left).toBeCloseTo(element(document.querySelector<HTMLElement>('[title="Left first"]')).getBoundingClientRect().left, 1);
   const pairs = [
     [element(document.querySelector<HTMLElement>('[aria-label^="Track Left first"]')), element(document.querySelector<HTMLElement>('[aria-label^="Track Left second"]'))],
     [element(document.querySelector<HTMLElement>('[data-nc-row="tool:card-0"]')), element(document.querySelector<HTMLElement>('[data-nc-row="tool:card-1"]'))],

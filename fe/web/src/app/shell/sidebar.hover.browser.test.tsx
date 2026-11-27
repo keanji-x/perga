@@ -141,7 +141,7 @@ it('keeps the clickable Area quieter and uses the same cadence as its Track rows
 
   const disclosure = document.querySelector<HTMLElement>('[aria-label="Collapse area Work"]')!;
   const areaRow = disclosure;
-  const areaName = document.querySelector<HTMLElement>('[title="Work"]')!;
+  const areaName = page.getByRole('button', { name: 'Collapse area Work', exact: true }).getByText('Work', { exact: true }).element() as HTMLElement;
   const first = document.querySelector<HTMLElement>('[aria-label^="Track First"]')!;
   const second = document.querySelector<HTMLElement>('[aria-label^="Track Second"]')!;
   const nextDisclosure = document.querySelector<HTMLElement>('[aria-label="Collapse area Next"]')!;
@@ -180,7 +180,7 @@ it('keeps the clickable Area quieter and uses the same cadence as its Track rows
   }
   document.documentElement.dataset.theme = 'light';
   const restColor = getComputedStyle(areaName).color;
-  await page.getByText('Work', { exact: true }).hover();
+  await page.elementLocator(areaName).hover();
   await waitFor(() => expect(getComputedStyle(areaRow).backgroundColor).not.toBe(restBackground));
   await waitFor(() => expect(getComputedStyle(areaName).color).not.toBe(restColor));
   expect(getComputedStyle(areaRow).backgroundColor).not.toBe(restBackground);

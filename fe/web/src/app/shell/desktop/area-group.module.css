@@ -7,6 +7,12 @@
     inline-size: 100%;
   }
 
+  .preview {
+    display: grid;
+    gap: var(--space-1);
+    overflow-wrap: anywhere;
+  }
+
   /*
    * `Show N more` / `Show less` sits in the Track list's column: the rail
    * Track row's height and its leading gutter (4 + 20 + 4), so the text starts
