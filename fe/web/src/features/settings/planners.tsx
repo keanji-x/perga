@@ -4,6 +4,7 @@ import { IconButton as AstryxIconButton } from '@astryxdesign/core/IconButton';
 import { Text as AstryxText } from '@astryxdesign/core/Text';
 import { Tooltip as AstryxTooltip } from '@astryxdesign/core/Tooltip';
 
+import type { SettingsSnapshotDto } from '../../../../core/api/generated/wire.ts';
 import type { AgentProvider } from '../../../../core/api/schemas.ts';
 import {
   unavailableCreationNote, type ProviderAvailability, type ManagedProviderAvailability, type AuthenticationRetryResponse,
@@ -11,10 +12,12 @@ import {
 import { providerPresentation } from '../../../../core/domain/provider-presentation.ts';
 import { ErrorBox } from '../../ui/error-box/public.tsx';
 import { Icon } from '../../ui/icon/public.tsx';
+import { bindSettingsSection, SettingFieldsList } from './fields.tsx';
 import { SettingRow, SettingsList, SettingsPane, SettingStatus } from './pane.tsx';
 import styles from './settings.module.css';
 
 export type PlannersPaneProps = Readonly<{
+  settings?: PlannerDefaultsProps;
   /** `undefined` means "still checking" — never render a guessed status. */
   providers: readonly PlannerProvider[] | undefined;
   loadError: string | null;
@@ -34,6 +37,32 @@ export type PlannersPaneProps = Readonly<{
     onOpenConversation: (notice: AuthenticationRetryResponse['recovery_notices'][number]) => void;
   }> | null;
 }>;
+
+type PlannerDefaultsProps = Readonly<{
+  snapshot: SettingsSnapshotDto | undefined;
+  loadError: string | null;
+  saveError: string | null;
+  saving: boolean;
+  onChange: (key: string, value: string | number) => void;
+  onRetry: () => void;
+}>;
+
+function PlannerDefaults({ snapshot, loadError, saveError, saving, onChange, onRetry }: PlannerDefaultsProps) {
+  const fields = snapshot === undefined ? [] : bindSettingsSection(snapshot, 'planners', onChange);
+  if (snapshot !== undefined && fields.length === 0 && loadError === null) return null;
+
+  return (
+    <section className={styles.settingsSection} aria-label="Defaults" aria-busy={saving || undefined}>
+      <header className={styles.sectionHeader}>
+        <AstryxHeading level={4} className={styles.eyebrow}>Defaults</AstryxHeading>
+      </header>
+      {loadError !== null ? <ErrorBox message={loadError} actionLabel="Retry defaults" onRetry={onRetry} />
+        : snapshot === undefined ? <AstryxText as="p" color="secondary">Loading planner defaults…</AstryxText>
+          : <SettingFieldsList fields={fields} disabled={saving} density="compact" />}
+      {loadError === null && saveError !== null && <p className={styles.error} role="alert">{saveError}</p>}
+    </section>
+  );
+}
 
 /** Availability and the one required capability consumed by Settings. */
 type PlannerProvider = Readonly<{
@@ -65,11 +94,12 @@ function oldestCheck(providers: readonly ProviderAvailability[]): number | null 
 }
 
 export function PlannersPane({
-  providers, loadError, onRetryLoad, onRecheck, rechecking, recheckError, authenticationRecovery,
+  settings, providers, loadError, onRetryLoad, onRecheck, rechecking, recheckError, authenticationRecovery,
 }: PlannersPaneProps) {
   const checkedAt = providers === undefined ? null : oldestCheck(providers.map(({ availability }) => availability));
   return (
     <SettingsPane category="planners">
+      {settings !== undefined && <PlannerDefaults {...settings} />}
       {loadError !== null && <ErrorBox message={loadError} onRetry={onRetryLoad} />}
       {providers === undefined
         ? loadError === null && <AstryxText as="p" color="secondary">Checking providers…</AstryxText>

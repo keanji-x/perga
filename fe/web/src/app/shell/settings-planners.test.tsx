@@ -10,6 +10,7 @@ import userEvent from '@testing-library/user-event';
 import { afterEach,beforeEach,describe,expect,it,vi } from 'vitest';
 
 import type { ApiRequest,ApiTransportPort,ApiTransportResponse } from '../../../../core/api/types.ts';
+import type { SettingsSnapshotDto } from '../../../../core/api/generated/wire.ts';
 import { createUnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
 import { RECHECK_TEXT,unavailableCreationNote } from '../../../../core/domain/agent-providers.ts';
 import { queryKeys } from '../providers/query-keys.ts';
@@ -47,7 +48,7 @@ function providerResponse(_request: ApiRequest, bootstrap: BootstrapDto): ApiTra
 
 /** `recheck` answers `refresh=true` in place of the ready answer. */
 function renderPlanners(recheck?: () => Promise<ApiTransportResponse>,
-  settingsReply?: (request: ApiRequest) => Promise<ApiTransportResponse>,
+  settingsReply?: (request: ApiRequest) => ApiTransportResponse,
   providersReply?: (request: ApiRequest) => Promise<ApiTransportResponse>) {
   const sent: ApiRequest[] = [];
   const transport: ApiTransportPort = {
@@ -55,13 +56,14 @@ function renderPlanners(recheck?: () => Promise<ApiTransportResponse>,
       sent.push(request);
       if (providersReply !== undefined && (request.path.startsWith('/api/v1/bootstrap?scope=') || request.path.startsWith('/api/agent-providers'))) return providersReply(request);
       if (request.path === '/api/v1/bootstrap?scope=providers') return Promise.resolve(providerResponse(request, answer({ status: 'unavailable', reason: LOGGED_OUT })));
-      if (settingsReply !== undefined && request.path === '/api/settings') return settingsReply(request);
+      if (request.path === '/api/v1/settings') return Promise.resolve(settingsReply?.(request)
+        ?? { status: 200, statusText: 'OK', body: { rev: 1, sections: [], fields: [], values: {} } });
       if (recheck !== undefined && request.path === '/api/v1/bootstrap?scope=providers&refresh=true') return recheck();
       const body = request.path === '/api/v1/bootstrap?scope=managed'
         ? answer({ status: 'unavailable', reason: LOGGED_OUT })
         : request.path === '/api/v1/bootstrap?scope=providers&refresh=true'
           ? answer({ status: 'ready', reason: null })
-          : request.path === '/api/settings' ? { settings: {} } : [];
+          : [];
       return Promise.resolve({ status: 200, statusText: 'OK', body });
     },
   };
@@ -90,6 +92,60 @@ function row(title: string): HTMLElement {
 
 it('maps the Planners path to its pane', () => {
   expect(settingsSectionForPath('/settings/planners')).toBe('planners');
+});
+
+it('refreshes a conflicting revision and saves a subsequent choice against the refreshed snapshot', async () => {
+  const key = 'sessions.auto_compaction_percent';
+  const field = { key, section: 'planners', label: 'Compaction threshold', description: null, control: 'segmented',
+    valueType: 'integer', defaultValue: 80, min: 50, max: 95, unit: '%',
+    options: [{ value: '70', label: '70%' }, { value: '80', label: '80%' }, { value: '90', label: '90%' }] };
+  const otherKey = 'other.threshold';
+  let snapshot: SettingsSnapshotDto = {
+    rev: 41,
+    sections: [{ id: 'planners', label: 'Planners', description: null }, { id: 'other', label: 'Other', description: null }],
+    fields: [field, { ...field, key: otherKey, section: 'other', label: 'Other threshold' }],
+    values: { [key]: 85, [otherKey]: 80 },
+  };
+  const { sent, client } = renderPlanners(undefined, (request) => {
+    if (request.method === 'PATCH') {
+      if (snapshot.rev === 41) {
+        snapshot = { ...snapshot, rev: 42, values: { ...snapshot.values, [key]: 90 } };
+        return { status: 409, statusText: 'Conflict', body: { code: 'conflict', error: 'stale revision' } };
+      }
+      snapshot = { ...snapshot, rev: 43, values: { ...snapshot.values, [key]: 70 } };
+    }
+    return { status: 200, statusText: 'OK', body: snapshot };
+  });
+  const defaults = within(await screen.findByRole('region', { name: 'Defaults' }));
+  expect(await defaults.findByRole('radiogroup', { name: 'Compaction threshold' })).toBeTruthy();
+  expect(defaults.queryByRole('radiogroup', { name: 'Other threshold' })).toBeNull();
+  expect((await defaults.findByRole('radio', { name: '85%' })).getAttribute('aria-checked')).toBe('true');
+  await userEvent.click(defaults.getByRole('radio', { name: '70%' }));
+  expect((await defaults.findByRole('alert')).textContent).toContain('Planner defaults changed on the server.');
+  expect(defaults.getByRole('radio', { name: '90%' }).getAttribute('aria-checked')).toBe('true');
+  expect(sent.filter(({ path }) => path === '/api/v1/settings').map(({ method }) => method)).toEqual(['GET', 'PATCH', 'GET']);
+
+  await userEvent.click(defaults.getByRole('radio', { name: '70%' }));
+  await waitFor(() => expect(defaults.getByRole('radio', { name: '70%' }).getAttribute('aria-checked')).toBe('true'));
+  expect(defaults.queryByRole('alert')).toBeNull();
+  expect(sent.filter(({ method }) => method === 'PATCH').map(({ body }) => body)).toEqual([
+    { expectedRev: 41, patch: { [key]: 70 } },
+    { expectedRev: 42, patch: { [key]: 70 } },
+  ]);
+  expect(client.getQueryData(queryKeys.appSettings())).toEqual(snapshot);
+});
+
+it('shows a retryable Defaults read error alongside the provider checks', async () => {
+  let fail = true;
+  renderPlanners(undefined, () => fail
+    ? { status: 503, statusText: 'Service Unavailable', body: { code: 'settings_unavailable', error: 'Invalid TOML' } }
+    : { status: 200, statusText: 'OK', body: { rev: 1, sections: [], fields: [], values: {} } });
+  const defaults = within(await screen.findByRole('region', { name: 'Defaults' }));
+  expect((await defaults.findByRole('alert')).textContent).toContain('Could not load planner defaults.');
+  expect(await screen.findByRole('button', { name: 'Recheck planners' })).toBeTruthy();
+  fail = false;
+  await userEvent.click(defaults.getByRole('button', { name: 'Retry defaults' }));
+  await waitFor(() => expect(screen.queryByRole('region', { name: 'Defaults' })).toBeNull());
 });
 
 it('lists each provider with its status and reason, and Recheck replaces the answer and refreshes the catalogs', async () => {

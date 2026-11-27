@@ -247,7 +247,7 @@ public sealed partial class TrackActor
             var session = RequireSessionCore(sessionId);
             RequireSessionMutationCore(session, principal ?? new InteropPrincipal.Human(), expectedEpoch, destructive: true);
             RequireSessionDispatchAvailableCore(sessionId);
-            if (automatic && (!(CurrentContextUsageRatioCore(session) >= _options.AutoCompactionThreshold) ||
+            if (automatic && (!(CurrentContextUsageRatioCore(session) >= AutoCompactionThreshold) ||
                 HasRecentBackgroundActivityCore(sessionId)))
                 return null;
             if (_scheduler.IsOccupied(session, allowFinishingDispatch: true))

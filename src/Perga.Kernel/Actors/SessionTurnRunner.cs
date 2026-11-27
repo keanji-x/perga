@@ -506,7 +506,7 @@ public sealed partial class TrackActor
                               !actor._taskCoordinator.IsSessionFrozenForDispatchCore(settledSession) &&
                               !actor._taskCoordinator.IsSessionAutoDrainPausedCore(sessionId) &&
                               settledSession.Status == "idle" && outcome.Status == "completed" &&
-                              actor.CurrentContextUsageRatioCore(settledSession) >= actor._options.AutoCompactionThreshold;
+                              actor.CurrentContextUsageRatioCore(settledSession) >= actor.AutoCompactionThreshold;
             return (completedTurn, autoCompact);
         }
 

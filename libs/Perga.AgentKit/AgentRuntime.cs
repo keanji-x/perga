@@ -66,6 +66,12 @@ public sealed class AgentRuntime : IAgentRuntime
     public Task<IReadOnlyList<ProviderStatus>> ProbeProvidersAsync(CancellationToken ct) =>
         ProbeProvidersAsync(forceRefresh: false, ct);
 
+    public static IReadOnlyList<string> GetRegisteredProviderIds(IEnumerable<string> configuredProviders) =>
+        CanonicalProviders.Concat(configuredProviders.Select(NormalizeProviderName))
+            .Where(provider => !string.IsNullOrWhiteSpace(provider))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
     public async Task<IReadOnlyList<ProviderStatus>> ProbeProvidersAsync(bool forceRefresh, CancellationToken ct = default)
     {
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
@@ -89,19 +95,7 @@ public sealed class AgentRuntime : IAgentRuntime
                 return _cachedProbeStatuses;
             }
 
-            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            var providers = new List<string>(CanonicalProviders.Length + _options.ProviderOverrides.Count);
-            foreach (var canonical in CanonicalProviders)
-            {
-                if (seen.Add(canonical)) providers.Add(canonical);
-            }
-            foreach (var custom in _options.ProviderOverrides.Keys)
-            {
-                var normalized = NormalizeProviderName(custom);
-                if (!string.IsNullOrWhiteSpace(normalized) && seen.Add(normalized))
-                    providers.Add(normalized);
-            }
-
+            var providers = GetRegisteredProviderIds(_options.ProviderOverrides.Keys);
             var results = await Task.WhenAll(providers.Select(p => ProbeSingleProviderAsync(p, ct))).ConfigureAwait(false);
             if (ttl > TimeSpan.Zero)
             {

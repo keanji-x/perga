@@ -23,6 +23,7 @@ transcriptPrefix,
 export const queryKeys = Object.freeze({
   executionTargets: () => ['execution-targets'] as const,
   systemInfo: () => ['system-info'] as const,
+  appSettings: () => ['app-settings'] as const,
   managedProviders: (targetId?: string) => targetId !== undefined && targetId !== '' && targetId !== 'local'
     ? ['managed-providers', targetId] as const : ['managed-providers'] as const,
   trackWorkspaceOptions: (areaId: string, targetId: string, cwd: string) => ['track-workspace-options', areaId, targetId, cwd] as const,

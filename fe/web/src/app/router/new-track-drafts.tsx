@@ -29,8 +29,8 @@ export type NewTrackSession = Readonly<{
   form: NewTrackFormState | null;
   attachments?: readonly ConversationAttachment[];
   attachmentError?: string | null;
-  /** The Planner's backend; `codex` until the reader picks a model from another provider's group. */
-  provider: AgentProvider;
+  /** The selected Planner backend. A fresh draft with no selection resolves its default against target availability. */
+  provider: AgentProvider | null;
   permissionMode: string | null;
   /** A selection from `provider`'s catalog; set together with `provider` by one pick. */
   model: ModelSelection;
@@ -114,7 +114,7 @@ function createDraftStore(submittedStorage?: () => Storage, userId?: string) {
           workspaceOptionId: request.body.workspaceOptionId ?? undefined,
           executionTargetId: request.body.executionTargetId ?? undefined,
         },
-        provider: request?.body.provider ?? 'codex',
+        provider: request?.body.provider ?? null,
         permissionMode: request?.body.permissionMode ?? null,
         model: request === null ? FOLLOW_INSTALLATION_DEFAULT : {
           model: request.body.model ?? null, reasoning_effort: request.body.reasoningEffort ?? null,
@@ -127,10 +127,10 @@ function createDraftStore(submittedStorage?: () => Storage, userId?: string) {
     update: (areaId: string, patch: Partial<NewTrackSession>, { persistConfirmation = true } = {}) => {
       const current = drafts.get(areaId);
       if (current === undefined) return;
-      const nextProvider = patch.provider ?? current.provider;
-      const nextPermissionMode = patch.provider !== undefined
-        ? permissionModeAfterProviderChange(current.provider, nextProvider, patch.permissionMode ?? current.permissionMode)
-        : (patch.permissionMode !== undefined ? patch.permissionMode : current.permissionMode);
+      const nextPermissionMode = patch.permissionMode !== undefined ? patch.permissionMode
+        : patch.provider != null && current.provider !== null
+          ? permissionModeAfterProviderChange(current.provider, patch.provider, current.permissionMode)
+          : current.permissionMode;
       const request = patch.request === undefined ? current.request : patch.request;
       const createdTrackId = request === null ? null
         : patch.createdTrackId === undefined ? (request === current.request ? current.createdTrackId : null) : patch.createdTrackId;

@@ -4,6 +4,7 @@ using Perga.Host.Configuration;
 using Perga.Host.Terminals;
 using Perga.Kernel;
 using Perga.Kernel.Ports;
+using Perga.Kernel.Settings;
 using Perga.Storage.Sqlite;
 using Perga.TermClient;
 
@@ -17,6 +18,7 @@ public sealed class PergaBootHostedService : IHostedService
     private readonly PergaHostOptions _options;
     private readonly ILogger<PergaBootHostedService> _logger;
     private readonly IExecutionTargetManager? _targetManager;
+    private readonly AppSettingsService? _appSettings;
 
     public PergaBootHostedService(
         ITrackStore store,
@@ -24,7 +26,8 @@ public sealed class PergaBootHostedService : IHostedService
         ITerminalBridgeClient terminalClient,
         PergaHostOptions options,
         ILogger<PergaBootHostedService> logger,
-        IExecutionTargetManager? targetManager = null)
+        IExecutionTargetManager? targetManager = null,
+        AppSettingsService? appSettings = null)
     {
         _store = store;
         _kernel = kernel;
@@ -32,12 +35,16 @@ public sealed class PergaBootHostedService : IHostedService
         _options = options;
         _logger = logger;
         _targetManager = targetManager;
+        _appSettings = appSettings;
     }
 
     public BootReconcileResult? LastReconcileResult { get; private set; }
 
     public async Task StartAsync(CancellationToken cancellationToken)
     {
+        if (_appSettings is not null)
+            await _appSettings.ReloadAsync(cancellationToken).ConfigureAwait(false);
+
         if (_store is SqliteTrackStore sqliteStore)
         {
             await sqliteStore.InitializeAsync(cancellationToken).ConfigureAwait(false);

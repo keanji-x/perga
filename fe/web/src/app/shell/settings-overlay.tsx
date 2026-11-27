@@ -22,6 +22,7 @@ import { Dialog } from '../../ui/dialog/public.tsx';
 import { MobileHeader } from '../../ui/mobile-header/public.tsx';
 import { useCompactViewport } from '../../ui/viewport/public.ts';
 import { agentProvidersQueryOptions,useAgentProvidersRecheck } from '../providers/agent-providers.ts';
+import { appSettingsQueryOptions, usePatchAppSettings } from '../providers/app-settings.ts';
 import { managedProvidersQueryOptions } from '../providers/managed-providers.ts';
 import { useCurrentUser } from '../auth/current-user.tsx';
 import { setupOwnerWithTransport } from '../auth/login.ts';
@@ -142,6 +143,8 @@ function AccountPaneHost({ transport, onComplete }: Readonly<{
 }
 
 function PergaPlannersPaneHost({ transport, unauthorized }: SettingsOverlayProps) {
+  const settings = useQuery(appSettingsQueryOptions(transport, unauthorized));
+  const patchSettings = usePatchAppSettings(transport, unauthorized);
   const providers = useQuery(managedProvidersQueryOptions(transport, unauthorized));
   const availability = useQuery(agentProvidersQueryOptions(transport, unauthorized));
   const missing = availability.data?.find((entry) => providers.data !== undefined
@@ -155,6 +158,17 @@ function PergaPlannersPaneHost({ transport, unauthorized }: SettingsOverlayProps
   const recheck = useAgentProvidersRecheck(transport, unauthorized);
   return (
     <PlannersPane
+      settings={{
+        snapshot: settings.data,
+        loadError: settings.isError ? readErrorText(settings.error, 'Could not load planner defaults.') : null,
+        saveError: patchSettings.error,
+        saving: patchSettings.saving,
+        onRetry: () => { void settings.refetch(); },
+        onChange: (key, value) => {
+          if (settings.data !== undefined && !settings.isError)
+            patchSettings.save({ expectedRev: settings.data.rev, key, value });
+        },
+      }}
       authenticationRecovery={null}
       providers={joined}
       loadError={loadError !== null ? readErrorText(loadError, 'Planners are unavailable.')

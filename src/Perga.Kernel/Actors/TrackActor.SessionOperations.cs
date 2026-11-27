@@ -564,7 +564,7 @@ public sealed partial class TrackActor
             return lead.Provider;
         }
 
-        return _options.DefaultProvider;
+        return _appSettings?.Current.DefaultProvider ?? _options.DefaultProvider;
     }
 
     private string? ResolveTaskWorkerModelCore(string provider) =>

@@ -8,6 +8,7 @@ using Perga.Contracts;
 using Perga.Kernel.Events;
 using Perga.Kernel.Tasks;
 using Perga.Kernel.Ports;
+using Perga.Kernel.Settings;
 using Perga.Kernel.Templates;
 using Perga.PolicyVm;
 using Perga.ReportDoc;
@@ -1788,7 +1789,8 @@ internal sealed partial class KernelTestContext : IAsyncDisposable
         TimeProvider? timeProvider = null,
         IGitHubForgeService? gitHubForgeService = null,
         IMcpSessionBridge? mcpSessionBridge = null,
-        IReportDocEngine? reportEngine = null)
+        IReportDocEngine? reportEngine = null,
+        AppSettingsService? appSettings = null)
     {
         DriverRegistry = new FakeWorkspaceDriverRegistry(DirectDriver, CowOverlayDriver);
         DataDir = Path.Combine(Path.GetTempPath(), $"perga-kernel-test-{Guid.NewGuid():N}");
@@ -1814,7 +1816,8 @@ internal sealed partial class KernelTestContext : IAsyncDisposable
             timeProvider: timeProvider ?? Time,
             scheduleCronEvaluator: new TestScheduleCronEvaluator(),
             gitHubForgeService: gitHubForgeService,
-            mcpSessionBridge: mcpSessionBridge);
+            mcpSessionBridge: mcpSessionBridge,
+            appSettings: appSettings);
     }
 
     public async Task<(AreaDto Area, TrackAggregateSnapshot TrackSnap)> CreateDefaultTrackAsync(

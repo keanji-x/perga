@@ -10,6 +10,7 @@ using Perga.Host.Serialization;
 using Perga.Host.WebSockets;
 using Perga.Kernel;
 using Perga.Kernel.Ports;
+using Perga.Kernel.Settings;
 using Perga.TermClient;
 
 namespace Perga.Host.Http;
@@ -24,6 +25,8 @@ public static class ApiV1Endpoints
 {
     private static readonly JsonSerializerOptions SessionJsonOptions = new(PergaJsonDefaults.ApiOptions)
     { UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow };
+    private static readonly JsonSerializerOptions SettingsPatchJsonOptions = new(SessionJsonOptions)
+    { AllowDuplicateProperties = false, PropertyNameCaseInsensitive = false };
 
     private static readonly FileExtensionContentTypeProvider RawMimeProvider = CreateMimeProvider();
 
@@ -31,6 +34,35 @@ public static class ApiV1Endpoints
     {
         var v1 = endpoints.MapGroup("/api/v1").RequireAuthorization(PergaAuthPolicies.UserSession)
             .WithMetadata(new RequestOriginGuard.BrowserWriteApi());
+
+        v1.MapGet("/settings", async (AppSettingsService settings, CancellationToken ct) =>
+            TypedResults.Json((await settings.ReloadAsync(ct).ConfigureAwait(false)).Contract, PergaJsonDefaults.ApiOptions))
+            .Produces<ApiErrorResponse>(503);
+        v1.MapPatch("/settings", async (HttpContext ctx, AppSettingsService settings, CancellationToken ct) =>
+        {
+            PatchSettingsRequestDto? request;
+            try
+            {
+                request = await JsonSerializer.DeserializeAsync<PatchSettingsRequestDto>(
+                    ctx.Request.Body, SettingsPatchJsonOptions, ct).ConfigureAwait(false);
+            }
+            catch (JsonException ex)
+            {
+                var field = ex.Path is { Length: > 2 } path && path.StartsWith("$.", StringComparison.Ordinal)
+                    ? path[2..] : "body";
+                throw new AppSettingValidationException(field, "Expected a revision and an object of setting values.");
+            }
+            if (request is null)
+                throw new AppSettingValidationException("body", "Expected a revision and an object of setting values.");
+
+            var snapshot = await settings.PatchAsync(request, ct).ConfigureAwait(false);
+            return TypedResults.Json(snapshot.Contract, PergaJsonDefaults.ApiOptions);
+        }).WithMetadata(new JsonRequestContract(typeof(PatchSettingsRequestDto), IsOptional: false), new StrictRequest(),
+            new ProducesResponseTypeMetadata(400, typeof(SettingsValidationErrorResponse), ["application/json"])
+            { Description = "Invalid setting or request field" },
+            new ProducesResponseTypeMetadata(409, typeof(ApiErrorResponse), ["application/json"])
+            { Description = "The expected settings revision is stale" })
+            .Produces<ApiErrorResponse>(503);
 
         v1.MapGet("/read-receipts", async (IPergaKernel kernel, CancellationToken ct) =>
             TypedResults.Json(await kernel.GetReadReceiptsAsync(ct).ConfigureAwait(false), PergaJsonDefaults.ApiOptions));

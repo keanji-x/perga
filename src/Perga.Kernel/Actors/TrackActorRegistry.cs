@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using Perga.AgentKit;
 using Perga.Kernel.Events;
 using Perga.Kernel.Ports;
+using Perga.Kernel.Settings;
 using Perga.Kernel.Templates;
 using Perga.PolicyVm;
 using Perga.ReportDoc;
@@ -22,6 +23,7 @@ public sealed class TrackActorRegistry : IAsyncDisposable
     private readonly IMcpSessionBridge _mcpBridge;
     private readonly EventHub _eventHub;
     private readonly KernelOptions _options;
+    private readonly AppSettingsService? _appSettings;
     private readonly TimeProvider _timeProvider;
     private readonly IScheduleCronEvaluator? _scheduleCronEvaluator;
     private readonly IMemoryContextProvider _memoryContext;
@@ -41,7 +43,8 @@ public sealed class TrackActorRegistry : IAsyncDisposable
         KernelOptions options,
         TimeProvider? timeProvider = null,
         IScheduleCronEvaluator? scheduleCronEvaluator = null,
-        IMemoryContextProvider? memoryContext = null)
+        IMemoryContextProvider? memoryContext = null,
+        AppSettingsService? appSettings = null)
     {
         _store = store;
         _flowTrackSpawner = flowTrackSpawner;
@@ -54,10 +57,11 @@ public sealed class TrackActorRegistry : IAsyncDisposable
         _mcpBridge = mcpBridge;
         _eventHub = eventHub;
         _options = options;
+        _appSettings = appSettings;
         _timeProvider = timeProvider ?? TimeProvider.System;
 
         if (_options.ActorEvictionSweepInterval > TimeSpan.Zero &&
-            (_options.ActorIdleTimeout > TimeSpan.Zero || _options.SessionIdleTimeout > TimeSpan.Zero))
+            (_options.ActorIdleTimeout > TimeSpan.Zero || _options.SessionIdleTimeout > TimeSpan.Zero || _appSettings is not null))
         {
             _evictionTimer = _timeProvider.CreateTimer(
                 static state => _ = ((TrackActorRegistry)state!).SweepFireAndForgetAsync(),
@@ -177,7 +181,8 @@ public sealed class TrackActorRegistry : IAsyncDisposable
             _options,
             _timeProvider,
             _scheduleCronEvaluator,
-            _memoryContext);
+            _memoryContext,
+            _appSettings);
     }
 
     public async ValueTask DisposeAsync()

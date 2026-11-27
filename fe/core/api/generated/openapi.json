@@ -3180,6 +3180,23 @@
         "required": [],
         "type": "object"
       },
+      "PatchSettingsRequestDto": {
+        "additionalProperties": false,
+        "properties": {
+          "expectedRev": {
+            "type": "integer"
+          },
+          "patch": {
+            "additionalProperties": {},
+            "type": "object"
+          }
+        },
+        "required": [
+          "expectedRev",
+          "patch"
+        ],
+        "type": "object"
+      },
       "PatchTrackRequest": {
         "properties": {
           "closed": {
@@ -4660,6 +4677,183 @@
           "lastError",
           "reason",
           "recovering"
+        ],
+        "type": "object"
+      },
+      "SettingsFieldDto": {
+        "properties": {
+          "control": {
+            "type": "string"
+          },
+          "defaultValue": {},
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "key": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "max": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "min": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "options": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/SettingsFieldOptionDto"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "section": {
+            "type": "string"
+          },
+          "unit": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "valueType": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "control",
+          "defaultValue",
+          "description",
+          "key",
+          "label",
+          "max",
+          "min",
+          "options",
+          "section",
+          "unit",
+          "valueType"
+        ],
+        "type": "object"
+      },
+      "SettingsFieldOptionDto": {
+        "properties": {
+          "label": {
+            "type": "string"
+          },
+          "value": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "label",
+          "value"
+        ],
+        "type": "object"
+      },
+      "SettingsSectionDto": {
+        "properties": {
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "id": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "description",
+          "id",
+          "label"
+        ],
+        "type": "object"
+      },
+      "SettingsSnapshotDto": {
+        "properties": {
+          "fields": {
+            "items": {
+              "$ref": "#/components/schemas/SettingsFieldDto"
+            },
+            "type": "array"
+          },
+          "rev": {
+            "type": "integer"
+          },
+          "sections": {
+            "items": {
+              "$ref": "#/components/schemas/SettingsSectionDto"
+            },
+            "type": "array"
+          },
+          "values": {
+            "additionalProperties": {},
+            "type": "object"
+          }
+        },
+        "required": [
+          "fields",
+          "rev",
+          "sections",
+          "values"
+        ],
+        "type": "object"
+      },
+      "SettingsValidationErrorResponse": {
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "error": {
+            "type": "string"
+          },
+          "field": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "error",
+          "field"
         ],
         "type": "object"
       },
@@ -7868,6 +8062,108 @@
         "responses": {
           "204": {
             "description": "HTTP 204"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Error mapped by Host exception handling or request guards"
+          }
+        }
+      }
+    },
+    "/api/v1/settings": {
+      "get": {
+        "parameters": [],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SettingsSnapshotDto"
+                }
+              }
+            },
+            "description": "HTTP 200"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "HTTP 503"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Error mapped by Host exception handling or request guards"
+          }
+        }
+      },
+      "patch": {
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PatchSettingsRequestDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SettingsSnapshotDto"
+                }
+              }
+            },
+            "description": "HTTP 200"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SettingsValidationErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid setting or request field"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "The expected settings revision is stale"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "HTTP 503"
           },
           "default": {
             "content": {
