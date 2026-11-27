@@ -13,17 +13,20 @@ it.each([1280, 390])('selects a dynamically registered backend through the keybo
   await page.viewport(width, 950);
   const bootstrap = claudeBootstrap();
   const fixture = renderAssistantProviderFixture({ bootstrap, failFirstCreate: true, mobile: width < 600 });
-  if (width < 600) {
-    await page.getByRole('button', { name: 'Open conversation history', exact: true }).click();
-    await page.getByRole('button', { name: 'New conversation', exact: true }).click();
-  } else await page.getByRole('button', { name: 'New conversation', exact: true }).click();
-  if (width < 600) await page.getByLabelText('Conversation options').click();
-  const model = page.getByRole('button', { name: /^Model:/ });
+  if (width < 600) await page.getByRole('button', { name: /^Switch conversation,/ }).click();
+  await page.getByRole('button', { name: 'New conversation', exact: true }).click();
+  const model = page.getByRole('button', { name: width < 600 ? /^Session model and mode:/ : /^Model:/ });
   await model.click();
-  await expect.element(page.getByRole('radio', { name: 'selected', exact: true })).toBeVisible();
+  const selected = page.getByRole('radio', width < 600 ? { name: /^selected(?:\s|$)/ } : { name: 'selected', exact: true });
+  await expect.element(selected).toBeVisible();
   expect(fixture.requests.some(request => request.path === '/api/v1/bootstrap?provider=claude')).toBe(true);
   expect(fixture.requests.some(request => request.path === '/api/v1/bootstrap?provider=codex')).toBe(false);
-  await page.getByRole('radio', { name: 'selected', exact: true }).click();
+  if (width < 600) {
+    selected.element().focus();
+    await userEvent.keyboard(' ');
+    await expect.element(selected).toHaveAttribute('aria-checked', 'true');
+    await page.getByRole('button', { name: 'Close session model and mode' }).click();
+  } else await selected.click();
   const field = page.getByRole('combobox', { name: 'Message' });
   await field.fill('Frozen first message');
   await userEvent.keyboard('{Enter}');
@@ -34,7 +37,6 @@ it.each([1280, 390])('selects a dynamically registered backend through the keybo
   expect(posts()[0].body).toMatchObject({ provider: 'claude', model: 'selected', prompt: 'Frozen first message' });
   bootstrap.providers[0] = { ...bootstrap.providers[0], available: false, reason: 'Now unavailable' };
   await fixture.client.invalidateQueries({ queryKey: ['managed-providers'] });
-  if (width < 600) await page.getByLabelText('Conversation options').click();
   await page.getByRole('button', { name: /^(Try again|Retry|Retry safely \(same key\))$/, exact: true }).click();
   await expect.poll(() => posts().length).toBe(2);
   expect(posts()[1].body).toEqual(posts()[0].body);
@@ -44,15 +46,18 @@ it.each([1280, 390])('selects a dynamically registered backend through the keybo
   expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(width);
 });
 
-it('creates the declared Codex default despite auth/read and catalog unavailability', async () => {
+it.each([1280, 390])('creates the declared Codex default despite auth/read and catalog unavailability (%ipx)', async width => {
+  await page.viewport(width, 844);
   const bootstrap = fixtureBootstrap();
   bootstrap.providers[0] = { ...bootstrap.providers[0], available: false, reason: 'Account read failed' };
-  const fixture = renderAssistantProviderFixture({ bootstrap });
+  const fixture = renderAssistantProviderFixture({ bootstrap, mobile: width < 600 });
+  if (width < 600) await page.getByRole('button', { name: /^Switch conversation,/ }).click();
   await page.getByRole('button', { name: 'New conversation', exact: true }).click();
-  await page.getByRole('button', { name: /^Model:/ }).click();
+  await page.getByRole('button', { name: width < 600 ? /^Session model and mode:/ : /^Model:/ }).click();
   await expect.element(page.getByText('Account read failed', { exact: false })).toBeVisible();
   expect(page.getByText('A track can still be created', { exact: false }).query()).toBeNull();
   await page.getByRole('radio', { name: /^Default/ }).click();
+  if (width < 600) await page.getByRole('button', { name: 'Close session model and mode' }).click();
   const field = page.getByRole('combobox', { name: 'Message' });
   await field.fill('Follow the backend default'); await userEvent.keyboard('{Enter}');
   await expect.poll(() => fixture.requests.filter(request => request.method === 'POST' && request.path.endsWith('/sessions')).length).toBe(1);

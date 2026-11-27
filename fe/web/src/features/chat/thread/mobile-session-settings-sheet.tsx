@@ -78,7 +78,7 @@ export function MobileSessionSettingsControl<Provider extends string = AgentProv
   const [open, setOpen] = useState(false);
 
   const shown = visibleModelGroups(groups, provider);
-  const activeGroup = shown.find((group) => group.provider === provider) ?? shown[0];
+  const activeGroup = shown.find((group) => group.provider === provider);
   const catalog = activeGroup?.catalog ?? null;
   const models = catalog?.models ?? [];
   const defaultName = defaultNameOf(catalog);
@@ -110,9 +110,16 @@ export function MobileSessionSettingsControl<Provider extends string = AgentProv
     disabled: boolean;
   }>> = [];
 
+  const providerNotices: { provider: Provider; text: string }[] = [];
   for (const group of shown) {
-    if (catalogReason(group).blocked !== null) continue;
+    const { blocked, reason } = catalogReason(group);
     const pName = providerLabel(group, group.provider);
+    const notice = blocked ?? (group.selectionProblem !== undefined ? reason : null);
+    if (notice !== null) {
+      providerNotices.push({ provider: group.provider, text: shown.length > 1 ? `${pName} · ${notice}` : notice });
+    }
+    if (blocked !== null) continue;
+
     const groupModels = group.catalog?.models ?? [];
     const groupDefaultName = defaultNameOf(group.catalog);
     const groupDefaultEntry = groupDefaultName === null
@@ -188,7 +195,7 @@ export function MobileSessionSettingsControl<Provider extends string = AgentProv
       : (permission.options.find((opt) => opt.isDefault) ?? permission.options[0]).id)
     : null;
   const hasPermissionOptions = permission !== undefined && permission.options.length > 0;
-  const hasControls = modelChoices.length > 0 || effortChoices.length > 0 || hasPermissionOptions || activeBlockedReason !== null;
+  const hasControls = modelChoices.length > 0 || effortChoices.length > 0 || hasPermissionOptions || providerNotices.length > 0;
   const triggerDisabled = !hasControls || (modelDisabled && (permission === undefined || permission.disabled === true));
 
   const firstEnabledModelIndex = modelChoices.findIndex((choice) => !(modelDisabled || choice.disabled));
@@ -218,7 +225,8 @@ export function MobileSessionSettingsControl<Provider extends string = AgentProv
       </header>
 
       <div className={styles.body}>
-        {modelChoices.length > 0 ? (
+        {providerNotices.map(({ provider, text }) => <p key={provider} className={styles.note} role="note">{text}</p>)}
+        {modelChoices.length > 0 && (
           <section className={styles.section} aria-label="Provider and model">
             <h3 className={styles.sectionTitle}>Provider &amp; model</h3>
             <ul
@@ -261,8 +269,6 @@ export function MobileSessionSettingsControl<Provider extends string = AgentProv
               ))}
             </ul>
           </section>
-        ) : activeBlockedReason !== null && (
-          <p className={styles.note} role="note">{activeBlockedReason}</p>
         )}
 
         {effortChoices.length > 0 && (

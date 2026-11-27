@@ -418,7 +418,9 @@ it('renders inline composer attachments inside mobile sheet composer and opens p
   renderSessionFixture({ initial: '/track/daily?panel=conversations', attachmentsSupported: true });
   await page.getByRole('button', { name: /Conversation Daily Planner conversation/ }).click();
   await expect.element(composer()).toBeVisible();
-  expect(document.querySelector('summary[aria-label="Conversation options"]')).not.toBeNull();
+  const attach = page.getByRole('button', { name: 'Attach an image' });
+  await expect.element(attach).toBeEnabled();
+  expect(attach.element().closest('[data-nc-mobile-composer-meta]')).not.toBeNull();
 
   const field = composer().element();
   paste(field, screenshot());
@@ -430,4 +432,84 @@ it('renders inline composer attachments inside mobile sheet composer and opens p
   await expect.element(page.getByRole('dialog', { name: 'Image 1' })).toBeVisible();
   await userEvent.keyboard('{Escape}');
   await expect.element(page.getByRole('dialog', { name: 'Image 1' })).not.toBeInTheDocument();
+});
+
+it('sends an image-only message from the mobile Chat Sheet using its native Send button', async () => {
+  await page.viewport(390, 844);
+  const path = `/api/v1/sessions/${session}/messages`;
+  const view = renderSessionFixture({ initial: '/track/daily', attachmentsSupported: true,
+    reply: request => request.method === 'POST' && request.path === path ? sessionReply(sessionInput(session)) : undefined });
+  await page.getByRole('textbox', { name: 'Chat message', exact: true }).click();
+  const sheet = page.getByRole('dialog', { name: 'Daily Planner conversation', exact: true });
+  const sendButton = sheet.getByRole('button', { name: 'Send', exact: true });
+  await expect.element(sendButton).toBeDisabled();
+  await expect.element(sheet.getByRole('button', { name: 'Attach an image' })).toBeEnabled();
+  await composer().fill('Text draft');
+  await expect.element(sendButton).toBeEnabled();
+  const textSendFill = getComputedStyle(sendButton.element()).backgroundColor;
+  await composer().fill('');
+  paste(composer().element(), screenshot());
+  await expect.poll(() => previews().length).toBe(1);
+  expect(sheet.element().querySelector('[data-nc-send-attachment]')).toBeNull();
+  await expect.element(sendButton).toBeEnabled();
+  expect(getComputedStyle(sendButton.element()).backgroundColor).toBe(textSendFill);
+  await sendButton.click();
+  const posts = () => view.requests.filter(request => request.method === 'POST' && request.path === path);
+  await expect.poll(() => posts().length).toBe(1);
+  const body = form(posts()[0]);
+  expect(payload(body)).toMatchObject({ content: '' });
+  expect((body.get('attachments') as File).name).toBe('screenshot.png');
+});
+
+it.each(['Queue message', 'Send image'] as const)('queues from the icon-only %s button beside Stop at 320px', async label => {
+  const width = 320;
+  await page.viewport(width, 640);
+  const path = `/api/v1/sessions/${session}/messages`;
+  const view = renderSessionFixture({ initial: '/track/daily', attachmentsSupported: true,
+    reply: request => request.method === 'POST' && request.path === path
+      ? sessionReply({ ...sessionInput(session), delivery: 'queued', turnId: null }) : undefined });
+  view.activeTurns.set(session, sessionTurn(session));
+  await page.getByRole('textbox', { name: 'Chat message', exact: true }).click();
+  await expect.element(page.getByRole('button', { name: 'Attach an image' })).toBeEnabled();
+  const imageOnly = label === 'Send image';
+  const text = imageOnly ? '' : 'Queue text';
+  if (imageOnly) paste(composer().element(), screenshot());
+  else await composer().fill(text);
+
+  const composerGroup = page.getByRole('group', { name: 'Message composer', exact: true });
+  const queue = composerGroup.getByRole('button', { name: label, exact: true });
+  const button = await queue.findElement();
+  const stop = await composerGroup.getByRole('button', { name: 'Stop', exact: true }).findElement();
+  expect(button.textContent?.trim()).toBe('');
+  expect(button.querySelector('svg[aria-hidden="true"]')).not.toBeNull();
+  expect(button).toHaveAttribute('title', label);
+  expect(button).toHaveAttribute('data-nc-queue-send');
+  expect(button.getAttribute('data-nc-send-attachment')).toBe(imageOnly ? '' : null);
+
+  const queueBounds = button.getBoundingClientRect();
+  const stopBounds = stop.getBoundingClientRect();
+  const composerBounds = composerGroup.element().getBoundingClientRect();
+  expect(queueBounds.width).toBeCloseTo(queueBounds.height, 0);
+  expect(queueBounds.width).toBeCloseTo(stopBounds.width, 0);
+  expect(Number.parseFloat(getComputedStyle(button).borderTopLeftRadius)).toBeGreaterThanOrEqual(queueBounds.width / 2);
+  expect(queueBounds.left).toBeGreaterThanOrEqual(composer().element().getBoundingClientRect().right);
+  expect(queueBounds.right).toBeLessThanOrEqual(stopBounds.left);
+  for (const bounds of [queueBounds, stopBounds]) {
+    expect(bounds.left).toBeGreaterThanOrEqual(Math.max(0, composerBounds.left));
+    expect(bounds.right).toBeLessThanOrEqual(Math.min(width, composerBounds.right));
+    expect(bounds.top).toBeGreaterThanOrEqual(composerBounds.top);
+    expect(bounds.bottom).toBeLessThanOrEqual(composerBounds.bottom);
+  }
+
+  await queue.click();
+  const posts = () => view.requests.filter(request => request.method === 'POST' && request.path === path);
+  await expect.poll(() => posts().length).toBe(1);
+  const expectedPayload = { content: text, mode: 'queue' };
+  if (imageOnly) {
+    const body = form(posts()[0]);
+    expect(payload(body)).toMatchObject(expectedPayload);
+    expect((body.get('attachments') as File).name).toBe('screenshot.png');
+  } else {
+    expect(posts()[0].body).toMatchObject(expectedPayload);
+  }
 });
