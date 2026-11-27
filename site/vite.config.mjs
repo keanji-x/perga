@@ -52,7 +52,7 @@ function renderInlineMarkdown(text) {
   return html;
 }
 
-function renderVisionMarkdown(markdown) {
+function renderVisionMarkdown(markdown, assetPrefix = './') {
   const lines = markdown.split(/\r?\n/);
   const blocks = [];
   let i = 0;
@@ -65,6 +65,17 @@ function renderVisionMarkdown(markdown) {
     }
     if (line === '---') {
       blocks.push('<hr />');
+      i++;
+      continue;
+    }
+    const imageMatch = line.match(/^!\[([^\]]*)\]\(([^)]+)\)$/);
+    if (imageMatch) {
+      const alt = escapeHtml(imageMatch[1]);
+      let src = imageMatch[2].trim();
+      if (src.startsWith('../assets/')) src = `${assetPrefix}assets/${src.slice('../assets/'.length)}`;
+      else if (src.startsWith('docs/assets/')) src = `${assetPrefix}assets/${src.slice('docs/assets/'.length)}`;
+      const caption = alt ? `<figcaption>${alt}</figcaption>` : '';
+      blocks.push(`<figure class="editorial-figure"><img src="${escapeHtml(src)}" alt="${alt}" loading="lazy" />${caption}</figure>`);
       i++;
       continue;
     }
@@ -113,7 +124,7 @@ function renderVisionMarkdown(markdown) {
       continue;
     }
     const para = [];
-    while (i < lines.length && lines[i].trim() && !/^(#{1,6}\s|> |- |\d+\.\s|---$)/.test(lines[i].trim())) {
+    while (i < lines.length && lines[i].trim() && !/^(#{1,6}\s|> |- |\d+\.\s|---$|!\[[^\]]*\]\([^)]+\)$)/.test(lines[i].trim())) {
       para.push(lines[i].trim());
       i++;
     }
@@ -130,7 +141,7 @@ function buildEditorialPageHtml(markdown, markSvg, {
   assetPrefix = './',
   navLinks = [],
 }) {
-  const bodyHtml = renderVisionMarkdown(markdown);
+  const bodyHtml = renderVisionMarkdown(markdown, assetPrefix);
   const inlineMark = markSvg.replace('<svg ', '<svg class="mark" aria-hidden="true" ');
   const navHtml = navLinks
     .map(({ href, label, external }) =>
@@ -268,6 +279,23 @@ function buildEditorialPageHtml(markdown, markSvg, {
       border-radius: 3px;
     }
     hr { border: none; border-top: 1px solid var(--hairline); margin: 36px 0 20px; }
+    .editorial-figure {
+      margin: 26px 0 28px;
+    }
+    .editorial-figure img {
+      display: block;
+      width: 100%;
+      height: auto;
+      border-radius: 6px;
+      border: 1px solid var(--hairline);
+    }
+    .editorial-figure figcaption {
+      margin-top: 10px;
+      font-size: 0.84rem;
+      line-height: 1.5;
+      color: var(--text-3);
+      text-align: center;
+    }
     @media (max-width: 680px) {
       .frame { border-left: none; border-right: none; }
       header, article { padding-left: 20px; padding-right: 20px; }
@@ -295,6 +323,7 @@ function copyCanonicalAssetsAndBuildEditorialPages() {
   const assetCopies = [
     ['templates/equity-research/widgets/range-axis.html', 'widgets/range-axis.html'],
     ['src/Perga.Kernel/Templates/Memory/widgets/entries.html', 'widgets/entries.html'],
+    ['docs/assets/hero.png', 'assets/hero.png'],
     ['fe/web/src/ui/brand/perga-app.svg', 'favicon.svg'],
     ['fe/web/public/icons/perga-192.png', 'icon-192.png'],
   ];
