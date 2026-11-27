@@ -90,7 +90,7 @@ export function App() {
             <a href="#reports">Reports</a>
             <a href="#memory">Memory</a>
             <a href="./vision.html">Vision</a>
-            <a href="./essays/rust-to-csharp.html">Essays</a>
+            <a href="./essays/">Essays</a>
             <a className="site-nav-repo" href="https://github.com/keanji-x/perga" target="_blank" rel="noreferrer">GitHub ↗</a>
             <a className="site-nav-repo" href="https://discord.gg/WfBzhQenQb" target="_blank" rel="noreferrer">Discord ↗</a>
           </nav>
@@ -330,7 +330,7 @@ export function App() {
             <a href="https://github.com/keanji-x/perga" target="_blank" rel="noreferrer">GitHub</a>
             <a href="https://discord.gg/WfBzhQenQb" target="_blank" rel="noreferrer">Discord</a>
             <a href="./vision.html">Vision</a>
-            <a href="./essays/rust-to-csharp.html">Essays</a>
+            <a href="./essays/">Essays</a>
             <a href="https://github.com/keanji-x/perga/blob/main/DESIGN.md" target="_blank" rel="noreferrer">Architecture</a>
             <a href="./install.sh">install.sh</a>
           </div>
