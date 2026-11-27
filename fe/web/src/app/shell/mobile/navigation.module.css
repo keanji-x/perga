@@ -35,7 +35,6 @@
 
   .header,
   .headerLevelTwo {
-    --mobile-header-inset: max(var(--space-1), calc(var(--space-4) - (var(--rail-w-collapsed) - var(--glyph-lg)) / 2));
     position: sticky;
     inset-block-start: 0;
     z-index: var(--z-sticky);

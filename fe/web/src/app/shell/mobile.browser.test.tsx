@@ -214,6 +214,23 @@ describe('Track mobile presentation', () => {
     }
   });
 
+  it('applies the landscape safe area once to the Tasks empty state', async () => {
+    const leftInset = 47;
+    await page.viewport(844, 390);
+    try {
+      await commands.setHorizontalSafeArea(leftInset, 23);
+      setup('/track/w2?panel=tasks');
+      const empty = await page.getByRole('heading', { name: 'No tasks yet', exact: true }).findElement();
+      const { left } = empty.getBoundingClientRect();
+      const gutter = Number.parseFloat(getComputedStyle(empty).getPropertyValue('--space-4'));
+      expect(left).toBeGreaterThanOrEqual(leftInset);
+      expect(left).toBeLessThan(2 * leftInset);
+      expect(left).toBeCloseTo(leftInset + 2 * gutter, 0);
+    } finally {
+      await commands.setHorizontalSafeArea(0, 0);
+    }
+  });
+
   it('keeps mobile header actions separate from the desktop Track menu across viewport changes', async () => {
     await page.viewport(390, 844);
     const router = setup('/track/w1');

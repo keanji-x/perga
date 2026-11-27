@@ -680,7 +680,7 @@
       line-height: 1;
       position: fixed;
       inset-inline-end: calc(env(safe-area-inset-right) + var(--space-5));
-      inset-block-end: calc(env(safe-area-inset-bottom) + 20px);
+      inset-block-end: calc(env(safe-area-inset-bottom) + var(--space-5));
       z-index: var(--z-sticky);
       display: inline-flex;
       min-block-size: calc(var(--rail-w-collapsed) + var(--space-3));
