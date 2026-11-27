@@ -15,12 +15,18 @@ using Perga.Host.Serialization;
 using Perga.Host.SystemUpgrade;
 using Perga.Kernel.Ports;
 
-if (args is ["auth", ..])
-    return await AuthCliCommand.RunAsync(args, Console.In, Console.Out, Console.Error);
-if (HostCliCommand.Handles(args))
-    return await HostCliCommand.RunAsync(args, HostCliEnvironment.FromProcess());
-if (args is ["start", .. var hostArgs])
-    args = hostArgs;
+var daemon = HostDaemonRuntime.FromProcess();
+var foreground = daemon is null ? HostDaemonCommand.ForegroundOptions(args) : null;
+if (daemon is null && foreground is null)
+{
+    if (args is ["auth", ..])
+        return await AuthCliCommand.RunAsync(args, Console.In, Console.Out, Console.Error);
+    if (HostCliCommand.Handles(args))
+        return HostDaemonCommand.Handles(args[0])
+            ? await HostDaemonCommand.RunWithConsoleCancellationAsync(args, HostCliEnvironment.FromProcess())
+            : await HostCliCommand.RunAsync(args, HostCliEnvironment.FromProcess());
+}
+args = foreground?.HostArgs ?? args;
 
 string? exportPath = null;
 if (args.Contains("--export-openapi", StringComparer.Ordinal))
@@ -29,7 +35,11 @@ if (args.Contains("--export-openapi", StringComparer.Ordinal))
         throw new ArgumentException("Usage: Perga.Host --export-openapi <path>");
     exportPath = Path.GetFullPath(destination);
 }
-var builder = PergaHttpEndpoints.CreateBuilder(exportPath is null ? args : []);
+var managed = daemon is not null || foreground is not null;
+var builder = PergaHttpEndpoints.CreateBuilder(exportPath is not null ? [] :
+    managed ? HostDaemonOptions.ConfigurationArguments(args) : args);
+if (managed)
+    HostDaemonRuntime.Configure(builder, foreground);
 
 // The framework startup filter uses DI options. Perga applies explicit options after capturing the socket.
 builder.Services.PostConfigure<ForwardedHeadersOptions>(framework => framework.ForwardedHeaders = ForwardedHeaders.None);
@@ -130,7 +140,7 @@ try
         storagePaths.DbPath,
         storagePaths.IsEphemeral,
         isTestHost,
-        isInteractive: HostStartupOnboarding.IsForegroundInteractiveTerminal(),
+        isInteractive: daemon is null && HostStartupOnboarding.IsForegroundInteractiveTerminal(),
         Console.In,
         Console.Out,
         Console.Error);
@@ -140,7 +150,28 @@ try
         return onboardingCode;
     }
 
-    app.Run();
+    if (daemon is not null)
+    {
+        try
+        {
+            await app.StartAsync();
+            // StartAsync completes after ApplicationStarted and the server publishes its bound addresses.
+            daemon.Publish(app, storagePaths, args);
+            await app.WaitForShutdownAsync();
+        }
+        finally
+        {
+            try { await app.DisposeAsync(); }
+            finally { daemon.RemoveState(); }
+        }
+    }
+    else
+    {
+        using var ready = foreground is not null
+            ? app.Lifetime.ApplicationStarted.Register(() => HostDaemonRuntime.PrintForegroundBanner(app, foreground))
+            : default;
+        app.Run();
+    }
 }
 catch (Exception ex) when (!isTestHost && HostStartupOnboarding.FormatStartupError(ex) is { } message)
 {

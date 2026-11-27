@@ -139,8 +139,8 @@ public sealed class InstallAndReleaseScriptsTests : IDisposable
         Assert.Equal(2, steps.Length);
         Assert.Equal($"""
               1. Check Node.js 24+ and your provider CLIs: {launcher} doctor
-              2. Start Perga (prompts to create your owner account on first run): {launcher}
-              3. Open http://127.0.0.1:4041/ in your browser.
+              2. Start Perga in the background: {launcher}
+              3. If your browser does not open, visit the address shown by Perga.
             """ + "\n", steps[1]);
         Assert.Equal("doctor", Values(await RunAsync("sh", ["-c", $"{launcher} doctor"], env, Root))["args"]);
     }
@@ -188,10 +188,18 @@ public sealed class InstallAndReleaseScriptsTests : IDisposable
         Assert.Equal(Path.Combine(InstallDir, "web"), version["PERGA_STATIC_WEB_DIR"]);
 
         var host = Values(await RunLauncherAsync([]));
-        Assert.Equal($"--contentRoot {InstallDir} --urls http://127.0.0.1:4041", host["args"]);
+        Assert.Equal($"start --contentRoot {InstallDir}", host["args"]);
         Assert.Equal(InstallDir, host["pwd"]);
         var start = Values(await RunLauncherAsync(["start", "--urls=http://127.0.0.1:9", "--flag"]));
-        Assert.Equal($"--contentRoot {InstallDir} --urls=http://127.0.0.1:9 --flag", start["args"]);
+        Assert.Equal($"start --contentRoot {InstallDir} --urls=http://127.0.0.1:9 --flag", start["args"]);
+        var serve = Values(await RunLauncherAsync(["serve", "--require-auth"]));
+        Assert.Equal($"serve --contentRoot {InstallDir} --require-auth", serve["args"]);
+        foreach (var command in new[] { "status", "stop", "restart", "logs", "open" })
+        {
+            var routed = Values(await RunLauncherAsync([command]));
+            Assert.Equal(command, routed["args"]);
+            Assert.Equal(Root, routed["pwd"]);
+        }
 
         // A relative data override resolves from the caller; uninstall always runs the pinned instance.
         var other = Path.Combine(Root, "other");

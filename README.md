@@ -53,15 +53,27 @@ curl -fsSL https://keanji-x.github.io/perga/install.sh | bash
 
 The installer verifies the archive's SHA-256 checksum, installs to `~/.local/share/perga-app`, and writes the `perga` launcher to `~/.local/bin`. Set `PERGA_VERSION=v0.1.0` to pin a release, or `PERGA_INSTALL_DIR`, `PERGA_BIN_DIR`, `PERGA_DATA_DIR`, and `PERGA_DB_PATH` to choose locations.
 
-On first start in a terminal, Perga prompts you to create your local owner account.
-
 ```sh
 perga
 ```
 
-For headless setups, create the account first with `perga auth init-owner --username owner --allow-migrate`. Add `--password-stdin` to supply the password through standard input.
+Perga starts in the background and opens your browser when ready on macOS and Linux desktops. If the browser doesn't open, use the address printed by `perga` (default `http://127.0.0.1:4041/`).
 
-Open [http://127.0.0.1:4041/](http://127.0.0.1:4041/) and sign in. The web app is installable as a PWA, and the Host starts the bundled native terminal bridge automatically when needed.
+To create your first owner account from the terminal, run `perga --foreground` on the first start for an interactive prompt, or use `perga auth init-owner --username owner --allow-migrate`. Add `--password-stdin` for a script or a headless setup.
+
+The web app is installable as a PWA, and the Host starts the bundled native terminal bridge automatically when needed.
+
+### Background commands
+
+```sh
+perga status             # show the running instance and its URL, PID, and paths
+perga logs -f            # follow the background log
+perga stop               # stop the background instance
+perga restart            # restart with the same Host arguments
+perga open               # open the running instance in your browser
+perga --foreground      # run in this terminal (also perga serve)
+perga --no-open         # start without opening a browser
+```
 
 ### Upgrade, diagnostics, and uninstall
 
@@ -73,7 +85,7 @@ perga upgrade            # latest release; or `perga upgrade v0.1.0`
 perga uninstall          # remove the package and launcher; data in PERGA_DATA_DIR is kept
 ```
 
-Upgrades keep the data directory and database path recorded by the launcher.
+Upgrades keep the data directory and database path recorded by the launcher and restart a running background instance with its saved Host arguments.
 
 ### Manual archive install
 

@@ -213,19 +213,16 @@ export PERGA_TEMPLATES_DIR="$(abs "${PERGA_TEMPLATES_DIR:-$INSTALL_DIR/templates
 if [[ -n "$db_path" ]]; then export PERGA_DB_PATH="$(abs "$db_path")"; fi
 case "${1:-}" in
   uninstall) exec "$DEFAULT_INSTALL_DIR/Perga.Host" "$@" ;;
-  auth|version|-v|--version|doctor|upgrade|help|-h|--help) exec "$INSTALL_DIR/Perga.Host" "$@" ;;
-  start) shift ;;
+  auth|version|-v|--version|doctor|upgrade|status|stop|restart|logs|open|help|-h|--help) exec "$INSTALL_DIR/Perga.Host" "$@" ;;
+  start|serve) ;;
+  *) set -- start "$@" ;;
 esac
 host_args=()
 if ! has_arg --contentRoot "$@" && [[ -z "${ASPNETCORE_CONTENTROOT:-}${DOTNET_CONTENTROOT:-}" ]]; then
   host_args+=(--contentRoot "$INSTALL_DIR")
 fi
-if ! has_arg --urls "$@" && [[ -z "${ASPNETCORE_URLS:-}${Kestrel__Endpoints__Http__Url:-}" ]]; then
-  host_args+=(--urls "${PERGA_URLS:-http://127.0.0.1:4041}")
-fi
-# Anchor the working directory so a caller's appsettings.json or templates/ cannot hijack startup.
 cd "$INSTALL_DIR"
-exec "$INSTALL_DIR/Perga.Host" ${host_args[@]+"${host_args[@]}"} "$@"
+exec "$INSTALL_DIR/Perga.Host" "$1" ${host_args[@]+"${host_args[@]}"} "${@:2}"
 LAUNCHER_EOF
 } > "$launcher_tmp"
 chmod 755 "$launcher_tmp"
@@ -272,8 +269,8 @@ echo ""
 if [[ ! -f "${DB_PATH:-${DATA_DIR}/perga.db}" ]]; then
   echo "Next steps (first run):"
   echo "  1. Check Node.js 24+ and your provider CLIs: ${cmd} doctor"
-  echo "  2. Start Perga (prompts to create your owner account on first run): ${cmd}"
-  echo "  3. Open http://127.0.0.1:4041/ in your browser."
+  echo "  2. Start Perga in the background: ${cmd}"
+  echo "  3. If your browser does not open, visit the address shown by Perga."
 else
   echo "Existing data preserved at ${DATA_DIR}. Start Perga with: ${cmd}"
   echo "Check Node.js 24+ and your provider CLIs with: ${cmd} doctor"
