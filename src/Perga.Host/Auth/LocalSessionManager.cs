@@ -21,7 +21,6 @@ internal sealed class LocalSessionManager(
     private volatile byte[]? _launchDigest;
 
     public bool IsActive => _launchDigest is not null;
-    public bool IsOwnerSetupPending => _ownerSetup.CurrentCount == 0;
 
     public Task BeginOwnerSetupAsync(CancellationToken ct) => _ownerSetup.WaitAsync(ct);
     public void EndOwnerSetup() => _ownerSetup.Release();

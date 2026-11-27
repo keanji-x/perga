@@ -52,8 +52,6 @@ internal static partial class AuthEndpoints
         if (!options.RequireAuth)
         {
             var local = await GetLocalSessionAsync(context);
-            if (local is null && await store.GetOwnerAsync(ct) is not null)
-                return SetupStatus(new(AuthSetupMode.Configured, false, false));
             return SetupStatus(local is not null
                 ? new(AuthSetupMode.SetupRequired, true, true)
                 : new(AuthSetupMode.LocalTokenRequired, true, false, NextStep: LocalLaunchHint));
@@ -90,11 +88,14 @@ internal static partial class AuthEndpoints
 
         var ct = context.RequestAborted;
         var hasValidLocalSession = await GetLocalSessionAsync(context) is not null;
-        if (await store.GetOwnerAsync(ct) is not null)
-            return OwnerAlreadyConfigured();
-        if (!options.RequireAuth && !hasValidLocalSession)
-            return HttpErrorHandling.Forbidden("local_session_required", "Open a local session to set up an account.", LocalLaunchHint);
-        if (!hasValidLocalSession)
+        if (hasValidLocalSession || !options.RequireAuth)
+        {
+            if (await store.GetOwnerAsync(ct) is not null)
+                return OwnerAlreadyConfigured();
+            if (!hasValidLocalSession)
+                return HttpErrorHandling.Forbidden("local_session_required", "Open a local session to set up an account.", LocalLaunchHint);
+        }
+        else
         {
             var state = await store.GetSetupStateAsync(ct);
             if (state == AuthSetupState.Configured)

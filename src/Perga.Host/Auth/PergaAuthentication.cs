@@ -90,8 +90,8 @@ internal sealed class WebSessionAuthenticationHandler(
             return AuthenticateResult.NoResult();
         var nowMs = time.GetUtcNow().ToUnixTimeMilliseconds();
         var session = await store.GetValidOwnerSessionByTokenHashAsync(hash, nowMs, Context.RequestAborted);
-        if (session is null && !hostOptions.RequireAuth && LocalSessionManager.IsDirectLoopback(Context, hostOptions) &&
-            localSessions.TryGetValidSession(hash, nowMs) is not null &&
+        if (session is null && localSessions.IsActive && !hostOptions.RequireAuth &&
+            LocalSessionManager.IsDirectLoopback(Context, hostOptions) &&
             !await localSessions.CheckOwnerAsync(store, sockets, Context.RequestAborted))
             session = localSessions.TryGetValidSession(hash, nowMs);
         if (session is null)

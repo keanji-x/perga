@@ -37,8 +37,7 @@ if (args.Contains("--export-openapi", StringComparer.Ordinal))
     exportPath = Path.GetFullPath(destination);
 }
 var managed = daemon is not null || foreground is not null;
-var builder = PergaHttpEndpoints.CreateBuilder(exportPath is not null ? [] :
-    (managed ? HostDaemonOptions.ConfigurationArguments(args) : args).Select(NormalizeHostArgument).ToArray());
+var builder = PergaHttpEndpoints.CreateBuilder(exportPath is not null ? [] : HostDaemonOptions.ConfigurationArguments(args));
 if (managed)
     HostDaemonRuntime.Configure(builder, foreground);
 // The framework's information-level request logs include query strings.
@@ -193,14 +192,6 @@ catch (Exception ex) when (!isTestHost && HostStartupOnboarding.FormatStartupErr
     return 1;
 }
 return 0;
-
-static string NormalizeHostArgument(string argument) => argument switch
-{
-    "--require-auth" => "--Perga:RequireAuth=true",
-    _ when argument.StartsWith("--require-auth=", StringComparison.Ordinal) =>
-        "--Perga:RequireAuth=" + argument["--require-auth=".Length..],
-    _ => argument
-};
 
 static bool AllowHostingDiagnostics(string? category, LogLevel level) =>
     level >= LogLevel.Warning ||

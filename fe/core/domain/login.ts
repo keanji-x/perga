@@ -52,8 +52,6 @@ export class OwnerAlreadyConfiguredError extends Error {
   constructor() { super('An owner account already exists.'); }
 }
 
-export const LOCAL_TOKEN_FAILURES = SETUP_FAILURES;
-
 export const LOCAL_TOKEN_TEXT: WriteText = Object.freeze({
   refused: 'The local launch token was refused.',
   unknown: 'The local session could not be opened. Try again.',

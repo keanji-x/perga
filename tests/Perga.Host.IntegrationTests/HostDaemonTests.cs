@@ -220,6 +220,8 @@ public sealed class HostDaemonTests : IDisposable
         PrepareInstall();
         Directory.CreateDirectory(Path.GetDirectoryName(TokenPath)!);
         await File.WriteAllTextAsync(TokenPath, Token);
+        if (!OperatingSystem.IsWindows())
+            File.SetUnixFileMode(TokenPath, UnixFileMode.UserRead | UnixFileMode.UserWrite);
 
         var args = new[] { "start", "--urls", DynamicUrl, "--require-auth", "--no-open", "--verbose", "--Perga:AuthAllowInsecureHttp=true" };
         var starts = await Task.WhenAll(RunProcessAsync(args), RunProcessAsync(args));

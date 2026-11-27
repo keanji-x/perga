@@ -57,11 +57,8 @@ internal sealed class LocalAuthStartup(
         using var timer = new PeriodicTimer(TimeSpan.FromMilliseconds(250));
         try
         {
-            while (sessions.IsActive && await timer.WaitForNextTickAsync(stoppingToken))
+            while (await timer.WaitForNextTickAsync(stoppingToken) && sessions.IsActive)
             {
-                if (!sessions.IsActive)
-                    return;
-
                 var stamp = (ReadStamp(db), ReadStamp(wal));
                 if (stamp == previous)
                     continue;

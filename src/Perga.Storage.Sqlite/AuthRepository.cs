@@ -57,15 +57,16 @@ internal sealed class AuthRepository
             """, cancellationToken: ct)).ConfigureAwait(false);
     }
 
-    public Task<AuthSetupState> GetSetupStateAsync(CancellationToken ct) =>
-        _context.Writer.EnqueueAsync<AuthSetupState>(async (conn, tx, token) =>
-        {
-            if (await conn.ExecuteScalarAsync<bool>(new CommandDefinition(OwnerExists, transaction: tx, cancellationToken: token)))
-                return AuthSetupState.Configured;
-            return await conn.ExecuteScalarAsync<bool>(new CommandDefinition(ExistingData, transaction: tx, cancellationToken: token))
-                ? AuthSetupState.ExistingDataRequiresCli
-                : AuthSetupState.NeedsWebSetup;
-        }, ct);
+    public async Task<AuthSetupState> GetSetupStateAsync(CancellationToken ct)
+    {
+        _context.EnsureInitialized();
+        await using var conn = await _context.OpenReadConnectionAsync(ct).ConfigureAwait(false);
+        if (await conn.ExecuteScalarAsync<bool>(new CommandDefinition(OwnerExists, cancellationToken: ct)).ConfigureAwait(false))
+            return AuthSetupState.Configured;
+        return await conn.ExecuteScalarAsync<bool>(new CommandDefinition(ExistingData, cancellationToken: ct)).ConfigureAwait(false)
+            ? AuthSetupState.ExistingDataRequiresCli
+            : AuthSetupState.NeedsWebSetup;
+    }
 
     public Task<InitialOwnerSetupResult> TryCreateInitialOwnerWithSessionAsync(
         NewInitialOwner owner, NewAuthSession session, bool allowExistingBusinessData, CancellationToken ct) =>

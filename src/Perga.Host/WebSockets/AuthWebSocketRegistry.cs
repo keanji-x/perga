@@ -80,19 +80,6 @@ internal sealed class AuthWebSocketRegistry(
                     snapshot = [.. _sessions];
 
                 await Parallel.ForEachAsync(snapshot, stoppingToken, (entry, ct) => new ValueTask(RevalidateAsync(entry, ct)));
-                if (localSessions.IsActive && !snapshot.Any(entry => IsLocalSession(entry.Key)))
-                {
-                    try
-                    {
-                        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
-                        deadline.CancelAfter(Deadline);
-                        await ProbeLocalOwnerAsync(deadline.Token).WaitAsync(deadline.Token);
-                    }
-                    catch (Exception ex) when (!stoppingToken.IsCancellationRequested)
-                    {
-                        logger.LogWarning(ex, "Could not check for an owner account in local mode");
-                    }
-                }
             }
         }
         catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
@@ -123,8 +110,6 @@ internal sealed class AuthWebSocketRegistry(
         {
             if (registration.Probe is { IsCompleted: true })
                 registration.Probe = null;
-            if (IsLocalSession(id) && localSessions.IsOwnerSetupPending)
-                return;
             logger.LogWarning(ex, "Could not revalidate WebSocket session {SessionId}", id);
             valid = ++registration.Errors < 2;
         }
@@ -151,9 +136,6 @@ internal sealed class AuthWebSocketRegistry(
     }, ct);
 
     private static bool IsLocalSession(string id) => id.StartsWith("loc_", StringComparison.Ordinal);
-
-    private Task<bool> ProbeLocalOwnerAsync(CancellationToken ct) =>
-        Task.Run(() => localSessions.CheckOwnerAsync(store, this, ct), ct);
 
     internal sealed class Registration
     {
