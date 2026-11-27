@@ -62,6 +62,30 @@ function startClose(f: ReturnType<typeof fixture>, view: ReturnType<typeof rende
 }
 const drain = async () => { await act(async () => { await Promise.resolve(); await Promise.resolve(); }); };
 
+it('keeps a finished exit until the caller releases presence', async () => {
+  realm(window, document); observers(); const f = fixture();
+  const view = render(<Probe {...f.props} />);
+  const close = startClose(f, view);
+  close.finish(); await drain();
+  expect(f.props.onExited).toHaveBeenCalledOnce();
+  expect(close.playState).toBe('finished');
+  view.rerender(<Probe {...f.props} open={false} present={false} />);
+  expect(close.playState).toBe('idle');
+});
+
+it('suspends a finished exit when its frame is lost in a document without a window', async () => {
+  realm(window, document); observers(); const f = fixture();
+  const view = render(<Probe {...f.props} />);
+  const close = startClose(f, view);
+  close.finish(); await drain();
+  expect(close.playState).toBe('finished');
+  document.implementation.createHTMLDocument().body.append(f.frame);
+  f.set(null);
+  view.rerender(<Probe {...f.props} open={false} />);
+  expect(close.playState).toBe('idle');
+  expect(f.props.onExited).toHaveBeenCalledOnce();
+});
+
 it('rebinds the same paint and frame refs after document adoption and revokes old deliveries', async () => {
   const a = realm(window, document); const b = secondRealm(); const records = observers(); const f = fixture();
   const oldRemove = vi.spyOn(a.document, 'removeEventListener'); const newRemove = vi.spyOn(b.document, 'removeEventListener');

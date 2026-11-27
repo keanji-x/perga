@@ -5,6 +5,7 @@ import { prepareReportDocument } from '../../features/report/document/preparatio
  * here is about how two modules are wired together, which a stub on either side could not prove. */
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { RouterProvider, createMemoryHistory } from '@tanstack/react-router';
+import { Profiler, type ProfilerOnRenderCallback } from 'react';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -42,7 +43,7 @@ const REPORT_CARD = {
 const unauthorized = createUnauthorizedChannel({ enqueue: (task) => task() });
 const ok = (body: unknown): ApiTransportResponse => ({ status: 200, statusText: 'OK', body });
 
-function setup(path: string) {
+function setup(path: string, onCommit: ProfilerOnRenderCallback = () => {}) {
   const transport: ApiTransportPort = {
     send(request) {
       if (request.path.startsWith('/api/v1/today/daily')) return Promise.resolve(ok(null));
@@ -60,9 +61,9 @@ function setup(path: string) {
     transport, unauthorized, client, cards: bootTestCardRuntime(),
   });
   router.update({ history: createMemoryHistory({ initialEntries: [path] }) });
-  render(<QueryClientProvider client={client}><ThemeProvider storage={{ getItem: () => null, setItem: () => undefined }}>
+  render(<Profiler id="mobile shell" onRender={onCommit}><QueryClientProvider client={client}><ThemeProvider storage={{ getItem: () => null, setItem: () => undefined }}>
     <RouterProvider router={router} />
-  </ThemeProvider></QueryClientProvider>);
+  </ThemeProvider></QueryClientProvider></Profiler>);
   return router;
 }
 
@@ -207,6 +208,26 @@ describe('the mobile report panel is the URL (#1191 §2.4)', () => {
 });
 
 describe('workspace header navigation', () => {
+  it('keeps one header in every commit between the report and Focus', async () => {
+    const headerCounts = new Set<number>();
+    const router = setup('/track/w1', () => {
+      headerCounts.add(document.querySelectorAll('[data-nc-mobile-header]').length);
+    });
+    await screen.findByRole('button', { name: /^Switch track,/ });
+    headerCounts.clear();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Back to Focus' }));
+    await screen.findByRole('heading', { name: 'Focus' });
+    expect(href(router)).toBe('/');
+    expect(document.querySelector('[data-nc-workspace-header]')).toBeNull();
+    expect(headerCounts).toEqual(new Set([1]));
+    headerCounts.clear();
+    await act(() => router.navigate({ to: '/track/w1' }));
+    await screen.findByRole('button', { name: /^Switch track,/ });
+    expect(href(router)).toBe('/track/w1');
+    expect(headerCounts).toEqual(new Set([1]));
+  });
+
   it('opens the current track’s area without a dock', async () => {
     setup('/track/w1?from=area');
     await userEvent.click(await screen.findByRole('button', { name: /^Switch track,/ }));

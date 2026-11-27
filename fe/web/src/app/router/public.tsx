@@ -30,7 +30,7 @@ import { DailyTodayRoute } from './daily-planner.tsx';
 import { MemoryRoute } from './memory-route.tsx';
 import { MobileFocusRoute } from './mobile-focus-route.tsx';
 import {
-pathFor,useGo,useRouteParam,
+pathFor,useGo,useMobileFocusHomeLocation,useRouteParam,
 validateTrackSearch,type TrackSearch
 } from './navigation.ts';
 import { NewTrackDraftProvider } from './new-track-drafts.tsx';
@@ -85,11 +85,11 @@ export function createRouteTree(deps: AppRouterDeps): AnyRoute {
     }),
     component: function DailyRoute() {
       const compact = useCompactViewport();
+      const focusHome = useMobileFocusHomeLocation();
       const params = new URLSearchParams(useLocation({ select: (location) => location.searchStr }));
       const day = params.get('day') ?? undefined;
-      const view = params.get('view') === 'today' ? 'today' : undefined;
       const go = useGo();
-      if (compact && day === undefined && view !== 'today') {
+      if (compact && focusHome) {
         return <MobileFocusRoute transport={transport} unauthorized={unauthorized} shareScope={shareScope} />;
       }
       return <DailyTodayRoute transport={transport} unauthorized={unauthorized} selectedDate={day}

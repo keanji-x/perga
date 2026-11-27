@@ -125,12 +125,41 @@ it('natural opening and closing finish once and unmount cancels remaining paint'
   await expect.poll(() => f.node.getAnimations().length).toBe(0);
   expect(matrix(f.node).m41).toBe(0);
   view.rerender(<Probe {...f.props} open={false} />);
-  await latest().finished;
+  const closing = latest();
+  await closing.finished;
   await expect.poll(() => vi.mocked(f.props.onExited).mock.calls.length).toBe(1);
+  expect(matrix(f.node).m41).toBeCloseTo(240);
   view.rerender(<Probe {...f.props} />);
   const reopened = latest().animations[0];
+  expect(closing.animations[0].playState).toBe('idle');
+  reopened.pause(); reopened.currentTime = 0;
+  expect(matrix(f.node).m41).toBeCloseTo(240);
   view.unmount(); expect(f.node.getAnimations()).toHaveLength(0);
   reopened.finish(); await Promise.resolve(); expect(f.props.onExited).toHaveBeenCalledTimes(1);
+});
+
+it.each(['release', 'unmount', 'disable', 'reduce', 'frame loss', 'paint replacement'])('clears a retained exit on %s', async action => {
+  const { node, props } = fixture(); const view = render(<Probe {...props} />);
+  latest().animations[0].finish(); await latest().finished;
+  expect(node.getAnimations()).toHaveLength(0);
+  view.rerender(<Probe {...props} open={false} />);
+  const closing = latest(); closing.animations[0].finish(); await closing.finished;
+  expect(props.onExited).toHaveBeenCalledOnce();
+  expect(matrix(node).m41).toBeCloseTo(240);
+
+  if (action === 'release') view.rerender(<Probe {...props} open={false} present={false} />);
+  if (action === 'unmount') view.unmount();
+  if (action === 'disable') view.rerender(<Probe {...props} open={false} enabled={false} />);
+  if (action === 'reduce') await commands.emulateReducedMotion(true);
+  if (action === 'frame loss') view.rerender(<Probe {...props} open={false} part={{ ...props.part, readFrame: () => null }} />);
+  if (action === 'paint replacement') {
+    const replacement = node.parentElement!.appendChild(node.cloneNode() as HTMLElement);
+    view.rerender(<Probe {...props} open={false} part={{ ...props.part, element: { current: replacement } }} />);
+    expect(replacement.getAnimations()).toHaveLength(0);
+  }
+  await expect.poll(() => node.getAnimations().length).toBe(0);
+  expect(closing.animations[0].playState).toBe('idle');
+  expect(props.onExited).toHaveBeenCalledOnce();
 });
 
 

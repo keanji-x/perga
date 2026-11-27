@@ -33,11 +33,29 @@ it('slides Workspace in and out on the left and pushes its Area in from the righ
   expect(offset(animationFrames(area)[0])).toBeCloseTo(390);
   await area.getAnimations()[0].finished;
 
-  await page.getByRole('button', { name: 'Back to Workspace', exact: true }).click();
+  fireEvent.click(await page.getByRole('button', { name: 'Back to Workspace', exact: true }).findElement());
+  await expectNoExitSnapBack(area, 'right');
   const close = await page.getByRole('button', { name: 'Back to workspace', exact: true }).findElement();
   fireEvent.click(close);
   expect(offset(animationFrames(host).at(-1)!)).toBeCloseTo(-390);
+  await expectNoExitSnapBack(host, 'left');
 });
+
+async function expectNoExitSnapBack(element: Element, side: 'left' | 'right'): Promise<void> {
+  const exit = element.getAnimations()[0];
+  const cancel = exit.cancel.bind(exit);
+  const visibleOnRelease: boolean[] = [];
+  vi.spyOn(exit, 'cancel').mockImplementation(() => {
+    cancel();
+    const { left, right } = element.getBoundingClientRect();
+    const offscreen = side === 'left' ? right <= 0 : left >= window.innerWidth;
+    visibleOnRelease.push(getComputedStyle(element).visibility === 'visible' && !offscreen);
+  });
+  exit.finish();
+  await expect.poll(() => getComputedStyle(element).visibility).toBe('hidden');
+  expect(visibleOnRelease).toEqual([false]);
+  expect(element.getAnimations()).toHaveLength(0);
+}
 
 
 async function openTrackNavigation(): Promise<void> {

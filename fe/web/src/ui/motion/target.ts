@@ -41,19 +41,24 @@ export function useSpringTarget(
 
 /** Shared identity/cancellation owner for multi-channel geometry targets as well as scalar targets. */
 export function createPlaybackTarget<Value>() {
-  let active: Playback<Value> | null = null;
-  const cancel = () => { const previous = active; active = null; previous?.cancel(); };
+  let active: { playback: Playback<Value>; settled: boolean } | null = null;
+  const cancel = () => { const previous = active; active = null; previous?.playback.cancel(); };
   return {
-    sample: () => active?.sample() ?? null,
-    moving: () => active !== null,
-    setOnVisualChange: (callback: (() => void) | undefined) => { active?.setOnVisualChange(callback); },
+    sample: () => active?.playback.sample() ?? null,
+    moving: () => active !== null && !active.settled,
+    setOnVisualChange: (callback: (() => void) | undefined) => { active?.playback.setOnVisualChange(callback); },
     cancel,
-    replace: (playback: Playback<Value>, onSettled: () => void) => {
-      cancel(); active = playback;
+    replace: (playback: Playback<Value>, onSettled: () => void, { retainOnSettle = false } = {}) => {
+      cancel();
+      const current = { playback, settled: false };
+      active = current;
       void playback.finished.then(() => {
-        if (active !== playback) return;
-        cancel(); onSettled();
-      }, () => { if (active === playback) cancel(); });
+        if (active !== current) return;
+        // An exit still owns its final paint until the caller releases presence.
+        if (retainOnSettle) current.settled = true;
+        else cancel();
+        onSettled();
+      }, () => { if (active === current) cancel(); });
     },
   };
 }

@@ -370,6 +370,19 @@ export function useCurrentPath(): string {
   return useRouterState({ select: (state) => state.location.pathname });
 }
 
+export function isMobileFocusHomeLocation({ pathname, searchStr }: Readonly<{ pathname: string; searchStr: string }>): boolean {
+  if (trimPathRight(pathname) !== '/') return false;
+  const params = new URLSearchParams(searchStr);
+  return !params.has('day') && params.get('view') !== 'today';
+}
+
+export function useMobileFocusHomeLocation(): boolean {
+  // The new location can publish before its loader swaps the mounted route.
+  return useRouterState({ select: (state) => isMobileFocusHomeLocation(
+    state.isLoading ? state.resolvedLocation ?? state.location : state.location,
+  ) });
+}
+
 /** Reads a path segment off the URL; `useParams({ strict: false })` widens to `any` outside a typed route context. */
 export function useRouteParam(prefix: '/area/' | '/track/'): string | undefined {
   const path = useCurrentPath();

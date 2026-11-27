@@ -68,7 +68,6 @@ export function useEdgePresence(input: EdgePresenceInput): void {
     const { part, open, present, enabled, edge } = input;
     if (!present) { cancel(); binding.current = null; exited.current = false; return; }
     if (open) exited.current = false;
-    else if (exited.current) return;
     const element = part.element.current;
     const positioner = input.frame.ref.current;
     if (element === null || !element.isConnected || positioner === null || !positioner.isConnected) { suspend(); return; }
@@ -78,14 +77,19 @@ export function useEdgePresence(input: EdgePresenceInput): void {
     validateFrame(frame, element.ownerDocument);
     validateFrame(frame, positioner.ownerDocument);
     const view = element.ownerDocument.defaultView!;
+    const animate = enabled && !view.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const owned = binding.current;
+    if (exited.current) {
+      if (!animate || owned?.snapshot.element !== element || owned.snapshot.frame.document !== frame.document) suspend();
+      return;
+    }
     const vertical = edge === 'bottom';
     const end = (edge === 'inline-end') !== (view.getComputedStyle(element).direction === 'rtl');
     const distance = vertical ? frame.size.height * frame.viewportFromLocal.scaleY
       : frame.size.width * frame.viewportFromLocal.scaleX * (end ? 1 : -1);
     const next: Snapshot = { element, frame, vertical, distance };
     const target = open ? 0 : distance;
-    const owned = binding.current;
-    if (!enabled || view.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    if (!animate) {
       cancel(); binding.current = { snapshot: next, target, sample: { value: target, velocity: 0 }, playback: createPlaybackTarget<number>() };
       if (!open) exit();
       return;
@@ -103,7 +107,7 @@ export function useEdgePresence(input: EdgePresenceInput): void {
     const playback = playTrajectory([element], { ...trajectory, scaleVelocity: (velocity, rate) => velocity * rate }, offset => ({
       transform: vertical ? `translateY(${offset / scale}px)` : `translateX(${offset / scale}px)`,
     }));
-    current.playback.replace(playback, () => { complete(current, target); });
+    current.playback.replace(playback, () => { complete(current, target); }, { retainOnSettle: target !== 0 });
     } catch (error) {
       cancel(); binding.current = null;
       throw error;
