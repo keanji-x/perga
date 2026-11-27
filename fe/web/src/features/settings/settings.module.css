@@ -1,170 +1,259 @@
 @layer features {
-  .durationControl {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-2);
-    max-inline-size: 100%;
-    overflow-wrap: anywhere;
-  }
-  .inlineSettingStatus {
-    color: var(--text-2);
-    font: var(--type-metadata);
-  }
-
-  .inlineSettingStatus:empty {
-    position: absolute;
-  }
-
-  /*
-   * The overlay's two columns: astryx `SideNav` and the pane it selects.
-   *
-   * The nav column's own width comes from `SideNav`; this only lays out the
-   * two columns and ensures the pane scrolls independently so switching groups
-   * never shifts the nav under the pointer.
-   *
-   * The compact block-size floor avoids resizing jitter between short panes
-   * (Appearance, About) and taller forms without leaving excessive dead space.
-   */
   .surface {
+    position: relative;
     display: grid;
+    flex: 1 1 auto;
     grid-template-columns: auto minmax(0, 1fr);
-    gap: var(--space-5);
-    min-block-size: min(21rem, 56dvh);
+    grid-template-rows: minmax(0, 1fr);
+    min-block-size: 0;
   }
 
   .sectionNav {
-    border-inline-end: 1px solid var(--hairline);
+    inline-size: 12.75rem;
+    block-size: 100%;
+    padding: var(--space-5) var(--space-2);
+    background: var(--bg);
+    border-inline-end: 1px solid color-mix(in srgb, var(--hairline) 65%, transparent);
+    --color-neutral: var(--paper);
+    --color-overlay-hover: var(--overlay-hover-faint);
+  }
+
+  .sectionNav [aria-current='page'] {
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--hairline) 65%, transparent);
   }
 
   .pane {
-    display: flex;
     min-block-size: 0;
-    flex-direction: column;
-    overflow: auto;
+    padding: var(--space-6) var(--space-7);
+    overflow-y: auto;
+    background: var(--paper);
   }
 
-  .paneBody {
+  .close {
+    position: absolute;
+    inset-block-start: var(--space-5);
+    inset-inline-end: var(--space-5);
+  }
+
+  .group,
+  .paneHeader,
+  .settingsSection {
     display: flex;
-    flex: 1 1 auto;
-    min-block-size: 0;
     flex-direction: column;
   }
 
-  /*
-   * Capped and start-aligned to `--measure-list` so controls fill the pane
-   * comfortably inside the medium Settings dialog (`--measure-dialog-medium`)
-   * without over-stretching on wider containers.
-   */
-  .form {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-5);
-    max-inline-size: var(--measure-list);
-    min-block-size: 0;
+  .group {
+    gap: var(--space-4);
   }
 
-  /* The rows of a pane. `List` draws the hairlines; this only says how wide the
-     column of rows is, which is what makes every control on the pane end at one
-     trailing edge. */
+  .paneHeader {
+    gap: var(--space-1);
+    padding-inline-end: var(--space-5);
+    padding-block-end: var(--space-4);
+    border-block-end: 1px solid color-mix(in srgb, var(--hairline) 65%, transparent);
+  }
+
+  .categoryHeading,
+  .brandName {
+    font: var(--type-chapter);
+    letter-spacing: var(--type-chapter-tracking);
+    color: var(--text);
+  }
+
   .list {
     inline-size: 100%;
-    max-inline-size: var(--measure-list);
+    max-inline-size: none;
   }
 
-  /*
-   * A placeholder is an **example**, and it has to be legible as one at a
-   * glance: astryx's own placeholder tone is --text-2, one step off body text,
-   * so a suggested proxy read as a set one. This is the app's lightest text
-   * token, which is the only step in the scale wide enough to say "not your
-   * value" without a second channel (italics, quotes) doing the saying.
-   */
-  .row input::placeholder {
-    color: var(--text-3);
-  }
-
-  /* A row's own two edges. The text block takes what is left after the control,
-     so a long description wraps instead of pushing the control off the edge. */
   .row {
     gap: var(--space-3);
+    padding-inline: 0;
   }
 
-  /* A group is a heading, its rows, and the space around them. The separation
-     between groups is one hairline (`Divider`) — per the boundary ladder, one
-     channel does the separating, so no box as well. */
-  .group {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-3);
+  .themeControl {
+    --color-neutral: var(--bg);
+    --color-background-surface: var(--paper);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--hairline) 65%, transparent);
   }
 
-  .actions {
+  .themeControl [aria-checked='true'] {
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--hairline) 65%, transparent);
+  }
+
+  .settingsSection {
+    gap: var(--space-1);
+  }
+
+  .eyebrow {
+    color: var(--text-3);
+    font: var(--type-label);
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+  }
+
+  .sectionHeader {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
+    justify-content: space-between;
     gap: var(--space-2);
+    padding-block-end: var(--space-2);
+    border-block-end: 1px solid color-mix(in srgb, var(--hairline) 65%, transparent);
   }
 
-  .compactNumericActions {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: flex-start;
-    gap: var(--space-2);
+  .sectionHeading {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-1);
   }
 
-  /* The only green in the app. */
-  .saved {
-    font-size: var(--font-step-1-size);
+  .recheckButton {
+    color: var(--text-3);
+  }
+
+  .providerList .row {
+    padding-block: var(--space-3);
+    align-items: center;
+  }
+
+  .checkTime {
+    font: var(--type-metadata);
+    color: var(--text-3);
+  }
+
+  .statusIndicator {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-1);
+    white-space: nowrap;
+    font: var(--type-metadata);
     font-weight: var(--weight-medium);
-    line-height: 1;
+    letter-spacing: var(--type-metadata-tracking);
+    color: var(--text-2);
+  }
+
+  .statusIndicator[data-nc-status-tone='success'] {
     color: var(--success-text);
   }
 
-  /* The error box: dot, message, and a home of its own — error tones, never
-     warn tones. Waiting and broken are different things. */
+  .statusIndicator[data-nc-status-tone='warning'] {
+    color: var(--warn-text);
+  }
+
+  .statusDot {
+    inline-size: var(--dot-sm);
+    block-size: var(--dot-sm);
+    --color-success: var(--success);
+    --color-warning: var(--warn);
+    --color-icon-secondary: var(--text-4);
+  }
+
+  .providerIcon {
+    display: inline-flex;
+    align-items: center;
+    color: var(--text-3);
+  }
+
+  .providerHeadline {
+    display: grid;
+    grid-template-columns: 5.5rem 7.25rem minmax(0, 1fr);
+    align-items: center;
+    gap: var(--space-3);
+    min-inline-size: 0;
+  }
+
+  .providerName {
+    white-space: nowrap;
+  }
+
+  .plannerInlineMeta {
+    display: flex;
+    align-items: baseline;
+    gap: var(--space-2);
+    min-inline-size: 0;
+    max-inline-size: 100%;
+  }
+
+  .plannerNote {
+    min-inline-size: 0;
+    font: var(--type-metadata);
+    color: var(--text-3);
+  }
+
+  .authenticationMethod {
+    min-inline-size: 0;
+    color: var(--text-3);
+    font: var(--type-code);
+    letter-spacing: var(--type-code-tracking);
+  }
+
   .error {
-    font-size: var(--font-step-1-size);
-    font-weight: var(--weight-normal);
-    line-height: var(--font-step-1-line);
-    padding-block: var(--space-2);
-    padding-inline: var(--space-2);
+    font: var(--type-metadata);
+    padding: var(--space-2);
     border: 1px solid var(--error-border);
     border-radius: var(--radius-md);
     background: var(--error-soft);
     color: var(--error-text);
   }
 
-  .aboutValue {
-    font-family: var(--font-mono);
-    font-size: var(--font-step-1-size);
-    color: var(--text-3);
+  .colophon {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-3);
+    padding-block: var(--space-2);
   }
 
-  .diagnostics {
-    margin-block-start: var(--space-2);
-    max-inline-size: var(--measure-list);
+  .brandMark {
+    flex: 0 0 auto;
+    inline-size: var(--space-7);
+    block-size: var(--space-7);
+    background: var(--text);
+    mask: url('../../ui/brand/perga-mark.svg') center / contain no-repeat;
   }
 
-  .diagnosticsToggle {
-    padding-block: var(--space-1);
-    font: var(--type-metadata);
-    letter-spacing: var(--type-metadata-tracking);
-    color: var(--text-3);
-    cursor: pointer;
-    user-select: none;
+  .brandIdentity {
+    display: flex;
+    min-inline-size: 0;
+    flex-direction: column;
+    flex: 1 1 auto;
   }
 
-  .diagnosticsToggle:hover,
-  .diagnosticsToggle:focus-visible {
+  .brandVersion,
+  .metadata dd {
+    font: var(--type-code);
+    letter-spacing: var(--type-code-tracking);
+    font-variant-numeric: tabular-nums;
     color: var(--text-2);
+    overflow-wrap: anywhere;
+  }
+
+  .copyDiagnostics {
+    margin-inline-start: auto;
+  }
+
+  .metadata dl {
+    grid-template-columns: minmax(0, max-content) minmax(0, 1fr);
+  }
+
+  .metadata dd {
+    text-align: end;
   }
 
   .mobileSurface {
     grid-template-columns: minmax(0, 1fr);
-    min-block-size: 0;
+    grid-template-rows: auto;
+  }
+
+  .mobileSurface .pane {
+    padding: 0;
+    overflow: visible;
+    background: transparent;
   }
 
   .pane[hidden],
-  .mobileDetail .categoryHeading {
+  .mobileDetail .categoryHeading,
+  .mobileDetail .paneHeader:has(> .categoryHeading:only-child) {
     display: none;
   }
 
@@ -178,134 +267,30 @@
   }
 
   @media (width < 60rem) {
-    .controlRow {
-      flex-direction: column;
-      align-items: stretch;
-      gap: var(--space-3);
-      padding-block: var(--space-4);
+    .providerHeadline {
+      grid-template-columns: 4.75rem 6.75rem minmax(0, 1fr);
+      gap: var(--space-2);
     }
 
-    .controlRow > span {
-      inline-size: 100%;
-      min-inline-size: 0;
+    .controlRow {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr);
+      gap: var(--space-2);
+      padding-block: var(--space-3);
     }
 
     .controlRow > span:last-child {
+      margin-inline-start: 0;
       justify-content: flex-start;
     }
 
-    .controlRow > span:first-of-type > span {
-      font-size: var(--font-step-3-size);
-      line-height: var(--font-step-3-line);
-      white-space: normal;
-      overflow: visible;
+    .controlRow:has(.providerIcon) {
+      grid-template-columns: auto minmax(0, 1fr);
     }
 
-    .controlRow > span:last-child > * {
-      max-inline-size: 100%;
+    .controlRow:has(.providerIcon) > span:last-child {
+      grid-column: 2;
     }
-
-    .controlRow input {
-      font-size: var(--font-step-3-size);
-    }
-
-    .form {
-      inline-size: 100%;
-      max-inline-size: none;
-      padding-block-end: var(--space-4);
-    }
-
-  }
-
-
-  /* A row's title line when it carries a second mark — a plugin's version
-     beside its name. Baseline-aligned rather than centred: the two are one
-     line of text, and centring a smaller mark against a larger one puts it
-     visibly off the line it belongs to. */
-  .rowTitle {
-    display: inline-flex;
-    gap: var(--space-2);
-    align-items: baseline;
-  }
-
-  /* The mark itself: the description's size and colour, so it reads as an
-     annotation on the name rather than as part of it. Monospaced, because a
-     version is a string you compare character by character. */
-  .rowTitleSuffix {
-    font: var(--type-code);
-    letter-spacing: var(--type-code-tracking);
-    color: var(--text-3);
-  }
-
-  /* `ListItem`'s description slot stacks a plugin's remaining lines — the
-     manifest's own sentence, the failure that explains a red chip, and the id
-     last. Only the identity line is monospaced, because it is the one the
-     reader copies. */
-  .pluginMeta {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-1);
-    align-items: start;
-  }
-
-  /* Settings › Planners (#1817): the whole reason, wrapped anywhere, because
-     its fix can carry a path longer than the row. */
-  .plannerReason {
-    overflow-wrap: anywhere;
-  }
-
-  .pluginId {
-    font-family: var(--font-mono);
-    font-size: var(--font-step-1-size);
-    line-height: var(--font-step-1-line);
-    color: var(--text-3);
-  }
-
-  /* Where a successful enable/disable stopped (#1242). Not `.error` and not
-     `.notice`: both of those are boxes that say something wants attention, and
-     this is a fact about a write that worked. So it is a plain meta line in the
-     row's own voice, one step above the id's tone because it is read and not
-     looked up. */
-  .pluginEffectBoundary {
-    font-size: var(--font-step-1-size);
-    line-height: var(--font-step-1-line);
-    color: var(--text-2);
-  }
-
-  /*
-   * The same element on every row, empty until that row has something to say —
-   * a live region inserted together with its text is commonly not announced,
-   * so it has to be mounted before there is any text to put in it.
-   *
-   * Which leaves the empty one to keep out of the way, and `display: none` is
-   * exactly what it must not be: that takes the region back out of the
-   * accessibility tree, so the text would once again arrive with the region and
-   * nothing would be announced. `position: absolute` keeps the element
-   * rendered and in the tree while making it not a flex item at all
-   * (CSS Flexbox §4), so `.pluginMeta`'s `gap` does not open a space under
-   * every row in the list. It has no content and no size, so there is nothing
-   * to paint over anything.
-   *
-   * Measured in chromium rather than argued from the standard, because the cost of
-   * being wrong is one `gap` under every row of the pane at once —
-   * `plugins-live-region.browser.test.tsx`, at a 1180 × 720 viewport, with
-   * `row-gap` computing to 4px: the meta column is 38.296875px as shipped and
-   * 38.296875px with the region deleted outright (delta 0), and 42.296875px
-   * with this rule's `position` overridden back to `static` (delta exactly one
-   * gap). The third number is what proves the first two are a measurement and
-   * not a broken tape measure.
-   */
-  .pluginEffectBoundary:empty {
-    position: absolute;
-  }
-
-  /* A plugin row's trailing edge holds the drill-in, the runtime-state chip
-     and the switch the chip annotates, so they need a gap between them and the
-     row's own edge stays where every other pane's is. */
-  .pluginControls {
-    display: flex;
-    align-items: center;
-    gap: var(--space-2);
   }
 
   /*
@@ -378,60 +363,5 @@
        has no other text in it. */
     --color-neutral: var(--chip-neutral);
     --color-text-primary: var(--chip-text-primary);
-  }
-
-  /* Quiet editorial ink-on-parchment status stamp for Settings > Planners (no loud colored pill). */
-  .plannerStatusStamp {
-    border-radius: var(--radius-sm);
-    font-weight: var(--weight-medium);
-    letter-spacing: 0.01em;
-    --color-warning: transparent;
-    --color-on-warning: var(--text-2);
-    --color-success: transparent;
-    --color-on-success: var(--success-text);
-    --color-neutral: transparent;
-    --color-text-primary: var(--text-3);
-    box-shadow: inset 0 0 0 1px var(--hairline);
-  }
-
-  .plannerStatusStamp[data-nc-planner-status='unavailable'] {
-    box-shadow: inset 0 0 0 1px var(--hairline-strong);
-  }
-
-  .plannerStatusStamp[data-nc-planner-status='ready'] {
-    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--success) 32%, var(--hairline));
-  }
-
-
-  /*
-   * Saved, but not in force — and not broken either.
-   *
-   * The three restart outcomes of #1284 §2.4 are mostly *this*: the restart was
-   * refused because the plugin was busy, or the plugin did not come back up. A
-   * connector that cannot reach its upstream is in its normal terminal state,
-   * so `.error`'s tone would say the kernel is broken when the truth is that
-   * something did not answer. Warn tones, and the same box shape as `.error` so
-   * the two read as one family of message rather than two designs.
-   */
-  .notice {
-    font-size: var(--font-step-1-size);
-    font-weight: var(--weight-normal);
-    line-height: var(--font-step-1-line);
-    padding-block: var(--space-2);
-    padding-inline: var(--space-2);
-    border: 1px solid var(--warn-border);
-    border-radius: var(--radius-md);
-    background: var(--warn-soft);
-    color: var(--warn-text);
-  }
-
-  /* Set apart from the tasks above it: this row creates, the ones above edit. */
-  .newTask {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-2);
-    margin-block-start: var(--space-2);
-    padding-block-start: var(--space-2);
-    border-block-start: 1px solid var(--hairline);
   }
 }

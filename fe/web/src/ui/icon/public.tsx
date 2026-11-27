@@ -1,5 +1,5 @@
 import type { ComponentType } from 'react';
-import { Archive, Forward, Copy, Check, ChartColumn, Search, Star, ArrowLeft, ArrowUp, Bell, BookOpen, Bot, CalendarDays, ChevronDown, ChevronLeft, ChevronRight, Circle, CircleCheck, CircleStop, CircleX, Clock3, Ellipsis, File, Folder, FolderOpen, Link2, ListChecks, Maximize, Menu, MessageSquare, Minimize, NotebookPen, PanelLeft, PanelRight, Paperclip, Pin, Plus, RotateCcw, Shield, SlidersHorizontal, SquareTerminal, Settings, Wrench, Trash2, X, Icon as LucideIcon, type LucideProps } from 'lucide-react';
+import { Archive, Forward, Copy, Check, ChartColumn, Search, Star, ArrowLeft, ArrowUp, Bell, BookOpen, Bot, CalendarDays, ChevronDown, ChevronLeft, ChevronRight, Circle, CircleCheck, CircleStop, CircleX, Clock3, Ellipsis, File, Folder, FolderOpen, Info, Link2, ListChecks, Maximize, Menu, MessageSquare, Minimize, Monitor, Moon, NotebookPen, Palette, PanelLeft, PanelRight, Paperclip, Pin, Plus, RefreshCw, RotateCcw, Shield, SlidersHorizontal, SquareTerminal, Settings, Sun, Wrench, Trash2, X, Icon as LucideIcon, type LucideProps } from 'lucide-react';
 import { PROVIDER_GLYPHS, type GlyphNode } from './provider-glyphs.ts';
 import styles from './icon.module.css';
 
@@ -37,6 +37,12 @@ const glyphs = Object.freeze({
   'agent': (props: LucideProps) => <Bot {...props} />,
   'terminal': (props: LucideProps) => <SquareTerminal {...props} />,
   'settings': (props: LucideProps) => <Settings {...props} />,
+  'palette': (props: LucideProps) => <Palette {...props} />,
+  'info': (props: LucideProps) => <Info {...props} />,
+  'sun': (props: LucideProps) => <Sun {...props} />,
+  'moon': (props: LucideProps) => <Moon {...props} />,
+  'monitor': (props: LucideProps) => <Monitor {...props} />,
+  'refresh': (props: LucideProps) => <RefreshCw {...props} />,
   'tools': (props: LucideProps) => <Wrench {...props} />,
   'tasks': (props: LucideProps) => <ListChecks {...props} />,
   'pin': (props: LucideProps) => <Pin {...props} />,

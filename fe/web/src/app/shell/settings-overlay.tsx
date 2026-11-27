@@ -9,12 +9,9 @@ import { useEffect,useLayoutEffect,useRef } from 'react';
 import type { ApiTransportPort } from '../../../../core/api/types.ts';
 import type { UnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
 import { readErrorText } from '../../../../core/domain/read-failure.ts';
-import {
-SETTINGS_SECTIONS,
-settingsSectionLabel,type SettingsSection
-} from '../../features/settings/navigation.tsx';
 import { OwnerSetupForm } from '../../features/auth/login-page/setup.tsx';
 import { AccountPane } from '../../features/settings/account.tsx';
+import { SETTINGS_SECTIONS, settingsSection, type SettingsSection } from '../../features/settings/navigation.tsx';
 import { PlannersPane } from '../../features/settings/planners.tsx';
 import {
 AboutPane,AppearancePane,
@@ -23,28 +20,22 @@ type ThemeMode as SettingsThemeMode
 } from '../../features/settings/public.tsx';
 import { Dialog } from '../../ui/dialog/public.tsx';
 import { MobileHeader } from '../../ui/mobile-header/public.tsx';
-import { useState } from '../../ui/state/public.ts';
 import { useCompactViewport } from '../../ui/viewport/public.ts';
 import { agentProvidersQueryOptions,useAgentProvidersRecheck } from '../providers/agent-providers.ts';
 import { managedProvidersQueryOptions } from '../providers/managed-providers.ts';
 import { useCurrentUser } from '../auth/current-user.tsx';
 import { setupOwnerWithTransport } from '../auth/login.ts';
-import { useUiPreferences } from '../providers/ui-preferences.tsx';
 import { useCurrentPath,useGo,type NavTarget } from '../router/navigation.ts';
 import { useTheme } from '../theme/public.tsx';
 import styles from './settings-page.module.css';
 
 /** Which pane the path asks for, or `null` when the reader is not in Settings. */
-export function settingsSectionForPath(path: string,): SettingsSection | null {
-
-    if (path === '/settings') return 'appearance';
-    const found = SETTINGS_SECTIONS.find((entry) => path === `/settings/${entry.id}`)?.id ?? null;
-    if (found === null) return null;
-    return SETTINGS_SECTIONS.some((entry) => entry.id === found) ? found : 'appearance';
-
+export function settingsSectionForPath(path: string): SettingsSection | null {
+  if (path === '/settings') return 'appearance';
+  return SETTINGS_SECTIONS.find((entry) => path === `/settings/${entry.id}`)?.id ?? null;
 }
 
-/** Desktop Network keeps the historical root; every mobile category has a URL. */
+/** Desktop Appearance uses the Settings root; every mobile category has a URL. */
 function targetForSection(section: SettingsSection, compact: boolean,): NavTarget {
   const defaultSection: SettingsSection = 'appearance';
   return { name: section === defaultSection && !compact ? 'settings' : `settings-${section}` };
@@ -107,16 +98,16 @@ export function SettingsOverlay({ transport, unauthorized, onOwnerSetupComplete 
   };
   if (section === null) return null;
   return <Dialog purpose="form" origin={{ kind: 'surface-center' }} open onClose={leaveSettings}
-    title="Settings" wide="medium" fullscreen={compact} hideTitleRow={compact}>
-    <section className={compact ? styles.page : undefined} data-nc-settings-page={compact ? '' : undefined} aria-label="Settings">
+    title="Settings" wide fullscreen={compact} hideTitleRow>
+    <section className={compact ? styles.page : styles.desktopFrame} data-nc-settings-page={compact ? '' : undefined} aria-label="Settings">
       <div hidden={!compact}>
-        <MobileHeader title={mobileIndex ? 'Settings' : settingsSectionLabel(section)} level={1}
+        <MobileHeader title={mobileIndex ? 'Settings' : settingsSection(section).label} level={1}
           backLabel={mobileIndex ? 'workspace' : 'Settings'} onBack={mobileIndex ? leaveSettings : backToIndex} />
       </div>
-      <div className={compact ? styles.content : undefined}>
+      <div className={compact ? styles.content : styles.desktopContent}>
         <SettingsSurface section={section}
-          sections={SETTINGS_SECTIONS}
           presentation={!compact ? 'desktop' : mobileIndex ? 'mobile-index' : 'mobile-detail'}
+          onClose={leaveSettings}
           onSelectSection={(next) => go(targetForSection(next, compact))}>
           <SectionPane section={section} transport={transport} unauthorized={unauthorized} onOwnerSetupComplete={onOwnerSetupComplete} />
         </SettingsSurface>
@@ -151,9 +142,6 @@ function AccountPaneHost({ transport, onComplete }: Readonly<{
 }
 
 function PergaPlannersPaneHost({ transport, unauthorized }: SettingsOverlayProps) {
-  const preferences = useUiPreferences();
-  const [readRevision, setReadRevision] = useState(0);
-  const savedMinutes = preferences.turnDurationMinutes();
   const providers = useQuery(managedProvidersQueryOptions(transport, unauthorized));
   const availability = useQuery(agentProvidersQueryOptions(transport, unauthorized));
   const missing = availability.data?.find((entry) => providers.data !== undefined
@@ -167,19 +155,6 @@ function PergaPlannersPaneHost({ transport, unauthorized }: SettingsOverlayProps
   const recheck = useAgentProvidersRecheck(transport, unauthorized);
   return (
     <PlannersPane
-      turnDuration={{
-        loaded: true,
-        readRevision,
-        loadError: null,
-        onRetryLoad: () => { setReadRevision((n) => n + 1); },
-        value: savedMinutes === null ? undefined : String(savedMinutes),
-        onSave: (value) => {
-          const parsed = value === undefined ? null : Number(value);
-          preferences.setTurnDurationMinutes(parsed !== null && Number.isInteger(parsed) ? parsed : null);
-          setReadRevision((n) => n + 1);
-          return Promise.resolve();
-        },
-      }}
       authenticationRecovery={null}
       providers={joined}
       loadError={loadError !== null ? readErrorText(loadError, 'Planners are unavailable.')
@@ -196,8 +171,7 @@ function AppearancePaneHost() {
   const theme = useTheme();
   return (
     <AppearancePane
-      // `app/theme` and `features/settings` each own their copy of the mode union
-      // (features may not import app); the two are only kept in step by this line.
+      // Check the app theme mode against the Settings field's declared options.
       themeMode={theme.mode satisfies SettingsThemeMode}
       onThemeModeChange={(mode) => theme.setMode(mode)}
     />

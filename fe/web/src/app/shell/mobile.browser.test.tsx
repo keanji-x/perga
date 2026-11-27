@@ -283,12 +283,10 @@ describe('Track mobile presentation', () => {
     await page.getByRole('heading', { name: 'Appearance', exact: true }).findElement();
     expect(router.state.location.pathname).toBe('/settings/appearance');
     expect(page.getByRole('navigation', { name: 'Settings sections' }).query()).toBeNull();
-    const networkInput = await page.getByRole('combobox', { name: 'Theme', exact: true }).findElement();
-    const field = networkInput.parentElement!;
-    const fieldBox = field.getBoundingClientRect();
-    expect(fieldBox.width).toBeLessThanOrEqual(320);
-    expect(networkInput.getBoundingClientRect().left).toBeGreaterThanOrEqual(fieldBox.left);
-    expect(networkInput.getBoundingClientRect().right).toBeLessThanOrEqual(fieldBox.right);
+    const themeControl = await page.getByRole('radiogroup', { name: 'Theme', exact: true }).findElement();
+    const themeBox = themeControl.getBoundingClientRect();
+    expect(themeBox.left).toBeGreaterThanOrEqual(0);
+    expect(themeBox.right).toBeLessThanOrEqual(320);
     await page.getByRole('button', { name: 'Back to Settings' }).click();
     const about = await page.getByRole('button', { name: 'About', exact: true }).findElement();
     const aboutBox = about.getBoundingClientRect();
@@ -359,11 +357,10 @@ describe('Track mobile presentation', () => {
     await page.viewport(390, 844);
     setup('/settings');
     await page.getByRole('heading', { name: 'Settings', exact: true }).findElement();
-    const network = await page.getByRole('button', { name: 'Planners', exact: true }).findElement();
+    const planners = await page.getByRole('button', { name: 'Planners', exact: true }).findElement();
     const appearance = await page.getByRole('button', { name: 'Appearance', exact: true }).findElement();
-    expect(network.getBoundingClientRect().top).toBeGreaterThanOrEqual(appearance.getBoundingClientRect().bottom);
-    expect(page.getByRole('textbox', { name: 'HTTP proxy', exact: true }).query()).toBeNull();
-    expect(page.getByRole('heading', { name: 'Network', exact: true }).query()).toBeNull();
+    expect(planners.getBoundingClientRect().top).toBeGreaterThanOrEqual(appearance.getBoundingClientRect().bottom);
+    expect(page.getByRole('radiogroup', { name: 'Theme', exact: true }).query()).toBeNull();
     await page.screenshot({ path: '../../../../test-results/mobile-settings-index.png' });
   });
 
@@ -388,6 +385,30 @@ describe('Track mobile presentation', () => {
     } finally {
       await commands.setHorizontalSafeArea(0, 0);
     }
+  });
+
+  it('keeps desktop Settings Close in view while the About pane scrolls', async () => {
+    await commands.emulateReducedMotion(true);
+    await page.viewport(1280, 200);
+    const router = setup('/settings/about');
+    const dialog = page.getByRole('dialog', { name: 'Settings' });
+    const close = dialog.getByRole('button', { name: 'Close', exact: true });
+    const closeButton = await close.findElement();
+    const build = await dialog.getByRole('heading', { name: 'Build', exact: true }).findElement();
+    await document.fonts.ready;
+    await settlePaint();
+
+    const closeBefore = closeButton.getBoundingClientRect();
+    const buildTop = build.getBoundingClientRect().top;
+    build.scrollIntoView({ block: 'start' });
+    await expect.poll(() => build.getBoundingClientRect().top).toBeLessThan(buildTop);
+
+    const closeAfter = closeButton.getBoundingClientRect();
+    expect(closeAfter.top).toBeCloseTo(closeBefore.top);
+    expect(closeAfter.top).toBeGreaterThanOrEqual(0);
+    expect(closeAfter.bottom).toBeLessThanOrEqual(window.innerHeight);
+    await close.click();
+    await expect.poll(() => router.state.location.pathname).toBe('/');
   });
 
   it.each([

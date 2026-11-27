@@ -1,4 +1,38 @@
 @layer features {
+  [class~="dialog-overlay"]:has(.desktopFrame) {
+    align-items: center;
+    padding-block: var(--space-4);
+  }
+
+  [class~="dialog-overlay"]:has(.desktopFrame) > div {
+    inline-size: min(52rem, calc(100vw - var(--space-6)));
+    block-size: min(34rem, calc(100dvh - var(--space-6)));
+    min-block-size: min(30rem, 70dvh);
+  }
+
+  [class~="dialog-panel"]:has(.desktopFrame) {
+    padding: 0;
+    inline-size: 100%;
+    block-size: 100%;
+    overflow: hidden;
+  }
+
+  [class~="dialog-body"]:has(> .desktopFrame) {
+    padding: 0;
+    gap: 0;
+    overflow: hidden;
+    flex: 1 1 auto;
+    min-block-size: 0;
+  }
+
+  .desktopFrame,
+  .desktopContent {
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    min-block-size: 0;
+  }
+
   .page {
     display: flex;
     flex: 1 1 auto;

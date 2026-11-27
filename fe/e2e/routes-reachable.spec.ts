@@ -16,7 +16,7 @@ test('v1 bootstrap and workspace routes are reachable through the real kernel', 
       await expect(page.locator('nav[aria-label="Workspace"]')).toBeVisible();
       if (path.endsWith('/new')) await expect(page.getByLabel('What this track should do')).toBeVisible();
       else if (path.includes('/track/')) await expect(page.locator('[data-nc-page-title]')).toContainText(track.title);
-      else await expect(page.getByRole('combobox', { name: 'Theme' })).toBeVisible();
+      else await expect(page.getByRole('radiogroup', { name: 'Theme' })).toBeVisible();
     }
   } finally { expect((await request.delete(`/api/v1/areas/${area.id}`)).status()).toBe(204); }
 });

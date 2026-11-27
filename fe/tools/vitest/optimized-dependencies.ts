@@ -52,6 +52,7 @@ export const OPTIMIZED_DEPENDENCIES = Object.freeze([
   '@astryxdesign/core/HoverCard',
   '@astryxdesign/core/Layer',
   '@astryxdesign/core/SegmentedControl',
+  '@astryxdesign/core/StatusDot',
   '@astryxdesign/core/TextInput',
   '@astryxdesign/core/Typeahead',
   '@astryxdesign/core/VisuallyHidden',
