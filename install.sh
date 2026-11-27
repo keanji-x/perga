@@ -221,9 +221,6 @@ host_args=()
 if ! has_arg --contentRoot "$@" && [[ -z "${ASPNETCORE_CONTENTROOT:-}${DOTNET_CONTENTROOT:-}" ]]; then
   host_args+=(--contentRoot "$INSTALL_DIR")
 fi
-if ! has_arg --urls "$@" && [[ -z "${ASPNETCORE_URLS:-}${Kestrel__Endpoints__Http__Url:-}" ]]; then
-  host_args+=(--urls "${PERGA_URLS:-http://127.0.0.1:4041}")
-fi
 cd "$INSTALL_DIR"
 exec "$INSTALL_DIR/Perga.Host" "$1" ${host_args[@]+"${host_args[@]}"} "${@:2}"
 LAUNCHER_EOF

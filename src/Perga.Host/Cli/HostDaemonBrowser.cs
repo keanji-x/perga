@@ -30,6 +30,9 @@ internal static class HostDaemonBrowser
     public static string ResolveBrowserLaunchUrl(string baseUrl, string dataDir)
     {
         var root = baseUrl.TrimEnd('/') + "/";
+        if (!Uri.TryCreate(root, UriKind.Absolute, out var uri) || !uri.IsLoopback)
+            return root;
+
         var file = new FileInfo(Path.Combine(dataDir, "runtime", "local-launch-token"));
         try
         {

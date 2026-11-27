@@ -26,17 +26,22 @@ internal sealed record HostDaemonOptions(string[] HostArgs, bool Foreground, boo
         return urls;
     }
 
-    public HostDaemonOptions WithPreviousArguments(string[] previous)
+    public HostDaemonOptions WithPreviousArguments(HostDaemonState previous, HostCliEnvironment env)
     {
         if (!HostArgs.Any(IsUrlsFlag))
-            return this with { HostArgs = [.. previous, .. HostArgs] };
+        {
+            if (!previous.HostArgs.Any(IsUrlsFlag) && env.Get("ASPNETCORE_URLS") is null && env.Get("PERGA_URLS") is null)
+                return this with { HostArgs = ["--urls", previous.Url.TrimEnd('/'), .. previous.HostArgs, .. HostArgs] };
+            return this with { HostArgs = [.. previous.HostArgs, .. HostArgs] };
+        }
 
         var preserved = new List<string>();
-        for (var index = 0; index < previous.Length; index++)
+        for (var index = 0; index < previous.HostArgs.Length; index++)
         {
-            if (!IsUrlsFlag(previous[index]))
-                preserved.Add(previous[index]);
-            else if (previous[index].Length == 6)
+            var argument = previous.HostArgs[index];
+            if (!IsUrlsFlag(argument))
+                preserved.Add(argument);
+            else if (argument.Length == 6)
                 index++;
         }
         return this with { HostArgs = [.. preserved, .. HostArgs] };
@@ -45,5 +50,5 @@ internal sealed record HostDaemonOptions(string[] HostArgs, bool Foreground, boo
     // The ASP.NET command-line provider takes key/value pairs. Preserve the original
     // standalone switch at the process and state boundary.
     public static string[] ConfigurationArguments(string[] args) =>
-        args.Select(arg => arg == "--require-auth" ? "--require-auth=true" : arg).ToArray();
+        args.Select(arg => arg == "--require-auth" ? "--Perga:RequireAuth=true" : arg).ToArray();
 }

@@ -235,7 +235,7 @@ public static partial class HostCliCommand
                 throw new CliException($"could not download the installer from {url} (curl exit {download}).");
             using (await HostDaemonCommand.AcquireLockAsync(paths.DataDir, ct).ConfigureAwait(false))
             {
-                previous = RunningForInstallation(paths.DataDir, paths.InstallDir);
+                previous = RunningForPackageChange(paths.DataDir, paths.InstallDir, env);
                 var installed = await env.RunProcessAsync("bash", [script], childEnv, ct).ConfigureAwait(false);
                 if (installed != 0 || previous is null)
                     return installed;
@@ -252,10 +252,13 @@ public static partial class HostCliCommand
 
             try
             {
+                var options = HostDaemonOptions.Parse([]).WithPreviousArguments(previous, env);
+                if (paths.PreviousDatabaseOverride(previous) is { } dbPath)
+                    childEnv["PERGA_DB_PATH"] = dbPath;
                 using var restartTimeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
                 restartTimeout.CancelAfter(TimeSpan.FromSeconds(35));
                 var restarted = await env.RunProcessAsync(Path.Combine(paths.InstallDir, "Perga.Host"),
-                    ["start", "--no-open", .. previous.HostArgs], childEnv, restartTimeout.Token).ConfigureAwait(false);
+                    ["start", "--no-open", .. options.HostArgs], childEnv, restartTimeout.Token).ConfigureAwait(false);
                 return restarted == 0 ? 0 : ReportUpgradeRestartFailure(env);
             }
             catch (OperationCanceledException) when (!ct.IsCancellationRequested)
@@ -281,9 +284,17 @@ public static partial class HostCliCommand
         return 1;
     }
 
-    private static HostDaemonState? RunningForInstallation(string dataDir, string installDir) =>
-        HostDaemonCommand.TryGetRunningInstance(dataDir, out _) is { } state &&
-        string.Equals(PhysicalPath(state.InstallDir), PhysicalPath(installDir), StringComparison.Ordinal) ? state : null;
+    private static HostDaemonState? RunningForPackageChange(string dataDir, string installDir, HostCliEnvironment env)
+    {
+        if (HostDaemonCommand.TryGetRunningInstance(dataDir, out _) is not { } state)
+            return null;
+
+        var physicalInstall = PhysicalPath(installDir);
+        var comparison = env.CaseInsensitivePaths ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+        EnsureOutsideInstall("running daemon data directory", state.DataDir, physicalInstall, comparison);
+        EnsureOutsideInstall("running daemon database path", state.DbPath, physicalInstall, comparison);
+        return string.Equals(PhysicalPath(state.InstallDir), physicalInstall, StringComparison.Ordinal) ? state : null;
+    }
 
     private static async Task<int> UninstallAsync(HostCliEnvironment env, string[] args, CancellationToken ct)
     {
@@ -319,7 +330,7 @@ public static partial class HostCliCommand
         }
 
         using var lifecycleLock = await HostDaemonCommand.AcquireLockAsync(plan.DataDir, ct).ConfigureAwait(false);
-        if (RunningForInstallation(plan.DataDir, plan.InstallDir) is { } running)
+        if (RunningForPackageChange(plan.DataDir, plan.InstallDir, env) is { } running)
             await HostDaemonCommand.StopInstanceAsync(plan.DataDir, running, ct).ConfigureAwait(false);
         if (plan.Launcher is not null)
             File.Delete(plan.Launcher);
@@ -361,6 +372,9 @@ public static partial class HostCliCommand
 
     internal sealed record InstallationPaths(string InstallDir, string DataDir, string DbPath, bool ExplicitDbPath)
     {
+        public string? PreviousDatabaseOverride(HostDaemonState state) =>
+            !ExplicitDbPath && state.DbPath != Path.Combine(state.DataDir, "perga.db") ? state.DbPath : null;
+
         public static InstallationPaths From(HostCliEnvironment env)
         {
             var install = FullPath(env.Get("PERGA_INSTALL_DIR") ?? env.BaseDirectory);
@@ -464,9 +478,7 @@ public static partial class HostCliCommand
             {
                 if (IsLink(path))
                     throw new CliException($"{name} '{path}' is a symlink; refusing to uninstall.");
-                var real = PhysicalPath(path);
-                if (IsInside(real, realInstall, exclusionComparison))
-                    throw new CliException($"{name} '{real}' is inside the install directory '{realInstall}'; refusing to delete user data.");
+                EnsureOutsideInstall(name, path, realInstall, exclusionComparison);
             }
 
             return new(realInstall, binDir is null ? null : VerifiedLauncher(Path.Combine(binDir, "perga"), realInstall), paths.DataDir, paths.DbPath);
@@ -499,11 +511,18 @@ public static partial class HostCliCommand
 
         private static bool PathsEqual(string left, string right, StringComparison comparison) =>
             string.Equals(left, right, comparison);
-
-        private static bool IsInside(string path, string directory, StringComparison comparison) =>
-            PathsEqual(path, directory, comparison) ||
-            path.StartsWith(directory.EndsWith(Path.DirectorySeparatorChar) ? directory : directory + Path.DirectorySeparatorChar, comparison);
     }
+
+    private static void EnsureOutsideInstall(string name, string path, string physicalInstall, StringComparison comparison)
+    {
+        var real = PhysicalPath(path);
+        if (IsInside(real, physicalInstall, comparison))
+            throw new CliException($"{name} '{real}' is inside the install directory '{physicalInstall}'; refusing to delete user data.");
+    }
+
+    private static bool IsInside(string path, string directory, StringComparison comparison) =>
+        string.Equals(path, directory, comparison) ||
+        path.StartsWith(Path.EndsInDirectorySeparator(directory) ? directory : directory + Path.DirectorySeparatorChar, comparison);
 
     private static string FullPath(string path) => Path.TrimEndingDirectorySeparator(Path.GetFullPath(path)) is { Length: > 0 } full ? full : "/";
 

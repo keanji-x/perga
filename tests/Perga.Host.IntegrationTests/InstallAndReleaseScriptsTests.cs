@@ -188,12 +188,12 @@ public sealed class InstallAndReleaseScriptsTests : IDisposable
         Assert.Equal(Path.Combine(InstallDir, "web"), version["PERGA_STATIC_WEB_DIR"]);
 
         var host = Values(await RunLauncherAsync([]));
-        Assert.Equal($"start --contentRoot {InstallDir} --urls http://127.0.0.1:4041", host["args"]);
+        Assert.Equal($"start --contentRoot {InstallDir}", host["args"]);
         Assert.Equal(InstallDir, host["pwd"]);
         var start = Values(await RunLauncherAsync(["start", "--urls=http://127.0.0.1:9", "--flag"]));
         Assert.Equal($"start --contentRoot {InstallDir} --urls=http://127.0.0.1:9 --flag", start["args"]);
         var serve = Values(await RunLauncherAsync(["serve", "--require-auth"]));
-        Assert.Equal($"serve --contentRoot {InstallDir} --urls http://127.0.0.1:4041 --require-auth", serve["args"]);
+        Assert.Equal($"serve --contentRoot {InstallDir} --require-auth", serve["args"]);
         foreach (var command in new[] { "status", "stop", "restart", "logs", "open" })
         {
             var routed = Values(await RunLauncherAsync([command]));

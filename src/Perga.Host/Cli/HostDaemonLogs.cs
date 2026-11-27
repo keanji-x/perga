@@ -16,49 +16,45 @@ internal static class HostDaemonLogs
             return 0;
         }
 
-        using var watcher = new FileSystemWatcher(Path.GetDirectoryName(path)!, Path.GetFileName(path))
+        var fileName = Path.GetFileName(path);
+        using var watcher = new FileSystemWatcher(Path.GetDirectoryName(path)!, fileName)
         {
             NotifyFilter = NotifyFilters.FileName
         };
-        var changed = 0;
-        void OnChanged(object _, FileSystemEventArgs __) => Interlocked.Exchange(ref changed, 1);
-        watcher.Created += OnChanged;
-        watcher.Deleted += OnChanged;
-        watcher.Renamed += OnChanged;
-        watcher.Error += (_, _) => Interlocked.Exchange(ref changed, 1);
+        var replaced = 0;
+        watcher.Created += (_, _) => Interlocked.Exchange(ref replaced, 1);
+        watcher.Renamed += (_, change) =>
+        {
+            // A rename away leaves the old reader available until its replacement arrives.
+            if (change.Name == fileName)
+                Interlocked.Exchange(ref replaced, 1);
+        };
         watcher.EnableRaisingEvents = true;
 
         var reader = Open(path);
-        var checkpoint = new byte[32];
-        var sample = new byte[checkpoint.Length];
-        var checkpointLength = 0;
-        void SaveCheckpoint() => checkpointLength = ReadCheckpoint(reader!, checkpoint);
         try
         {
             if (reader is not null)
-                await WriteTailAsync(reader, output, count, ct, SaveCheckpoint).ConfigureAwait(false);
+                await WriteTailAsync(reader, output, count, ct).ConfigureAwait(false);
 
             while (true)
             {
-                if (Interlocked.Exchange(ref changed, 0) != 0 || reader is null)
+                if (Interlocked.Exchange(ref replaced, 0) != 0 && reader is not null)
                 {
-                    // Drain the old file before switching to a newly created log.
-                    if (reader is not null)
-                    {
-                        await CopyLinesAsync(reader, output, ct).ConfigureAwait(false);
-                        reader.Dispose();
-                    }
-                    reader = Open(path);
-                    checkpointLength = 0;
+                    await CopyLinesAsync(reader, output, ct).ConfigureAwait(false);
+                    reader.Dispose();
+                    reader = null;
                 }
-                else if (!MatchesCheckpoint(reader, checkpoint.AsSpan(0, checkpointLength), sample))
-                {
-                    reader.DiscardBufferedData();
-                    reader.BaseStream.Position = 0;
-                }
-
+                reader ??= Open(path);
                 if (reader is not null)
-                    await CopyLinesAsync(reader, output, ct, SaveCheckpoint).ConfigureAwait(false);
+                {
+                    if (reader.BaseStream.Length < reader.BaseStream.Position)
+                    {
+                        reader.DiscardBufferedData();
+                        reader.BaseStream.Position = 0;
+                    }
+                    await CopyLinesAsync(reader, output, ct).ConfigureAwait(false);
+                }
                 await output.FlushAsync(ct).ConfigureAwait(false);
                 await Task.Delay(150, ct).ConfigureAwait(false);
             }
@@ -88,8 +84,7 @@ internal static class HostDaemonLogs
         catch (DirectoryNotFoundException) { return null; }
     }
 
-    private static async Task WriteTailAsync(
-        StreamReader reader, TextWriter output, int count, CancellationToken ct, Action? beforeOutput = null)
+    private static async Task WriteTailAsync(StreamReader reader, TextWriter output, int count, CancellationToken ct)
     {
         var tail = new Queue<string>();
         while (await reader.ReadLineAsync(ct).ConfigureAwait(false) is { } line)
@@ -101,36 +96,13 @@ internal static class HostDaemonLogs
             tail.Enqueue(line);
         }
 
-        beforeOutput?.Invoke();
         foreach (var line in tail)
             await output.WriteLineAsync(line).ConfigureAwait(false);
     }
 
-    private static async Task CopyLinesAsync(
-        StreamReader reader, TextWriter output, CancellationToken ct, Action? onNewBuffer = null)
+    private static async Task CopyLinesAsync(StreamReader reader, TextWriter output, CancellationToken ct)
     {
-        var position = reader.BaseStream.Position;
         while (await reader.ReadLineAsync(ct).ConfigureAwait(false) is { } line)
-        {
-            if (onNewBuffer is not null && position != reader.BaseStream.Position)
-            {
-                position = reader.BaseStream.Position;
-                onNewBuffer();
-            }
             await output.WriteLineAsync(line).ConfigureAwait(false);
-        }
-    }
-
-    private static bool MatchesCheckpoint(StreamReader reader, ReadOnlySpan<byte> checkpoint, Span<byte> sample) =>
-        reader.BaseStream.Length >= reader.BaseStream.Position &&
-        ReadCheckpoint(reader, sample[..checkpoint.Length]) == checkpoint.Length &&
-        sample[..checkpoint.Length].SequenceEqual(checkpoint);
-
-    // A log truncated and rewritten between polls can already be larger than the old offset.
-    private static int ReadCheckpoint(StreamReader reader, Span<byte> sample)
-    {
-        var stream = (FileStream)reader.BaseStream;
-        var size = (int)Math.Min(sample.Length, stream.Position);
-        return RandomAccess.Read(stream.SafeFileHandle, sample[..size], stream.Position - size);
     }
 }

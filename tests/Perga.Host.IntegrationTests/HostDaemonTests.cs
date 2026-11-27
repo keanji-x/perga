@@ -33,10 +33,23 @@ public sealed class HostDaemonTests : IDisposable
         Assert.True(options.NoOpen);
         Assert.True(options.Verbose);
         Assert.Equal(["--urls", DynamicUrl, "--require-auth", "--Perga:AuthAllowInsecureHttp=true"], options.HostArgs);
+        Assert.Equal(["--urls", DynamicUrl, "--Perga:RequireAuth=true", "--Perga:AuthAllowInsecureHttp=true"],
+            HostDaemonOptions.ConfigurationArguments(options.HostArgs));
         Assert.NotNull(HostDaemonCommand.ForegroundOptions(["start", "--foreground"]));
         Assert.NotNull(HostDaemonCommand.ForegroundOptions(["serve"]));
         Assert.Null(HostDaemonCommand.ForegroundOptions(["start", "--help", "--foreground"]));
         Assert.Null(HostDaemonCommand.ForegroundOptions(["--urls", DynamicUrl]));
+    }
+
+    [Fact]
+    public void TokenResolutionUsesOnlyLoopbackUrls()
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(TokenPath)!);
+        File.WriteAllText(TokenPath, Token);
+
+        Assert.Equal("http://192.0.2.10:4041/", HostDaemonBrowser.ResolveBrowserLaunchUrl("http://192.0.2.10:4041", Data));
+        Assert.Equal("http://[::1]:4041/auth/local?token=" + Token,
+            HostDaemonBrowser.ResolveBrowserLaunchUrl("http://[::1]:4041", Data));
     }
 
     [Theory]
@@ -137,7 +150,7 @@ public sealed class HostDaemonTests : IDisposable
         try
         {
             var time = other.StartTime.ToUniversalTime();
-            State(other.Id, wrongStartTime ? time.AddMinutes(-1).Ticks : time.Ticks,
+            State(other.Id, wrongStartTime ? time.AddSeconds(-3).Ticks : time.Ticks,
                 wrongStartTime ? other.ProcessName : "unrelated-process").Write(StatePathAfterCreatingData());
 
             var stopped = await InvokeAsync("stop");
@@ -187,10 +200,10 @@ public sealed class HostDaemonTests : IDisposable
             File.Move(LogPath, LogPath + ".1");
             await File.WriteAllTextAsync(LogPath, "rotated with a much longer first line\n", timeout.Token);
             Assert.Equal("rotated with a much longer first line", await output.ReadAsync(timeout.Token));
+            await File.AppendAllTextAsync(LogPath, "after rotation\n", timeout.Token);
+            Assert.Equal("after rotation", await output.ReadAsync(timeout.Token));
             await File.WriteAllTextAsync(LogPath, "short\n", timeout.Token);
             Assert.Equal("short", await output.ReadAsync(timeout.Token));
-            await File.WriteAllTextAsync(LogPath, "replaced by a longer line\n", timeout.Token);
-            Assert.Equal("replaced by a longer line", await output.ReadAsync(timeout.Token));
         }
         finally
         {
@@ -237,6 +250,10 @@ public sealed class HostDaemonTests : IDisposable
         Assert.DoesNotContain(Token, await File.ReadAllTextAsync(LogPath));
 
         await CheckExplicitBrowserAsync(state.Url);
+        var bare = await RunProcessAsync(["start"]);
+        Assert.Equal(0, bare.Code);
+        Assert.Equal(Lines(alreadyRunning.Output), Lines(bare.Output));
+        Assert.DoesNotContain("A different URL was requested", bare.Output);
         var different = await RunProcessAsync(["start", "--urls=http://127.0.0.1:4041", "--no-open"]);
         Assert.Equal(0, different.Code);
         Assert.Contains("perga restart --urls <url>", different.Output);
@@ -258,6 +275,32 @@ public sealed class HostDaemonTests : IDisposable
         var open = await RunProcessAsync(["open"]);
         Assert.Equal(1, open.Code);
         Assert.Contains("Start it with 'perga'.", open.Error);
+    }
+
+    [Fact]
+    public async Task RestartPreservesInvocationLocalUrlAndDatabasePath()
+    {
+        if (!IsUnix)
+            return;
+        PrepareInstall();
+        var database = Path.Combine(Data, "custom.db");
+        var start = await RunProcessAsync(["start"], new()
+        {
+            ["ASPNETCORE_URLS"] = DynamicUrl,
+            ["PERGA_DB_PATH"] = database
+        });
+        Assert.True(start.Code == 0, start.Error);
+        var old = Assert.IsType<HostDaemonState>(HostDaemonState.Read(StatePath));
+        Assert.Empty(old.HostArgs);
+        Assert.Equal(database, old.DbPath);
+
+        var restart = await RunProcessAsync(["restart"]);
+        Assert.True(restart.Code == 0, restart.Error);
+        var current = Assert.IsType<HostDaemonState>(HostDaemonState.Read(StatePath));
+        Assert.NotEqual(old.Pid, current.Pid);
+        Assert.Equal(old.Url, current.Url);
+        Assert.Equal(database, current.DbPath);
+        Assert.False(File.Exists(Path.Combine(Data, "perga.db")));
     }
 
     [Fact]
@@ -340,7 +383,12 @@ public sealed class HostDaemonTests : IDisposable
         if (!IsUnix)
             return;
         PrepareInstall();
-        var start = await RunProcessAsync(["start", "--urls", DynamicUrl, "--require-auth"]);
+        var database = Path.Combine(Data, "upgrade.db");
+        var start = await RunProcessAsync(["start", "--require-auth"], new()
+        {
+            ["ASPNETCORE_URLS"] = DynamicUrl,
+            ["PERGA_DB_PATH"] = database
+        });
         Assert.True(start.Code == 0, start.Error);
         var old = Assert.IsType<HostDaemonState>(HostDaemonState.Read(StatePath));
 
@@ -354,13 +402,43 @@ public sealed class HostDaemonTests : IDisposable
         var updated = Assert.IsType<HostDaemonState>(HostDaemonState.Read(StatePath));
         Assert.Equal("v0.1.3", updated.Version);
         Assert.NotEqual(old.Pid, updated.Pid);
-        Assert.Equal(old.HostArgs, updated.HostArgs);
+        Assert.Equal(old.Url, updated.Url);
+        Assert.Equal(database, updated.DbPath);
+        Assert.Equal(["--urls", old.Url.TrimEnd('/'), "--require-auth"], updated.HostArgs);
 
         var uninstall = await RunProcessAsync(["uninstall", "--yes"]);
         Assert.True(uninstall.Code == 0, uninstall.Error);
         Assert.False(Directory.Exists(Install));
         Assert.False(File.Exists(StatePath));
         Assert.True(File.Exists(updated.DbPath));
+    }
+
+    [Theory]
+    [InlineData("upgrade", "DataDir")]
+    [InlineData("upgrade", "DbPath")]
+    [InlineData("uninstall", "DataDir")]
+    [InlineData("uninstall", "DbPath")]
+    public async Task PackageChangesRefuseToRemoveTheRunningDaemonsStorage(string command, string storageSetting)
+    {
+        if (!IsUnix)
+            return;
+        PrepareInstall();
+        var path = Path.Combine(Install, storageSetting == "DataDir" ? "storage" : "perga.db");
+        var start = await RunProcessAsync(["start", "--urls", DynamicUrl, $"--Perga:{storageSetting}={path}"]);
+        Assert.True(start.Code == 0, start.Error);
+        var daemon = Assert.IsType<HostDaemonState>(HostDaemonState.Read(StatePath));
+
+        var installer = Path.Combine(_root.FullName, "installer");
+        await File.WriteAllTextAsync(installer, """printf 'unexpected\n' > "$PERGA_INSTALL_DIR/VERSION" """);
+        var result = command == "upgrade"
+            ? await RunProcessAsync(["upgrade"], new() { ["PERGA_INSTALLER_URL"] = new Uri(installer).AbsoluteUri })
+            : await RunProcessAsync(["uninstall", "--yes"]);
+
+        Assert.Equal(1, result.Code);
+        Assert.Contains("is inside the install directory", result.Error);
+        Assert.Equal("v0.1.2\n", await File.ReadAllTextAsync(Path.Combine(Install, "VERSION")));
+        Assert.True(File.Exists(daemon.DbPath));
+        Assert.Equal(daemon.Pid, HostDaemonState.Read(StatePath)?.Pid);
     }
 
     private async Task CheckExplicitBrowserAsync(string url)

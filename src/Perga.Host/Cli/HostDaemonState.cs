@@ -73,9 +73,9 @@ internal sealed record HostDaemonState(
         {
             process = Process.GetProcessById(Pid);
             var startedAt = process.StartTime.ToUniversalTime().Ticks;
+            var tolerance = TimeSpan.FromSeconds(2).Ticks;
             if (!HasExited(process) &&
-                StartedAtUtcTicks >= startedAt - TimeSpan.FromSeconds(5).Ticks &&
-                StartedAtUtcTicks <= startedAt + TimeSpan.FromSeconds(5).Ticks &&
+                StartedAtUtcTicks >= startedAt - tolerance && StartedAtUtcTicks <= startedAt + tolerance &&
                 process.ProcessName == ProcessName)
             {
                 var owned = process;

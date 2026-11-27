@@ -83,7 +83,9 @@ internal static class HostDaemonCommand
         var previous = TryGetRunningInstance(paths.DataDir, out _);
         if (command == "restart" && previous is not null)
         {
-            options = options.WithPreviousArguments(previous.HostArgs);
+            options = options.WithPreviousArguments(previous, env);
+            if (paths.PreviousDatabaseOverride(previous) is { } dbPath)
+                paths = paths with { DbPath = dbPath, ExplicitDbPath = true };
             await StopInstanceAsync(paths.DataDir, previous, ct).ConfigureAwait(false);
             previous = null;
         }
