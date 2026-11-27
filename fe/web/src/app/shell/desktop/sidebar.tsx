@@ -345,7 +345,7 @@ export function Sidebar({
                   targetLabel={executionTargets?.find((target) => target.id === area.executionTargetId)?.label}
                   management={management(`area:${area.id}`, `Area actions for ${area.name}`)}
                   readReady={readError === null && !readLoading && activityError === null}
-                  areaTracks={tracksByArea.get(area.id) ?? []}
+                  areaTracks={tracksByArea.get(area.id)}
                   activeTrackId={activeTrackId}
                   expanded={preferences.areaExpanded(area.id)}
                   onToggle={(nextExpanded) => preferences.setAreaExpanded(area.id, nextExpanded)}

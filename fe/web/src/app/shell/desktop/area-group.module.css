@@ -7,6 +7,42 @@
     inline-size: 100%;
   }
 
+  /* Scope the surface treatment to the tooltip that renders an Area preview. */
+  [role="tooltip"]:has(.preview) {
+    box-sizing: border-box;
+    inline-size: 14rem;
+    max-inline-size: calc(100vw - var(--space-4));
+    background: var(--paper);
+    border: 1px solid var(--hairline);
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-float);
+  }
+
+  .preview {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--space-3);
+    padding: var(--space-2) var(--space-1);
+  }
+
+  .previewIcon {
+    display: grid;
+    place-items: center;
+    flex: none;
+    inline-size: var(--control-h-sm);
+    block-size: var(--control-h-sm);
+    color: var(--text-2);
+    background: var(--surface-chip);
+    border-radius: var(--radius-sm);
+  }
+
+  .previewDetails {
+    display: grid;
+    gap: var(--space-half);
+    min-inline-size: 0;
+    overflow-wrap: anywhere;
+  }
+
   /*
    * `Show N more` / `Show less` sits in the Track list's column: the rail
    * Track row's height and its leading gutter (4 + 20 + 4), so the text starts

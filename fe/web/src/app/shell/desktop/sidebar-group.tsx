@@ -5,6 +5,7 @@ import { useEffect, useRef, type ReactNode } from 'react';
 import { DropdownMenu, DropdownMenuItem, DropdownMenuDivider } from '@astryxdesign/core/DropdownMenu';
 import type { SidebarMove } from '../../../../../core/view/sidebar-layout.ts';
 import { useCollapsible } from '@astryxdesign/core/Collapsible';
+import { useTooltip } from '@astryxdesign/core/Tooltip';
 
 import { areaOf, type Area } from '../../../../../core/domain/area.ts';
 import { AREA_TRACK_LIMIT, limitAreaTracks, type Track } from '../../../../../core/domain/track.ts';
@@ -54,23 +55,30 @@ type GroupProps = Readonly<{
   management: GroupManagement;
   extraMenuItems?: (origin: DialogOrigin) => ReactNode;
   actions?: ReactNode;
+  disclosurePreview?: ReactNode;
   disclosureRef?: (element: HTMLButtonElement | null) => void;
 }>;
 
 /** Group geometry, disclosure and action slots; hosts supply membership and actions. */
-export function SidebarGroup({ title, label, icon, expanded, onToggle, level, management, extraMenuItems, actions, disclosureRef, children }: GroupProps & {
+export function SidebarGroup({ title, label, icon, expanded, onToggle, level, management, extraMenuItems, actions, disclosurePreview, disclosureRef, children }: GroupProps & {
   children: ReactNode;
 }) {
   const actionRef = useRef<HTMLSpanElement | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
+  const hasPreview = disclosurePreview !== undefined;
+  const preview = useTooltip({ placement: 'end', alignment: 'start', touchTrigger: 'none', isEnabled: hasPreview });
   const presentation = navigationRowPresentation({ kind: 'entry', depth: 0 });
   const disclosure = useCollapsible({ isCollapsible: { isOpen: expanded, onOpenChange: onToggle } });
   const button = <button
-    ref={disclosureRef}
+    ref={(element) => {
+      if (hasPreview) preview.interactionRef(element);
+      disclosureRef?.(element);
+    }}
     type="button"
     data-nc-role="row"
     className={`${styles.areaRow} ${styles.folderRow} ${rowLayout('content')} ${rowLayout('twoActions')}`}
     aria-expanded={disclosure.isOpen}
+    aria-describedby={hasPreview ? preview.describedBy : undefined}
     aria-label={`${disclosure.isOpen ? 'Collapse' : 'Expand'} ${label}`}
     onClick={disclosure.toggle}
   >
@@ -78,14 +86,15 @@ export function SidebarGroup({ title, label, icon, expanded, onToggle, level, ma
       <Icon name={icon} size="md" />
     </span>
     <span className={styles.folderTitleWrap}>
-      <ListText tone={presentation.tone} emphasis="medium" className={styles.areaName} title={title} fadeOverflow>{title}</ListText>
+      <ListText tone={presentation.tone} emphasis="medium" className={styles.areaName} title={hasPreview ? undefined : title} fadeOverflow>{title}</ListText>
       <SpringRotation className={styles.inlineChevron} angle={disclosure.isOpen ? 90 : 0}>
         <Icon name="chevron-right" size="sm" />
       </SpringRotation>
     </span>
   </button>;
   return <div role="group" aria-label={label} className={level === 'section' ? styles.section : styles.areaGroup}>
-    <div className={`${styles.areaRowWrap} ${presentation.className} ${level === 'area' ? rowLayout('revealActions') : ''}`}>
+    <div ref={hasPreview ? preview.positionRef : undefined}
+      className={`${styles.areaRowWrap} ${presentation.className} ${level === 'area' ? rowLayout('revealActions') : ''}`}>
       {level === 'section' ? <h2 className={styles.groupHeading}>{button}</h2> : button}
       <span ref={actionRef} className={`${styles.areaActions} ${rowLayout('inner')}`}>
         <DropdownMenu isMenuOpen={menuOpen} onOpenChange={setMenuOpen} placement="below" button={{
@@ -102,6 +111,7 @@ export function SidebarGroup({ title, label, icon, expanded, onToggle, level, ma
       </span>
       {actions}
     </div>
+    {hasPreview && preview.renderTooltip(disclosurePreview)}
     {disclosure.isOpen && children}
   </div>;
 }

@@ -184,8 +184,8 @@ describe('area row', () => {
       track({ id: 'c' }),
     ];
     renderSidebar({ tracks, tracksByArea: new Map([['c1', tracks]]) });
-    const name = screen.getByTitle('Work');
     const row = screen.getByRole('button', { name: 'Collapse area Work' });
+    const name = within(row).getByText('Work', { exact: true });
     expect(name.textContent).toBe('Work');
     expect(name.closest('button')).toBe(row);
     expect(name.querySelectorAll('[style]').length).toBe(0);
