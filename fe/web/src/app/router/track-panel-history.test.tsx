@@ -44,6 +44,8 @@ function Probe() {
       <button type="button" onClick={() => { openFile(trackId, 'docs/b.md', { line: 12 }); }}>jump in b</button>
       <button type="button" onClick={() => { openFile(trackId, 'docs/b.md', { fromPath: 'resolved/a.md' }); }}>open b from resolved a</button>
       <button type="button" onClick={() => { openFile(trackId, 'docs/c.md'); }}>open file c</button>
+      <button type="button" onClick={() => { openFile(trackId, 'docs/../README.md'); }}>open readme alias</button>
+      <button type="button" onClick={() => { openFile(trackId, 'README.md', { fromPath: 'README.md' }); }}>open canonical readme</button>
       <button type="button" onClick={() => { closeFile(trackId); }}>close file</button>
       <button type="button" onClick={() => { goSameTrack(trackId, { card: undefined }, { replace: true }); }}>drop card</button>
       <button type="button" onClick={() => { goSameTrack('w9', { card: undefined }); }}>drop card on w9</button>
@@ -215,6 +217,20 @@ describe('file history', () => {
     await waitFor(() => { probe('file', 'docs/b.md'); });
     probe('back', 'Report');
     expect(router.history.location.state.ncFileBackPath).toBeUndefined();
+  });
+
+  it('replaces a canonical same-file request and preserves its predecessor', async () => {
+    const router = setup(['/track/w1']);
+    await userEvent.click(await screen.findByText('open file a'));
+    await userEvent.click(screen.getByText('open readme alias'));
+    await waitFor(() => { probe('file', 'docs/../README.md'); });
+    expect(router.history.length).toBe(3);
+    await userEvent.click(screen.getByText('open canonical readme'));
+    await waitFor(() => { probe('file', 'README.md'); });
+    expect(router.history.length).toBe(3);
+    probe('back', '/tmp/a.md');
+    await userEvent.click(screen.getByText('close file'));
+    await waitFor(() => { probe('file', '/tmp/a.md'); });
   });
 
   it('pushes from a cold file and returns to that file before replacing with Report', async () => {

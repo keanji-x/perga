@@ -8,6 +8,5 @@ export type ReadOnlyCodeProps = Readonly<{
   highlightLines?: Readonly<{ start: number; end: number }>;
   highlightRequest?: number;
   wrapLines?: boolean;
-  savedScroll?: Readonly<{ top: number; left: number }>;
-  onScrollOffset?: (offset: Readonly<{ top: number; left: number }>) => void;
+  scrollHighlight?: boolean;
 }>;

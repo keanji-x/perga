@@ -16,6 +16,7 @@ import { bootTestCardRuntime } from './test-card-runtime.ts';
 import { ThemeProvider } from '../theme/public.tsx';
 import { RecentFiles } from '../../features/report/recent-files/public.tsx';
 import { renderPage } from '../../features/track/page/test-fixtures.tsx';
+import { TrackViewProvider, useTrackFileView } from './track-view-state.tsx';
 import '../../styles/entry.css';
 
 afterEach(() => { cleanup(); document.getElementById('root')?.remove(); });
@@ -62,6 +63,49 @@ async function settle() {
 }
 
 function reportPage() { return document.querySelector<HTMLElement>('[data-nc-track-page]')!; }
+
+function FileScrollProbe({ entryKey, height, code }: { entryKey: string; height: number; code: boolean }) {
+  const { restoreScroll } = useTrackFileView('file-track', entryKey, `${entryKey}.md`);
+  const content = <div style={{ height }} />;
+  return <div data-nc-track-page="">
+    <div key={entryKey} data-nc-report-file-viewer="" data-nc-report-file-ready="" data-restoring={restoreScroll}
+      style={{ height: 200, overflow: 'auto' }}>
+      {code ? <div data-nc-code-scroller="" style={{ height: 200, overflow: 'auto' }}>{content}</div> : content}
+    </div>
+  </div>;
+}
+
+it.each([false, true])('retries clamped file restoration without overwriting its saved offset (code=%s)', async code => {
+  const view = (entryKey: string, height: number) => <TrackViewProvider><FileScrollProbe entryKey={entryKey} height={height} code={code} /></TrackViewProvider>;
+  const { rerender } = render(view('a', 1200));
+  const node = () => (code ? document.querySelector<HTMLElement>('[data-nc-code-scroller]')
+    : document.querySelector<HTMLElement>('[data-nc-report-file-viewer]'))!;
+  node().scrollTop = 650;
+  node().dispatchEvent(new Event('scroll'));
+  rerender(view('a', 1200));
+  expect(document.querySelector('[data-nc-report-file-viewer]')?.getAttribute('data-restoring')).toBe('false');
+  expect(node().scrollTop).toBe(650);
+  rerender(view('b', 1200));
+  rerender(view('a', 100));
+  await settle();
+  expect(node().scrollTop).toBe(0);
+  node().dispatchEvent(new Event('scroll'));
+  // Neither a clamped scroll event nor leaving before content grows may replace 650 with zero.
+  rerender(view('b', 1200));
+  rerender(view('a', 100));
+  await settle();
+  rerender(view('a', 1200));
+  await settle();
+  expect(node().scrollTop).toBe(650);
+  expect(document.querySelector('[data-nc-report-file-viewer]')?.getAttribute('data-restoring')).toBe('true');
+
+  rerender(view('b', 1200));
+  rerender(view('a', 100));
+  node().dispatchEvent(new WheelEvent('wheel', { bubbles: true, deltaY: 100 }));
+  rerender(view('a', 1200));
+  await settle();
+  expect(node().scrollTop).toBe(0);
+});
 
 it('resumes independent report positions through real sidebar navigation', async () => {
   await page.viewport(1440, 900);

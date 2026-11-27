@@ -17,7 +17,7 @@ useRouterState
 import { useCallback,useEffect,useLayoutEffect,useMemo,useRef,type ReactNode } from 'react';
 import type { ReportPreparationPort } from '../../features/report/document/preparation.ts';
 import { TrackReportRegion,useTrackReportArrival,useTrackReportPresentation } from './track-report-presentation.tsx';
-import { useTrackViews,useTrackViewState } from './track-view-state.tsx';
+import { useTrackFileView, useTrackViews, useTrackViewState } from './track-view-state.tsx';
 
 import type { ApiTransportPort } from '../../../../core/api/types.ts';
 import type { UnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
@@ -37,7 +37,7 @@ toTrack,trackActivityFromSnapshot,trackDisplayTitle
 } from '../../../../core/domain/track.ts';
 import { parkedWorkerNotices,workbenchTerminalCardIds } from '../../../../core/view/track-page.ts';
 import { ReportEmpty } from '../../features/report/empty/public.tsx';
-import { FileLayoutNav, ReportFileViewer, type FileScrollOffset } from '../../features/report/file-viewer/public.tsx';
+import { FileLayoutNav, ReportFileViewer } from '../../features/report/file-viewer/public.tsx';
 import { ReportOutline } from '../../features/report/outline/public.tsx';
 import { RecentFiles } from '../../features/report/recent-files/public.tsx';
 import { reportSourcePosition,type ReportSourcePosition } from '../../features/report/source/placement.ts';
@@ -164,6 +164,7 @@ export function TrackRouteBody({
   const backFilePath = useRouteFileBackPath();
   const fileEntryKey = useRouterState({ select: (state) => state.location.state.__TSR_key
     ?? (state.location.state.__TSR_index === undefined ? undefined : `index:${state.location.state.__TSR_index}`) });
+  const fileView = useTrackFileView(track.id, fileEntryKey, requestedFilePath);
   const silentFile = useRouterState({ select: (state) => state.location.state.ncFileSilent === true });
   const fileOpenRequest = useRouterState({ select: (state) => state.location.state.ncFileOpenRequest });
   const [resolvedFile, setResolvedFile] = useState<Readonly<{ requested: string; canonical: string }> | null>(null);
@@ -278,9 +279,6 @@ export function TrackRouteBody({
   /* `'rows'` unconditionally: an empty list with a `+` over it is the whole feature. */
   const trackViews = useTrackViews();
   if (trackViews === null) throw new Error('Terminal workbench requires TrackViewProvider');
-  const rememberFileScroll = useCallback((key: string, offset: FileScrollOffset) => {
-    trackViews.ensure(track.id).fileScroll.set(key, offset);
-  }, [track.id, trackViews]);
   const workbench = useTerminalWorkbench({ session: trackViews.terminals.forTrack(track.id), trackId: track.id, cards, defaultCardIds: defaultTerminalIds, ordinaryCardOpen: requestedCardId !== null,
     onHide: () => { if (requestedCardId !== null && cards.some(card => card.id === requestedCardId && card.kind === 'terminal')) goSameTrack(track.id, { card: undefined }, { replace: true }); },
     create: (body, key) => trackMutations.createTerminal(track.id, body, key),
@@ -469,7 +467,8 @@ export function TrackRouteBody({
     )}
   </>;
   let fileViewer: TrackPageProps['fileViewer'];
-  if (requestedFilePath !== null && displayFile !== null) {
+  if (requestedFilePath !== null) {
+    const displayFile = resolvedFile?.requested === requestedFilePath ? resolvedFile.canonical : requestedFilePath;
     const lineSuffix = requestedFileLine === undefined ? undefined : `:${requestedFileLine}`;
     const fullPath = isAbsoluteFilePath(track.agentCwd) && !isAbsoluteFilePath(displayFile) && !/^~(?:\/|$)/.test(displayFile)
       ? joinFilePath(track.agentCwd, displayFile) : displayFile;
@@ -490,9 +489,7 @@ export function TrackRouteBody({
       render: hasBackFocus => (
         <ReportFileViewer
           key={requestedFilePath}
-          scrollKey={fileEntryKey}
-          savedScroll={fileEntryKey === undefined ? undefined : trackViews.ensure(track.id).fileScroll.get(fileEntryKey)}
-          onScrollOffset={rememberFileScroll}
+          {...fileView}
           path={requestedFilePath}
           {...parseFileLine(requestedFileLine)}
           silent={silentFile}

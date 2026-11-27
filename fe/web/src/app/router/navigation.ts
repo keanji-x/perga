@@ -485,6 +485,12 @@ export function hasFilePushedMarker(state: unknown): boolean {
   return (state as Record<string, unknown>)[FILE_PUSHED_STATE_KEY] === true;
 }
 
+function readFileBackPath(state: unknown): string | undefined {
+  if (typeof state !== 'object' || state === null) return undefined;
+  const path = (state as Record<string, unknown>).ncFileBackPath;
+  return typeof path === 'string' ? path : undefined;
+}
+
 export type FileOpenOptions = FileLineLocation & Readonly<{ focus?: boolean; fromPath?: string }>;
 
 export type TrackFileNavigation = Readonly<{
@@ -496,8 +502,7 @@ export type TrackFileNavigation = Readonly<{
 export function useRouteFileBackPath(): string | null {
   const history = useRouter().history as RouterHistory;
   return useRouterState({ select: (state) => hasFilePushedMarker(state.location.state)
-    && history.canGoBack() && typeof state.location.state.ncFileBackPath === 'string'
-    ? state.location.state.ncFileBackPath : null });
+    && history.canGoBack() ? readFileBackPath(state.location.state) ?? null : null });
 }
 
 /** Distinct files push; same-file jumps and surface switches replace. */
@@ -521,7 +526,7 @@ export function useTrackFileNavigation(alias?: TrackRouteAlias): TrackFileNaviga
       return true;
     }
     const currentFile = filePathFromLocation(location);
-    const sameFile = currentFile === path;
+    const sameFile = currentFile === path || (currentFile !== null && options?.fromPath === path);
     const switchingPanel = panelFromLocation(location) !== null;
     const leavingCard = cardIdFromLocation(location) !== null;
     const replace = sameFile || switchingPanel || leavingCard;
@@ -529,10 +534,9 @@ export function useTrackFileNavigation(alias?: TrackRouteAlias): TrackFileNaviga
       (sameFile && hasFilePushedMarker(location.state)) || (switchingPanel && hasPanelPushedMarker(location.state))
     ));
     const backPath = sameFile
-      ? (typeof location.state.ncFileBackPath === 'string' ? location.state.ncFileBackPath : undefined)
+      ? readFileBackPath(location.state)
       : switchingPanel
-        ? (hasPanelPushedMarker(location.state) && typeof location.state.ncFileBackPath === 'string'
-          ? location.state.ncFileBackPath : undefined)
+        ? (hasPanelPushedMarker(location.state) ? readFileBackPath(location.state) : undefined)
         : (!leavingCard && currentFile !== null ? (options?.fromPath ?? currentFile) : undefined);
     void navigate({
       to: trackPath(expectedTrackId, alias),
@@ -602,8 +606,8 @@ export function useTrackPanelNavigation(alias?: TrackRouteAlias): TrackPanelNavi
     }
     const switching = panelFromLocation(location) !== null;
     const switchingFile = filePathFromLocation(location) !== null;
-    const backPath = switchingFile && hasFilePushedMarker(location.state) && typeof location.state.ncFileBackPath === 'string'
-      ? location.state.ncFileBackPath
+    const backPath = switchingFile && hasFilePushedMarker(location.state)
+      ? readFileBackPath(location.state)
       : undefined;
     void navigate({
       to: trackPath(expectedTrackId, alias),

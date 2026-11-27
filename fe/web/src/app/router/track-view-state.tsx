@@ -1,16 +1,17 @@
-import type { FileScrollOffset } from '../../features/report/file-viewer/public.tsx';
 import { createTerminalWorkbenchSessions } from '../../features/track/workbench/public.tsx';
-import { createContext, useContext, useLayoutEffect, useRef, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useLayoutEffect, useMemo, useRef, type ReactNode } from 'react';
 import { useRouterState } from '@tanstack/react-router';
 import { useState } from '../../ui/state/public.ts';
 import { createReportPreparationCache } from '../../features/report/document/preparation.ts';
 import type { TrackSearch } from './track-search.ts';
 
 type ScrollOffset = Readonly<{ top: number; left: number }>;
+type FileScrollPort = 'file' | 'code';
+type FileEntryView = { scroll: Map<FileScrollPort, ScrollOffset>; sourceMode?: boolean };
 type TrackView = {
   search: TrackSearch;
   progressOpen: boolean;
-  fileScroll: Map<string, FileScrollOffset>;
+  fileEntries: Map<string, FileEntryView>;
   scroll: Map<string, ScrollOffset>;
 };
 
@@ -23,7 +24,7 @@ function createTrackViews() {
     ensure: (id: string) => {
       let view = views.get(id);
       if (view === undefined) {
-        view = { search: {}, scroll: new Map(), fileScroll: new Map(), progressOpen: false };
+        view = { search: {}, scroll: new Map(), fileEntries: new Map(), progressOpen: false };
         views.set(id, view);
       }
       return view;
@@ -75,6 +76,122 @@ function portNode(port: ScrollPort) {
   return document.querySelector<HTMLElement>('[data-nc-panel]');
 }
 
+function isUserScrollInput(event: Event, target: Element | null): boolean {
+  if (target === null) return false;
+  if (event.type === 'pointerdown' && target.closest('button, a, input, textarea, select, [role="button"], [contenteditable="true"]') !== null) return false;
+  if (event instanceof KeyboardEvent) {
+    if (!['PageDown', 'PageUp', 'Home', 'End', 'ArrowDown', 'ArrowUp', ' '].includes(event.key)) return false;
+    if (target.closest('input, textarea, select, [contenteditable="true"]') !== null) return false;
+    if (event.key === ' ' && target.closest('button, a, [role="button"]') !== null) return false;
+  }
+  return true;
+}
+
+/** History owns identity; the signed-in Track scope keeps only local view state. */
+export function useTrackFileView(trackId: string, entryKey: string | undefined, filePath: string | null) {
+  const views = useTrackViews();
+  // Never read the live entry during a parent rerender: a fresh visit must not
+  // become a restoration merely because its first scroll has been recorded.
+  const saved = useMemo(() => {
+    const entry = entryKey === undefined ? undefined : views?.get(trackId)?.fileEntries.get(entryKey);
+    return entry === undefined ? undefined : { scroll: new Map(entry.scroll), sourceMode: entry.sourceMode };
+  }, [entryKey, trackId, views]);
+  const ensureEntry = useCallback(() => {
+    if (views === null || entryKey === undefined) return undefined;
+    const entries = views.ensure(trackId).fileEntries;
+    let entry = entries.get(entryKey);
+    if (entry === undefined) {
+      entry = { scroll: new Map() };
+      entries.set(entryKey, entry);
+    }
+    return entry;
+  }, [entryKey, trackId, views]);
+
+  useLayoutEffect(() => {
+    if (filePath === null) return;
+    const entry = ensureEntry();
+    if (entry === undefined) return;
+    const ports: readonly FileScrollPort[] = ['file', 'code'];
+    const pending = new Set(saved?.scroll.keys());
+    const acted = new Set<FileScrollPort>();
+    const observed = new Map<FileScrollPort, HTMLElement>();
+    const resized = new Set<Element>();
+    let frame: number | undefined;
+    const remember = (port: FileScrollPort, node: HTMLElement) => {
+      if (!pending.has(port) && node.isConnected) {
+        entry.scroll.set(port, { top: node.scrollTop, left: node.scrollLeft });
+      }
+    };
+    const scan = () => {
+      const file = document.querySelector<HTMLElement>('[data-nc-report-file-viewer][data-nc-report-file-ready]');
+      for (const port of ports) {
+        const node = port === 'file' ? file : file?.querySelector<HTMLElement>('[data-nc-code-scroller]');
+        if (node == null) continue;
+        observed.set(port, node);
+        if (!pending.has(port) || acted.has(port)) continue;
+        if (port === 'code' && node.dataset.ncCodeScroller === 'measuring') continue;
+        const offset = saved?.scroll.get(port);
+        if (offset === undefined) continue;
+        node.scrollTop = offset.top;
+        node.scrollLeft = offset.left;
+        const clamped = (offset.top > 0 && Math.abs(node.scrollTop - offset.top) > 1)
+          || (offset.left > 0 && Math.abs(node.scrollLeft - offset.left) > 1);
+        if (!clamped) pending.delete(port);
+        else {
+          for (const target of [node, node.firstElementChild]) {
+            if (target !== null && !resized.has(target)) {
+              resized.add(target);
+              resize.observe(target);
+            }
+          }
+          schedule();
+        }
+      }
+    };
+    const schedule = () => {
+      if (frame === undefined) frame = requestAnimationFrame(() => { frame = undefined; scan(); });
+    };
+    const resize = new ResizeObserver(schedule);
+    const mutations = new MutationObserver(scan);
+    const root = document.querySelector('[data-nc-report-file-viewer]') ?? document.querySelector('[data-nc-track-page]');
+    if (root !== null) mutations.observe(root, { childList: true, subtree: true, attributes: true, attributeFilter: ['data-nc-report-file-ready', 'data-nc-code-scroller'] });
+    const input = (event: Event) => {
+      const target = event.target instanceof Element ? event.target : null;
+      if (!isUserScrollInput(event, target)) return;
+      if (target?.closest('[data-nc-report-file-viewer]') == null) return;
+      const port = target.closest('[data-nc-code-scroller]') === null ? 'file' : 'code';
+      acted.add(port);
+      pending.delete(port);
+    };
+    const scroll = (event: Event) => {
+      for (const [port, node] of observed) if (event.target === node) remember(port, node);
+    };
+    scan();
+    document.addEventListener('wheel', input, { capture: true, passive: true });
+    document.addEventListener('touchmove', input, { capture: true, passive: true });
+    document.addEventListener('pointerdown', input, true);
+    document.addEventListener('keydown', input, true);
+    document.addEventListener('scroll', scroll, true);
+    return () => {
+      mutations.disconnect();
+      resize.disconnect();
+      if (frame !== undefined) cancelAnimationFrame(frame);
+      document.removeEventListener('wheel', input, true);
+      document.removeEventListener('touchmove', input, true);
+      document.removeEventListener('pointerdown', input, true);
+      document.removeEventListener('keydown', input, true);
+      document.removeEventListener('scroll', scroll, true);
+      for (const [port, node] of observed) remember(port, node);
+    };
+  }, [ensureEntry, filePath, saved]);
+
+  const onSourceModeChange = useCallback((sourceMode: boolean) => {
+    const entry = ensureEntry();
+    if (entry !== undefined) entry.sourceMode = sourceMode;
+  }, [ensureEntry]);
+  return { restoreScroll: saved !== undefined && saved.scroll.size > 0, initialSourceMode: saved?.sourceMode, onSourceModeChange };
+}
+
 /** One input subscription per Track. The nearest scrollport owns each gesture. */
 function useTrackScrollPorts(views: ReturnType<typeof useTrackViews>, trackId: string,
   reportReady: boolean, hash: string) {
@@ -93,12 +210,7 @@ function useTrackScrollPorts(views: ReturnType<typeof useTrackViews>, trackId: s
       const node = target?.closest('[data-nc-panel], [data-nc-track-page]');
       const port = ports.find(candidate => node != null && portNode(candidate) === node);
       if (port === undefined) return;
-      if (event.type === 'pointerdown' && target?.closest('button, a, input, textarea, select, [role="button"], [contenteditable="true"]') !== null) return;
-      if (event instanceof KeyboardEvent) {
-        if (!['PageDown', 'PageUp', 'Home', 'End', 'ArrowDown', 'ArrowUp', ' '].includes(event.key)) return;
-        if (target?.closest('input, textarea, select, [contenteditable="true"]') !== null) return;
-        if (event.key === ' ' && target?.closest('button, a, [role="button"]') !== null) return;
-      }
+      if (!isUserScrollInput(event, target)) return;
       acted.add(port);
     };
     const restore = (port: ScrollPort) => {

@@ -972,3 +972,24 @@ it('restores the code scrollport through file Back and recenters a repeated open
   await expect.poll(highlightIsCentered).toBe(true);
   expect(scroller().scrollTop).toBeGreaterThan(40);
 });
+
+it.each(['md', 'html'])('restores the selected Source view and code scroll offset for %s through file Back', async extension => {
+  await page.viewport(1280, 850);
+  fileFixture();
+  await openComposer();
+  const path = `docs/notes.${extension}`;
+  await typeCommand(`/open ${path}${extension === 'md' ? ':125' : ''}`);
+  const file = () => page.getByRole('region', { name: `File ${path}`, exact: true });
+  await file().getByRole('button', { name: 'Source', exact: true }).click();
+  await expect.element(file().getByLabelText('Code')).toBeVisible();
+  const scroller = () => file().element().querySelector<HTMLElement>('[data-nc-code-scroller]')!;
+  await expect.poll(() => scroller().scrollHeight - scroller().clientHeight).toBeGreaterThan(400);
+  scroller().scrollTop = 320;
+  await expect.poll(() => scroller().scrollTop).toBe(320);
+  await typeCommand('/open src/code.ts:12');
+  await expect.poll(markedLines).toEqual(['content on line 12']);
+  await page.getByRole('button', { name: `Back to ${path}`, exact: true }).click();
+  await expect.element(file().getByRole('button', { name: 'Source', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await expect.element(file().getByLabelText('Code')).toBeVisible();
+  await expect.poll(() => scroller().scrollTop).toBe(320);
+});

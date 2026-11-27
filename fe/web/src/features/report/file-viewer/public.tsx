@@ -1,7 +1,7 @@
 import { LayerDepthProvider, useLayerDismissal } from '@astryxdesign/core/Layer';
 import { ReadOnlyCode } from '../../../ui/code/public.tsx';
 import { usePortalLightbox } from '../../../ui/lightbox/public.tsx';
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 
 import type { WorkspaceFilePort } from '../../../../../core/domain/fs.ts';
 import type { TrackReport } from '../../../../../core/domain/report.ts';
@@ -16,8 +16,6 @@ import styles from './report-file-viewer.module.css';
 
 export { FileLayoutNav, type FileLayoutNavProps } from './file-layout-nav.tsx';
 
-export type FileScrollOffset = Readonly<{ top: number; left: number; code?: Readonly<{ top: number; left: number }> }>;
-
 function basename(path: string): string {
   return path.slice(path.lastIndexOf('/') + 1);
 }
@@ -29,11 +27,11 @@ function basename(path: string): string {
  * card board.
  */
 export function ReportFileViewer({
-  path, line, endLine, silent = false, openRequest, files, fileRoot, wide, onClose, hasBackFocus, onFileOpened, onOpenFileLink, onOpenSourceLink, linkPreview, sourceInsertion, scrollKey, savedScroll, onScrollOffset,
+  path, line, endLine, silent = false, openRequest, files, fileRoot, wide, onClose, hasBackFocus, onFileOpened, onOpenFileLink, onOpenSourceLink, linkPreview, sourceInsertion, restoreScroll = false, initialSourceMode, onSourceModeChange,
 }: Readonly<{
-  scrollKey?: string;
-  savedScroll?: FileScrollOffset;
-  onScrollOffset?: (scrollKey: string, offset: FileScrollOffset) => void;
+  restoreScroll?: boolean;
+  initialSourceMode?: boolean;
+  onSourceModeChange?: (sourceMode: boolean) => void;
   path: string;
   line?: number;
   endLine?: number;
@@ -59,25 +57,9 @@ export function ReportFileViewer({
     [line, endLine],
   );
   const ready = resource.kind === 'loaded' || resource.kind === 'html' || resource.kind === 'image';
-  const savedScrollRef = useRef(savedScroll);
-  savedScrollRef.current = savedScroll;
-  const scrollRef = useRef({ key: scrollKey, offset: { ...(savedScroll ?? { top: 0, left: 0 }) } });
-  if (scrollRef.current.key !== scrollKey) {
-    scrollRef.current = { key: scrollKey, offset: { ...(savedScroll ?? { top: 0, left: 0 }) } };
-  }
-  const scroll = scrollRef.current.offset;
-  const rememberScroll = useCallback((offset: Partial<FileScrollOffset>) => {
-    Object.assign(scroll, offset);
-    if (scrollKey !== undefined) onScrollOffset?.(scrollKey, { ...scroll });
-  }, [scroll, scrollKey, onScrollOffset]);
-  const rememberCodeScroll = useCallback((code: Readonly<{ top: number; left: number }>) => {
-    rememberScroll({ code });
-  }, [rememberScroll]);
-  const settledScrollKey = useRef<string | undefined | null>(null);
-  const restoredJumpKey = useRef<string | null>(null);
   const isMarkdownFile = resource.kind === 'loaded' && resource.format === 'markdown';
   const markdownJumpKey = JSON.stringify([path, line, endLine, openRequest]);
-  const [markdownSourceKey, setMarkdownSourceKey] = useState<string | null>(null);
+  const [markdownSourceKey, setMarkdownSourceKey] = useState<string | null>(() => initialSourceMode === true ? markdownJumpKey : null);
   const showMarkdownSource = isMarkdownFile && highlightLines !== undefined && markdownSourceKey === markdownJumpKey;
   const markdown = isMarkdownFile && !showMarkdownSource;
   const markdownText = markdown ? resource.text : null;
@@ -95,19 +77,7 @@ export function ReportFileViewer({
   useLayoutEffect(() => {
     const container = layerRef.current;
     if (!ready || container === null) return;
-    if (settledScrollKey.current !== scrollKey) {
-      settledScrollKey.current = scrollKey;
-      restoredJumpKey.current = null;
-      const saved = savedScrollRef.current;
-      if (saved !== undefined) {
-        container.scrollTop = saved.top;
-        container.scrollLeft = saved.left;
-        restoredJumpKey.current = markdownJumpKey;
-      }
-    }
-    if (restoredJumpKey.current === markdownJumpKey) return;
-    restoredJumpKey.current = null;
-    if (!markdown || highlightLines === undefined) return;
+    if (restoreScroll || !markdown || highlightLines === undefined) return;
     const target = container.querySelector<HTMLElement>('[data-nc-markdown-highlight]');
     if (target === null) return;
     const containerRect = container.getBoundingClientRect();
@@ -117,15 +87,7 @@ export function ReportFileViewer({
       : 24;
     const nextTop = container.scrollTop + (targetRect.top - containerRect.top) - offset;
     container.scrollTop = Math.max(0, nextTop);
-  }, [ready, scrollKey, markdown, highlightLines, markdownJumpKey, markdownText]);
-
-  useLayoutEffect(() => {
-    const container = layerRef.current;
-    if (!ready || container === null || scrollKey === undefined) return;
-    return () => {
-      rememberScroll({ top: container.scrollTop, left: container.scrollLeft });
-    };
-  }, [ready, scrollKey, rememberScroll]);
+  }, [ready, markdown, highlightLines, openRequest, markdownText, restoreScroll]);
 
   useLayerDismissal({
     isActive: true,
@@ -146,7 +108,7 @@ export function ReportFileViewer({
         type="button"
         className={styles.view}
         aria-pressed={markdown}
-        onClick={() => { setMarkdownSourceKey(null); }}
+        onClick={() => { setMarkdownSourceKey(null); onSourceModeChange?.(false); }}
       >
         Preview
       </button>
@@ -154,7 +116,7 @@ export function ReportFileViewer({
         type="button"
         className={styles.view}
         aria-pressed={showMarkdownSource}
-        onClick={() => { setMarkdownSourceKey(markdownJumpKey); }}
+        onClick={() => { setMarkdownSourceKey(markdownJumpKey); onSourceModeChange?.(true); }}
       >
         Source
       </button>
@@ -164,13 +126,9 @@ export function ReportFileViewer({
   return (
     <LayerDepthProvider><div
       ref={layerRef}
-      onScroll={event => {
-        if (ready && scrollKey !== undefined) {
-          rememberScroll({ top: event.currentTarget.scrollTop, left: event.currentTarget.scrollLeft });
-        }
-      }}
       className={highlightLines === undefined || markdown ? styles.layer : `${styles.layer} ${styles.lineJump}`}
       data-nc-report-file-viewer=""
+      data-nc-report-file-ready={ready ? '' : undefined}
       data-nc-report-file-wide={wide ? '' : undefined}
       data-nc-escape-layer=""
       role="region"
@@ -211,8 +169,9 @@ export function ReportFileViewer({
           text={resource.text}
           url={resource.url}
           highlightLines={highlightLines}
-          savedScroll={savedScroll?.code}
-          onScrollOffset={rememberCodeScroll}
+          restoreScroll={restoreScroll}
+          initialSourceMode={initialSourceMode}
+          onSourceModeChange={onSourceModeChange}
         />}
         {resource.kind === 'loaded' && markdown && (
           <div className={styles.markdown}>
@@ -236,7 +195,7 @@ export function ReportFileViewer({
             {markdownViewToggle}
             {resource.truncated && <p className={styles.notice}>Showing the first 2 MiB of this file.</p>}
             <div data-nc-report-file-source=""><ReadOnlyCode text={resource.text} source={{ kind: 'filename', value: resource.path }}
-              savedScroll={savedScroll?.code} onScrollOffset={rememberCodeScroll}
+              scrollHighlight={!restoreScroll}
               highlightLines={highlightLines} highlightRequest={openRequest} wrapLines={showMarkdownSource} /></div>
           </div>
         )}
@@ -245,25 +204,26 @@ export function ReportFileViewer({
   );
 }
 
-function HtmlFileView({ path, text, url, highlightLines, savedScroll, onScrollOffset }: Readonly<{
+function HtmlFileView({ path, text, url, highlightLines, restoreScroll, initialSourceMode, onSourceModeChange }: Readonly<{
   path: string;
   text: string;
   url: string;
-  savedScroll?: Readonly<{ top: number; left: number }>;
-  onScrollOffset?: (offset: Readonly<{ top: number; left: number }>) => void;
+  restoreScroll?: boolean;
+  initialSourceMode?: boolean;
+  onSourceModeChange?: (sourceMode: boolean) => void;
   highlightLines?: Readonly<{ start: number; end: number }>;
 }>) {
-  const [view, setView] = useState(highlightLines === undefined ? 'page' : 'source');
+  const [sourceMode, setSourceMode] = useState(initialSourceMode ?? highlightLines !== undefined);
   return <div className={styles.pageWrap}>
     <div className={styles.views} role="group" aria-label="Page view">
-      <button type="button" className={styles.view} aria-pressed={view === 'page'} onClick={() => { setView('page'); }}>Page</button>
-      <button type="button" className={styles.view} aria-pressed={view === 'source'} onClick={() => { setView('source'); }}>Source</button>
+      <button type="button" className={styles.view} aria-pressed={!sourceMode} onClick={() => { setSourceMode(false); onSourceModeChange?.(false); }}>Page</button>
+      <button type="button" className={styles.view} aria-pressed={sourceMode} onClick={() => { setSourceMode(true); onSourceModeChange?.(true); }}>Source</button>
     </div>
-    {view === 'page'
+    {!sourceMode
       ? <WorkspaceHtmlPage url={url} title={path} />
       : <div className={styles.pageSource} data-nc-report-file-source=""><ReadOnlyCode
         text={text} source={{ kind: 'filename', value: path }} highlightLines={highlightLines}
-        savedScroll={savedScroll} onScrollOffset={onScrollOffset} /></div>}
+        scrollHighlight={!restoreScroll} /></div>}
   </div>;
 }
 
