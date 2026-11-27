@@ -19,6 +19,8 @@ type FailureTable,
 type WriteClass,type WriteFailure,type WriteText
 } from './failure-class.js';
 
+export type TrackPreviewKind = NonNullable<TrackOverlayItemDto['previewKind']>;
+
 /** Live activity projection for a track; neutral values mean idle/quiet. */
 export type TrackActivity = Readonly<{
   notifiableSessions: readonly NotifiableSessionWatermark[];
@@ -26,6 +28,8 @@ export type TrackActivity = Readonly<{
   attention: AttentionKind;
   /** Latest finite server timestamp from the overlay/snapshot; used for recent-activity ordering. */
   recentAt: number | null;
+  previewText: string | null;
+  previewKind: TrackPreviewKind | null;
   /** Open asks requiring user input on this track. */
   attentionItems: readonly ActivityItem[];
   /** Per-session activity verdicts, keyed by session id. Read through `cardActivityOf`. */
@@ -39,6 +43,8 @@ export const NEUTRAL_ACTIVITY: TrackActivity = Object.freeze({
   working: false,
   attention: 'none',
   recentAt: null,
+  previewText: null,
+  previewKind: null,
   attentionItems: Object.freeze([]),
   cards: Object.freeze({}),
 });
@@ -134,6 +140,8 @@ export function trackActivityFromOverlay(item: TrackOverlayItemDto): TrackActivi
     working: item.isWorking,
     attention,
     recentAt: finiteOrNull(item.updatedAtMs),
+    previewText: item.previewText,
+    previewKind: item.previewKind,
     attentionItems: Object.freeze([]),
     cards: Object.freeze({}),
   };
@@ -320,6 +328,8 @@ export function trackActivityFromSnapshot(snapshot: TrackAggregateSnapshotDto): 
     working,
     attention,
     recentAt: finiteOrNull(snapshot.track.updatedAtMs),
+    previewText: null,
+    previewKind: null,
     attentionItems: closed ? Object.freeze([]) : openAskItems,
     cards,
   };

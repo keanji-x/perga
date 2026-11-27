@@ -42,6 +42,8 @@ function activity(id: string, at: number): TrackOverlayItemDto {
     workspaceFailed: false,
     notifiableSessions: [{ sessionId: `s-${id}`, lastNotifiableTurnAtMs: at }],
     updatedAtMs: at,
+    previewText: null,
+    previewKind: null,
   };
 }
 

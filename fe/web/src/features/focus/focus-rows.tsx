@@ -1,15 +1,16 @@
 import type { ReactElement, ReactNode } from 'react';
 
+import { notificationPlainText, type ActivityState } from '../../../../core/domain/activity.ts';
 import { areaOf, type Area } from '../../../../core/domain/area.ts';
 import { formatRelativeTimestamp, type RelativeTimeFormatters } from '../../../../core/domain/relative-time.ts';
-import { trackStatusTag, type FocusFeedProjection, type FocusTab } from '../../../../core/domain/track-groups.ts';
+import type { FocusFeedProjection, FocusTab } from '../../../../core/domain/track-groups.ts';
 import {
-  hasFailed, isWorking, trackDisplayTitle, trackRecentAt, type Track,
+  isClosed, trackActivityState, trackDisplayTitle, trackRecentAt, type Track, type TrackPreviewKind,
 } from '../../../../core/domain/track.ts';
 import { Icon } from '../../ui/icon/public.tsx';
 import styles from './focus-home.module.css';
 
-export function highlightMatch(text: string, query: string): ReactNode {
+function highlightMatch(text: string, query: string): ReactNode {
   const needle = query.trim();
   if (needle === '') return text;
   const lower = text.toLowerCase();
@@ -32,55 +33,30 @@ export function highlightMatch(text: string, query: string): ReactNode {
   return parts;
 }
 
-export function FocusAttentionCard({
-  track,
-  areas,
-  query,
-  now,
-  formatters,
-  onOpenTrack,
-}: Readonly<{
-  track: Track;
-  areas: readonly Area[];
-  query: string;
-  now: number;
-  formatters: RelativeTimeFormatters;
-  onOpenTrack: (trackId: string) => void;
-}>) {
-  const area = areaOf(track.areaId, areas);
-  const failed = hasFailed(track);
-  const time = formatRelativeTimestamp(trackRecentAt(track), now, formatters);
-  return (
-    <li>
-      <button
-        type="button"
-        className={`${styles.attentionCard} ${failed ? styles.attentionCardFailed : ''}`}
-        onClick={() => onOpenTrack(track.id)}
-      >
-        <span className={styles.feedTopRow}>
-          <span className={styles.feedTitle}>{highlightMatch(trackDisplayTitle(track.title), query)}</span>
-          {time !== '' && <span className={styles.feedTime}>{time}</span>}
-        </span>
-        <span className={styles.feedMetaRow}>
-          <span className={styles.feedTags}>
-            <span className={`${styles.tag} ${failed ? styles.tagError : styles.tagWarn}`}>
-              {failed ? 'Needs repair' : 'Waiting on you'}
-            </span>
-            {area !== undefined && <span className={styles.tag}>{highlightMatch(area.name, query)}</span>}
-          </span>
-          <span className={styles.replyCue}>
-            <span>{failed ? 'Inspect' : 'Reply'}</span>
-            <Icon name="chevron-right" size="sm" />
-          </span>
-        </span>
-      </button>
-    </li>
-  );
+type RowLabel = Readonly<{ text: string; tone?: string; pill?: true }>;
+
+function activityLabel(track: Track, activity: ActivityState): RowLabel | null {
+  switch (activity) {
+    case 'failed': return contentLabel('error');
+    case 'attention': return contentLabel('ask');
+    case 'working': return { text: 'Running', tone: styles.statusWorking };
+    case 'unread':
+    case 'quiet': return isClosed(track) ? { text: 'Closed' } : null;
+  }
+}
+
+function contentLabel(kind: TrackPreviewKind | null): RowLabel | null {
+  switch (kind) {
+    case 'ask': return { text: 'Waiting on you', tone: styles.statusWarn };
+    case 'error': return { text: 'Needs repair', tone: styles.statusError, pill: true };
+    case 'reply': return { text: 'Reply', tone: styles.statusReply };
+    case 'summary': return { text: 'Summary' };
+    case null: return null;
+  }
 }
 
 export function FocusTrackRow({
   track,
-  mode,
   areas,
   query,
   now,
@@ -89,7 +65,6 @@ export function FocusTrackRow({
   onOpenTrack,
 }: Readonly<{
   track: Track;
-  mode: 'unread' | 'pinned' | 'open' | 'closed';
   areas: readonly Area[];
   query: string;
   now: number;
@@ -100,41 +75,51 @@ export function FocusTrackRow({
   const area = areaOf(track.areaId, areas);
   const title = trackDisplayTitle(track.title);
   const time = formatRelativeTimestamp(trackRecentAt(track), now, formatters);
-  const working = isWorking(track);
-  const status = trackStatusTag(track, mode === 'unread' || unread);
+  const unreadWhileOpen = !isClosed(track) && unread;
+  const activity = trackActivityState(track, unreadWhileOpen);
+  const preview = track.previewText === null ? '' : notificationPlainText(track.previewText).trim();
+  const status = activityLabel(track, activity);
+  const content = preview === '' ? null : contentLabel(track.previewKind);
+  const prefix = content ?? status;
+  const failed = activity === 'failed';
+  const showUnreadUpdate = activity === 'unread' && preview === '';
+  const announceUnread = unreadWhileOpen && !showUnreadUpdate;
 
   return (
-    <li className={styles.groupItem}>
-      <button type="button" className={styles.feedRow} onClick={() => onOpenTrack(track.id)}>
-        <span className={styles.feedGutter} aria-hidden="true">
-          {mode === 'pinned' ? (
-            <Icon name="pin" size="sm" />
-          ) : mode === 'unread' || unread ? (
-            <span className={styles.unreadDot} />
-          ) : working ? (
-            <span className={styles.workingDot} />
-          ) : (
-            <Icon name="file" size="sm" />
+    <li className={failed ? `${styles.feedItem} ${styles.feedItemFailed}` : styles.feedItem}>
+      <button type="button" className={failed ? `${styles.feedRow} ${styles.feedRowFailed}` : styles.feedRow} onClick={() => onOpenTrack(track.id)}>
+        <span className={styles.feedTopRow}>
+          <span className={activity === 'quiet' ? styles.feedTitle : `${styles.feedTitle} ${styles.feedTitleActive}`}>
+            {highlightMatch(title, query)}
+          </span>
+          {(area !== undefined || time !== '') && (
+            <span className={styles.feedMeta}>
+              {area !== undefined && <span className={styles.feedArea}>{highlightMatch(area.name, query)}</span>}
+              {time !== '' && <span>{area !== undefined ? ` · ${time}` : time}</span>}
+            </span>
           )}
         </span>
-        <span className={styles.feedBody}>
-          <span className={styles.feedTopRow}>
-            <span className={`${styles.feedTitle} ${mode === 'pinned' || mode === 'closed' ? styles.feedTitleCalm : ''}`}>
-              {highlightMatch(title, query)}
+        <span className={preview === '' ? styles.feedFallback : styles.feedPreview}>
+          {status !== null && content !== null && status.text !== content.text && (
+            <><span className={status.tone ?? styles.statusMuted}>{status.text}</span>{status.pill || content.pill ? ' ' : ' · '}</>
+          )}
+          {prefix !== null && (
+            <span className={prefix.tone ?? styles.statusMuted}>{prefix.text}{preview !== '' && !prefix.pill ? ': ' : ''}</span>
+          )}
+          {prefix?.pill && preview !== '' && ' '}
+          {preview || (prefix === null && (
+            <span className={showUnreadUpdate ? styles.statusReply : styles.statusMuted}>
+              {showUnreadUpdate ? 'Unread update' : track.pinnedAt !== null ? 'Pinned' : 'No updates yet'}
             </span>
-            {time !== '' && <span className={styles.feedTime}>{time}</span>}
-          </span>
-          <span className={styles.feedTags}>
-            {area !== undefined && <span className={styles.tag}>{highlightMatch(area.name, query)}</span>}
-            {status !== null && <span className={styles.metaSubtle}>· {status.text}</span>}
-          </span>
+          ))}
         </span>
+        {announceUnread && <span className={styles.srOnly}> Unread</span>}
       </button>
     </li>
   );
 }
 
-export type FocusEmptyCopy = Readonly<{
+type FocusEmptyCopy = Readonly<{
   icon: ReactElement;
   title: string;
   description: string;

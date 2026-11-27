@@ -7,6 +7,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Perga.Host.IntegrationTests.Fixtures;
 using Perga.Host.Serialization;
 using Perga.Kernel;
+using Perga.Kernel.Events;
 using Perga.Kernel.Ports;
 using Perga.VcsKit;
 
@@ -481,6 +482,11 @@ public sealed class TrackCreationTests
         using var failed = await host.AuthenticatedClient.GetAsync($"/api/v1/tracks/{trackId}");
         Assert.Equal("failed", (await ReadAsync(failed)).GetProperty("workspacePreparation").GetString());
         Assert.Empty(host.AgentRuntime.ExecutedTurns);
+        using var overlays = await host.AuthenticatedClient.GetAsync("/api/v1/overlays");
+        overlays.EnsureSuccessStatusCode();
+        var preview = Assert.Single((await ReadAsync(overlays)).GetProperty("tracks").EnumerateArray());
+        Assert.Equal("error", preview.GetProperty("previewKind").GetString());
+        Assert.Equal("Workspace initialization exited with code 1.", preview.GetProperty("previewText").GetString());
 
         using var retry = await host.AuthenticatedClient.PostAsync($"/api/v1/tracks/{trackId}/workspace/retry", null);
         Assert.Equal(HttpStatusCode.Accepted, retry.StatusCode);
@@ -492,6 +498,43 @@ public sealed class TrackCreationTests
         Assert.Equal(HttpStatusCode.OK, msg.StatusCode);
         await kernel.WaitForTrackIdleAsync(trackId).WaitAsync(Deadline);
         Assert.Single(host.AgentRuntime.ExecutedTurns);
+    }
+
+    [Theory]
+    [InlineData(false, "failed", "Workspace initialization exited with code 1.")]
+    [InlineData(true, "unknown", "Workspace initialization failed.")]
+    public async Task WorkspaceFailurePublishesTrackUpdateAfterWritingTheTerminalState(bool thrown, string phase, string detail)
+    {
+        var runner = new GatedSetup();
+        await using var host = CreateHost(runner);
+        var areaId = await CreateAreaAsync(host);
+        using var created = await PostAsync(host, "/api/v1/tracks", "track-draft",
+            new { areaId, templateId = "gated-setup" });
+        var trackId = (await ReadAsync(created)).GetProperty("track").GetProperty("id").GetString();
+        await runner.Entered.Task.WaitAsync(Deadline);
+
+        var kernel = host.Services.GetRequiredService<IPergaKernel>();
+        using var events = kernel.EventBus.Subscribe();
+        var pending = Assert.Single((await kernel.GetOverlaysAsync()).Tracks);
+        Assert.True(pending.IsWorking);
+        if (thrown)
+            runner.Release.SetException(new InvalidOperationException("Details internal to the runner"));
+        else
+            runner.Release.SetResult(1);
+
+        using var timeout = new CancellationTokenSource(Deadline);
+        Perga.Contracts.EventEnvelopeDto update;
+        do { update = await events.Reader.ReadAsync(timeout.Token); }
+        while (update.Kind != KernelEventKinds.TrackUpdated || update.TrackId != trackId);
+        Assert.NotNull(update.EventId);
+
+        using var failed = await host.AuthenticatedClient.GetAsync($"/api/v1/tracks/{trackId}");
+        Assert.Equal(phase, (await ReadAsync(failed)).GetProperty("workspacePreparation").GetString());
+        var settled = Assert.Single((await kernel.GetOverlaysAsync()).Tracks);
+        Assert.False(settled.IsWorking);
+        Assert.True(settled.WorkspaceFailed);
+        Assert.Equal(Perga.Contracts.TrackOverlayPreviewKind.Error, settled.PreviewKind);
+        Assert.Equal(detail, settled.PreviewText);
     }
 
     [Fact]

@@ -10,6 +10,7 @@ public enum SemanticVerdict { None, Accepted, Rejected }
 public enum AskDelivery { Wake, Hold }
 public enum AskStatus { Open, Answered, Withdrawn }
 public enum TerminalStatus { Running, Exited }
+public enum TrackOverlayPreviewKind { Ask, Error, Reply, Summary }
 
 public sealed record ExecutionTargetDto(
     string Id,
@@ -306,7 +307,9 @@ public sealed record TrackOverlayDto(
     bool HasBlockedSession,
     bool WorkspaceFailed,
     long UpdatedAtMs,
-    IReadOnlyList<NotifiableSessionWatermarkDto>? NotifiableSessions = null);
+    IReadOnlyList<NotifiableSessionWatermarkDto>? NotifiableSessions = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? PreviewText = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] TrackOverlayPreviewKind? PreviewKind = null);
 
 public sealed record NotifiableSessionWatermarkDto(string SessionId, long LastNotifiableTurnAtMs);
 public sealed record ReadReceiptDto(string Kind, string TargetId, long ReadThroughMs, bool ManualUnread);

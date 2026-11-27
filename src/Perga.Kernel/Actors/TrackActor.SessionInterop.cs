@@ -353,13 +353,33 @@ public sealed partial class TrackActor
         _taskCoordinator.TryGetActiveOwningTaskCore(session.Id) is not { } task ||
         task.Status is TaskRunStatus.Running or TaskRunStatus.Verifying;
 
-    internal Task<TrackOverlayDto> MergeOverlayAsync(TrackOverlayDto stored, CancellationToken ct) =>
+    internal Task<TrackOverlayDto> MergeOverlayAsync(StoredTrackOverlay stored, CancellationToken ct) =>
         EnqueueAsync(async _ =>
         {
             await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
             var open = _track.ClosedAtMs is null;
             var sessions = _sessions.Values.Where(s => s.ArchivedAtMs is null).ToArray();
-            return stored with
+            var openAsks = open ? _interactions.OpenAsks() : [];
+            var blockingSessions = open ? sessions.Where(s =>
+                string.Equals(s.Status, "unknown", StringComparison.OrdinalIgnoreCase) && IsSessionBlockingTrack(s)).ToArray() : [];
+            var workspaceFailed = open && _workspacePreparation?.Phase is
+                WorkspacePreparationPhase.Failed or WorkspacePreparationPhase.Unknown;
+            var ask = openAsks.OrderByDescending(a => a.CreatedAtMs)
+                .ThenByDescending(a => a.Id, StringComparer.Ordinal).FirstOrDefault();
+            var blockedError = blockingSessions
+                .OrderByDescending(s => s.UpdatedAtMs).ThenByDescending(s => s.Id, StringComparer.Ordinal)
+                .Select(s => !string.IsNullOrWhiteSpace(s.UnknownLastError) ? s.UnknownLastError
+                    : stored.Overlay.HasBlockedSession && stored.BlockedErrorSource is { } source &&
+                      source.SessionId == s.Id && source.TurnId == s.UnknownTurnId
+                        ? stored.Previews.BlockedSessionError : null)
+                .FirstOrDefault(error => !string.IsNullOrWhiteSpace(error));
+            var (previewText, previewKind) = TrackOverlayPreview.Select(stored.Previews with
+            {
+                Ask = ask?.Questions.FirstOrDefault()?.Question,
+                BlockedSessionError = blockedError,
+                WorkspaceError = workspaceFailed ? _workspacePreparation?.FailureDetail : null
+            }, open);
+            return stored.Overlay with
             {
                 IsWorking = open && (
                     IsSessionOrTaskRunning ||
@@ -368,19 +388,18 @@ public sealed partial class TrackActor
                         WorkspacePreparationPhase.Initializing or WorkspacePreparationPhase.Provisioned ||
                     sessions.Any(s => IsWorkingSessionStatus(s.Status)) ||
                     _taskCoordinator.Snapshot().Any(t => t.Status is TaskRunStatus.Running or TaskRunStatus.Verifying)),
-                OpenAskCount = open ? _interactions.OpenAsks().Count(a => a.Status == AskStatus.Open) : 0,
+                OpenAskCount = openAsks.Length,
                 PendingApprovalCount = open ? PendingApprovalCount : 0,
-                HasBlockedSession = open && sessions.Any(s =>
-                    string.Equals(s.Status, "unknown", StringComparison.OrdinalIgnoreCase) &&
-                    IsSessionBlockingTrack(s)),
-                WorkspaceFailed = open && _workspacePreparation?.Phase is
-                    WorkspacePreparationPhase.Failed or WorkspacePreparationPhase.Unknown,
-                UpdatedAtMs = Math.Max(stored.UpdatedAtMs, LastActivityAtMs),
+                HasBlockedSession = blockingSessions.Length > 0,
+                WorkspaceFailed = workspaceFailed,
+                UpdatedAtMs = Math.Max(stored.Overlay.UpdatedAtMs, LastActivityAtMs),
                 NotifiableSessions = sessions
                     .Where(s => !_taskCoordinator.IsTaskOwnedSessionCore(s.Id) && s.LastNotifiableTurnAtMs is not null)
                     .OrderBy(s => s.Id, StringComparer.Ordinal)
                     .Select(s => new NotifiableSessionWatermarkDto(s.Id, s.LastNotifiableTurnAtMs!.Value))
-                    .ToArray()
+                    .ToArray(),
+                PreviewText = previewText,
+                PreviewKind = previewKind
             };
         }, ct, touchActivity: false);
 

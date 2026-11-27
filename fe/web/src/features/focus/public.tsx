@@ -10,7 +10,7 @@ import { Icon } from '../../ui/icon/public.tsx';
 import { LoadingStatus } from '../../ui/loading-status/public.tsx';
 import { useState } from '../../ui/state/public.ts';
 import styles from './focus-home.module.css';
-import { FocusAttentionCard, focusEmptyCopy, FocusTrackRow } from './focus-rows.tsx';
+import { focusEmptyCopy, FocusTrackRow } from './focus-rows.tsx';
 
 function tabLabel(tab: FocusTab): string {
   switch (tab) {
@@ -37,7 +37,7 @@ export type MobileFocusHomeProps = Readonly<{
   nowMs?: number;
 }>;
 
-/** Full-bleed mobile Focus home feed: prioritized Attention -> Unread -> Pinned with inline search and filters. */
+/** Full-bleed mobile Focus home feed with inline search and filters. */
 export function MobileFocusHome({
   areas,
   tracks,
@@ -132,7 +132,7 @@ export function MobileFocusHome({
   });
 
   const showAreaFilter = shownAreas.length > 1 && (searchOpen || effectiveAreaId !== null);
-  const openSectionTitle = tab === 'focus' ? 'Other matches' : 'Open tracks';
+  const rows = [...feed.attention, ...feed.unread, ...feed.pinned, ...feed.open, ...feed.closed];
 
   return (
     <div ref={pageRef} className={styles.page} data-nc-mobile-focus="">
@@ -251,146 +251,60 @@ export function MobileFocusHome({
       </nav>
 
       <div className={styles.feedScroll} data-nc-focus-feed="">
-        {error !== null && <ErrorBox message={error} onRetry={onRetry} />}
-        {loading && feed.totalShown === 0 && <LoadingStatus padded>Loading workspace…</LoadingStatus>}
+        {error !== null && (
+          <div className={styles.feedNotice}>
+            <ErrorBox message={error} onRetry={onRetry} />
+          </div>
+        )}
+        {loading && feed.totalShown === 0 && (
+          <div className={styles.feedNotice}>
+            <LoadingStatus padded>Loading workspace…</LoadingStatus>
+          </div>
+        )}
 
         {feed.hasActiveScope && (
-          <div className={styles.searchSummary}>
+          <div className={styles.utilityBar}>
             <span>
               Found <span className={styles.searchSummaryCount}>{feed.totalShown}</span>{' '}
               {feed.totalShown === 1 ? 'track' : 'tracks'}
               {activeArea !== undefined ? ` in ${activeArea.name}` : ''}
             </span>
-            <button type="button" className={styles.sectionAction} onClick={resetFilters}>
+            <button type="button" className={styles.utilityAction} onClick={resetFilters}>
               Reset
             </button>
           </div>
         )}
 
-        {feed.attention.length > 0 && (
-          <section className={styles.section} aria-label="Needs attention">
-            <div className={styles.sectionHeader}>
-              <h2 className={styles.sectionTitle}>Needs attention</h2>
-              <span className={styles.sectionMeta}>{feed.attention.length} waiting</span>
-            </div>
-            <ul className={styles.attentionList}>
-              {feed.attention.map((track) => (
-                <FocusAttentionCard
-                  key={track.id}
-                  track={track}
-                  areas={shownAreas}
-                  query={query}
-                  now={now}
-                  formatters={timeFormatters}
-                  onOpenTrack={onOpenTrack}
-                />
-              ))}
-            </ul>
-          </section>
+        {tab === 'unread' && feed.allUnreadInScope.length > 0 && (
+          <div className={styles.utilityBar}>
+            <span>{feed.allUnreadInScope.length} unread</span>
+            {onMarkAllRead !== undefined && (
+              <button
+                type="button"
+                className={styles.utilityAction}
+                onClick={() => onMarkAllRead(feed.allUnreadInScope)}
+              >
+                Mark all read
+              </button>
+            )}
+          </div>
         )}
 
-        {feed.unread.length > 0 && (
-          <section className={styles.section} aria-label="Unread updates">
-            <div className={styles.sectionHeader}>
-              <h2 className={styles.sectionTitle}>Unread updates</h2>
-              {onMarkAllRead !== undefined && feed.allUnreadInScope.length > 0 && (
-                <button
-                  type="button"
-                  className={styles.sectionAction}
-                  onClick={() => onMarkAllRead(feed.allUnreadInScope)}
-                >
-                  Mark all read
-                </button>
-              )}
-            </div>
-            <ul className={styles.groupCard}>
-              {feed.unread.map((track) => (
-                <FocusTrackRow
-                  key={track.id}
-                  track={track}
-                  mode="unread"
-                  areas={shownAreas}
-                  query={query}
-                  now={now}
-                  unread={isUnread(track)}
-                  formatters={timeFormatters}
-                  onOpenTrack={onOpenTrack}
-                />
-              ))}
-            </ul>
-          </section>
-        )}
-
-        {feed.pinned.length > 0 && (
-          <section className={styles.section} aria-label="Pinned">
-            <div className={styles.sectionHeader}>
-              <h2 className={styles.sectionTitle}>Pinned</h2>
-              <span className={styles.sectionMeta}>{feed.pinned.length}</span>
-            </div>
-            <ul className={styles.groupCard}>
-              {feed.pinned.map((track) => (
-                <FocusTrackRow
-                  key={track.id}
-                  track={track}
-                  mode="pinned"
-                  areas={shownAreas}
-                  query={query}
-                  now={now}
-                  unread={isUnread(track)}
-                  formatters={timeFormatters}
-                  onOpenTrack={onOpenTrack}
-                />
-              ))}
-            </ul>
-          </section>
-        )}
-
-        {feed.open.length > 0 && (
-          <section className={styles.section} aria-label={openSectionTitle}>
-            <div className={styles.sectionHeader}>
-              <h2 className={styles.sectionTitle}>{openSectionTitle}</h2>
-              <span className={styles.sectionMeta}>{feed.open.length}</span>
-            </div>
-            <ul className={styles.groupCard}>
-              {feed.open.map((track) => (
-                <FocusTrackRow
-                  key={track.id}
-                  track={track}
-                  mode="open"
-                  areas={shownAreas}
-                  query={query}
-                  now={now}
-                  unread={isUnread(track)}
-                  formatters={timeFormatters}
-                  onOpenTrack={onOpenTrack}
-                />
-              ))}
-            </ul>
-          </section>
-        )}
-
-        {feed.closed.length > 0 && (
-          <section className={styles.section} aria-label="Closed tracks">
-            <div className={styles.sectionHeader}>
-              <h2 className={styles.sectionTitle}>Closed tracks</h2>
-              <span className={styles.sectionMeta}>{feed.closed.length}</span>
-            </div>
-            <ul className={styles.groupCard}>
-              {feed.closed.map((track) => (
-                <FocusTrackRow
-                  key={track.id}
-                  track={track}
-                  mode="closed"
-                  areas={shownAreas}
-                  query={query}
-                  now={now}
-                  unread={isUnread(track)}
-                  formatters={timeFormatters}
-                  onOpenTrack={onOpenTrack}
-                />
-              ))}
-            </ul>
-          </section>
+        {rows.length > 0 && (
+          <ul className={styles.feed} aria-label="Tracks">
+            {rows.map((track) => (
+              <FocusTrackRow
+                key={track.id}
+                track={track}
+                areas={shownAreas}
+                query={query}
+                now={now}
+                unread={isUnread(track)}
+                formatters={timeFormatters}
+                onOpenTrack={onOpenTrack}
+              />
+            ))}
+          </ul>
         )}
 
         {!loading && error === null && feed.totalShown === 0 && (

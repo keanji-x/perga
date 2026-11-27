@@ -14,6 +14,37 @@ namespace Perga.Host.IntegrationTests;
 
 public sealed class ReadReceiptIntegrationTests
 {
+    [Fact]
+    public async Task OverlayReadSurvivesMalformedAskWhenTheActiveActorIsCold()
+    {
+        await using var cluster = new PergaHostTestCluster();
+        var kernel = cluster.Services.GetRequiredService<IPergaKernel>();
+        var area = await kernel.CreateAreaAsync(new("Overlay test", DefaultCwd: cluster.DataDir));
+        var snapshot = await kernel.CreateTrackAsync(new(AreaId: area.Id, Title: "Damaged ask", Cwd: cluster.DataDir));
+        var trackId = snapshot.Track.Id;
+        await kernel.WaitForTrackIdleAsync(trackId).WaitAsync(TimeSpan.FromSeconds(10));
+        await kernel.Actors.RemoveAndDisposeAsync(trackId);
+
+        var store = (SqliteTrackStore)cluster.Services.GetRequiredService<ITrackStore>();
+        await using var conn = new SqliteConnection($"Data Source={store.Options.GetFullDbPath()};Pooling=False");
+        await conn.OpenAsync();
+        using var command = conn.CreateCommand();
+        command.CommandText = """
+            INSERT INTO asks(id, track_id, status, questions_json, created_at_ms)
+            VALUES ('damaged', $track, 'open', '[invalid', 1);
+            """;
+        command.Parameters.AddWithValue("$track", trackId);
+        await command.ExecuteNonQueryAsync();
+        kernel.Actors.GetOrActivate(trackId);
+
+        var overlays = await cluster.AuthenticatedClient.GetFromJsonAsync<TrackOverlaysResponseDto>(
+            "/api/v1/overlays", PergaJsonDefaults.ApiOptions);
+        var overlay = Assert.Single(overlays!.Tracks);
+        Assert.Equal(trackId, overlay.TrackId);
+        Assert.Equal(1, overlay.OpenAskCount);
+        Assert.Null(overlay.PreviewKind);
+    }
+
     [Theory]
     [InlineData("read")]
     [InlineData("unread")]

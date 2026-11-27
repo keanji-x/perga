@@ -18,11 +18,11 @@ import { createUnauthorizedChannel } from '../../../../core/api/unauthorized.ts'
 import { trackReportLinkUrl } from '../../../../core/domain/report.ts';
 import { withReadReceipts,type ReadReceiptsKernel } from '../providers/read-receipts-fixture.tsx';
 import type { UiPreferences } from '../providers/ui-preferences.tsx';
-import { ThemeProvider } from '../theme/public.tsx';
+import { ThemeProvider,type ThemeStorage } from '../theme/public.tsx';
 import { createAppRouter } from './public.tsx';
 import { bootTestCardRuntime } from './test-card-runtime.ts';
 
-export function renderDailyFixture({ history, identity, shareScope, routeProbe, withTransport, strict = false, initial = '/', plannerProvider = 'codex', failChanges = false, emptyWorkspace = false, extraPlanner = false, projectTitle = 'Project evidence', reportBody, reply, onCommit, uiPreferences, receipts, prepareReport = prepareReportDocument, stream, }: Readonly<{ stream?: UnconfiguredEventStream; history?: RouterHistory; identity?: SessionIdentity; shareScope?: unknown; routeProbe?: ReactNode; withTransport?: (transport: ApiTransportPort) => ApiTransportPort; strict?: boolean; prepareReport?: ReportPreparationPort; plannerProvider?: AgentProvider; uiPreferences?: UiPreferences; receipts?: ReadReceiptsKernel; initial?: string; failChanges?: boolean; emptyWorkspace?: boolean; extraPlanner?: boolean; projectTitle?: string; reportBody?: string; reply?: (request: ApiRequest) => ApiTransportResponse | undefined | Promise<ApiTransportResponse | undefined>; onCommit?: () => void;  }> = {}) {
+export function renderDailyFixture({ history, identity, shareScope, routeProbe, withTransport, strict = false, initial = '/', plannerProvider = 'codex', failChanges = false, emptyWorkspace = false, extraPlanner = false, projectTitle = 'Project evidence', reportBody, reply, onCommit, uiPreferences, receipts, themeStorage, prepareReport = prepareReportDocument, stream, }: Readonly<{ stream?: UnconfiguredEventStream; history?: RouterHistory; identity?: SessionIdentity; shareScope?: unknown; routeProbe?: ReactNode; withTransport?: (transport: ApiTransportPort) => ApiTransportPort; strict?: boolean; prepareReport?: ReportPreparationPort; plannerProvider?: AgentProvider; uiPreferences?: UiPreferences; themeStorage?: ThemeStorage; receipts?: ReadReceiptsKernel; initial?: string; failChanges?: boolean; emptyWorkspace?: boolean; extraPlanner?: boolean; projectTitle?: string; reportBody?: string; reply?: (request: ApiRequest) => ApiTransportResponse | undefined | Promise<ApiTransportResponse | undefined>; onCommit?: () => void;  }> = {}) {
   const requests: ApiRequest[] = [];
   const area = { id: 'daily-area', name: 'system', color: '#6574cd', sortOrder: 0, kind: 'system', createdAtMs: 1, updatedAtMs: 1 };
   const projectArea = { ...area, id: 'project-area', name: 'Project', kind: 'user' };
@@ -102,7 +102,7 @@ export function renderDailyFixture({ history, identity, shareScope, routeProbe, 
       cursor={{ read: () => null, write: () => undefined, adopt: () => undefined, clear: () => undefined }} />
     {authenticated}
   </LiveConnectionProvider>;
-  const tree = <Profiler id="daily-fixture" onRender={onCommit ?? (() => undefined)}><QueryClientProvider client={client}><ThemeProvider storage={{ getItem: () => null, setItem: () => undefined }}>{eventContent}</ThemeProvider></QueryClientProvider></Profiler>;
+  const tree = <Profiler id="daily-fixture" onRender={onCommit ?? (() => undefined)}><QueryClientProvider client={client}><ThemeProvider storage={themeStorage}>{eventContent}</ThemeProvider></QueryClientProvider></Profiler>;
   render(strict ? <StrictMode>{tree}</StrictMode> : tree, { container });
   return { router, requests, client };
 }

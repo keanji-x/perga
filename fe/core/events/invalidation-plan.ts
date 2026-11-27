@@ -96,6 +96,7 @@ function policies(): PolicyMap {
     [eventKeys.trackDetail(event.data.id), eventKeys.trackViews(event.data.id)],
   )),
 'report.updated': plan((event) => result([
+    eventKeys.overlaysByKind('track'),
     ...(event.data.track_id
       ? [eventKeys.trackDetail(event.data.track_id), eventKeys.trackViews(event.data.track_id)]
       : [eventKeys.trackDetailPrefix(), eventKeys.trackViewsPrefix()]),

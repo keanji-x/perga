@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using Perga.Kernel;
 using ZstdSharp;
 
 namespace Perga.Storage.Sqlite;
@@ -107,6 +108,7 @@ internal sealed class ColdBlobStore
             writer.WriteNumber("bytes", rawBytes.Length);
             writer.WriteString("preview", preview);
             WriteToolResultIdentity(writer, payload);
+            WriteTextPreview(writer, payload);
             writer.WriteEndObject();
         }
 
@@ -224,6 +226,24 @@ internal sealed class ColdBlobStore
         }
 
         return Encoding.UTF8.GetString(buffer.GetBuffer(), 0, (int)buffer.Length);
+    }
+
+    private static void WriteTextPreview(Utf8JsonWriter writer, JsonElement payload)
+    {
+        if (payload.ValueKind != JsonValueKind.Object ||
+            !payload.TryGetProperty("text", out var text) || text.ValueKind != JsonValueKind.String)
+            return;
+
+        string? value;
+        try { value = text.GetString(); }
+        catch (InvalidOperationException)
+        {
+            // Raw JSON can preserve unpaired surrogates even when the string cannot be decoded.
+            return;
+        }
+
+        if (TrackOverlayPreview.Normalize(value) is { } preview)
+            writer.WriteString("textPreview", preview);
     }
 
     private static bool WriteToolResultIdentity(Utf8JsonWriter writer, JsonElement payload)

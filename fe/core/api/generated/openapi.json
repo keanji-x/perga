@@ -5782,6 +5782,32 @@
           "pendingApprovalCount": {
             "type": "integer"
           },
+          "previewKind": {
+            "anyOf": [
+              {
+                "enum": [
+                  "ask",
+                  "error",
+                  "reply",
+                  "summary"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "previewText": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "trackId": {
             "type": "string"
           },

@@ -6,6 +6,7 @@ import { z } from 'zod';
 import { formatFileLine, isFilePath } from '../domain/report-file.js';
 import { flowOutcomeSchema } from '../domain/report-flow.js';
 import { memoryUpdatedPayloadSchema } from '../domain/memory.js';
+import type { TrackOverlayDto } from './generated/wire.js';
 import type { ApiDecodeFailure } from './types.js';
 
 export const systemInfoDtoSchema = z.object({
@@ -688,6 +689,8 @@ export const readReceiptDtoSchema = z.object({
 });
 export const readReceiptsResponseDtoSchema = z.object({ baselineMs: z.number().int().nonnegative(), receipts: z.array(readReceiptDtoSchema) });
 
+type WirePreviewKind = NonNullable<TrackOverlayDto['previewKind']>;
+
 export const trackOverlayItemDtoSchema = z.object({
   trackId: z.string(),
   areaId: z.string(),
@@ -698,6 +701,10 @@ export const trackOverlayItemDtoSchema = z.object({
   workspaceFailed: z.boolean().default(false),
   notifiableSessions: z.array(notifiableSessionWatermarkSchema).nullish().transform(v => v ?? []),
   updatedAtMs: z.number().default(0),
+  previewText: z.string().nullable().default(null),
+  previewKind: z.enum({
+    ask: 'ask', error: 'error', reply: 'reply', summary: 'summary',
+  } satisfies { [Kind in WirePreviewKind]: Kind }).nullable().default(null),
 });
 export type TrackOverlayItemDto = z.infer<typeof trackOverlayItemDtoSchema>;
 

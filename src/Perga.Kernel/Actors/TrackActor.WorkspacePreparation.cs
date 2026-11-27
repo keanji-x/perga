@@ -84,15 +84,18 @@ public sealed partial class TrackActor
         {
             var env = Env;
             var driver = env.WorkspaceDrivers.GetRequired(_track.WorkspaceDriver);
-            _workspacePreparation = preparation with { Phase = WorkspacePreparationPhase.Pending };
+            _workspacePreparation = preparation with { Phase = WorkspacePreparationPhase.Pending, FailureDetail = null };
             _workspacePreparationJob = TrackBackgroundJob(() => PrepareWorkspaceAsync(preparation, env, driver, _actorShutdownCts.Token));
         }
     }
 
     private async Task PrepareWorkspaceAsync(WorkspacePreparation initial, IExecutionEnvironment env, IWorkspaceDriver driver, CancellationToken ct)
     {
-        var preparation = initial with { Phase = initial.Spec is null
-            ? WorkspacePreparationPhase.Provisioning : WorkspacePreparationPhase.Mounting };
+        var preparation = initial with
+        {
+            Phase = initial.Spec is null ? WorkspacePreparationPhase.Provisioning : WorkspacePreparationPhase.Mounting,
+            FailureDetail = null
+        };
         if (!await _store.TryClaimWorkspacePreparationAsync(TrackId, initial.Phase, preparation, ct).ConfigureAwait(false))
         {
             await EnqueueAsync(_ => RefreshWorkspacePreparationCoreAsync(ct), ct).ConfigureAwait(false);
@@ -123,7 +126,9 @@ public sealed partial class TrackActor
                 {
                     Phase = result.TimedOut ? WorkspacePreparationPhase.Unknown
                         : result.ExitCode == 0 ? WorkspacePreparationPhase.Ready
-                        : WorkspacePreparationPhase.Failed
+                        : WorkspacePreparationPhase.Failed,
+                    FailureDetail = result.TimedOut ? "Workspace initialization timed out."
+                        : result.ExitCode == 0 ? null : $"Workspace initialization exited with code {result.ExitCode}."
                 };
             }
             else
@@ -135,7 +140,11 @@ public sealed partial class TrackActor
         }
         catch (WorkspaceBackendUnavailableException) when (preparation.Phase == WorkspacePreparationPhase.Provisioning)
         {
-            preparation = preparation with { Phase = WorkspacePreparationPhase.Failed };
+            preparation = preparation with
+            {
+                Phase = WorkspacePreparationPhase.Failed,
+                FailureDetail = "The workspace backend was unavailable during provisioning."
+            };
         }
         catch
         {
@@ -143,7 +152,14 @@ public sealed partial class TrackActor
             {
                 Phase = preparation.Phase == WorkspacePreparationPhase.Mounting ||
                         (preparation.Phase == WorkspacePreparationPhase.Provisioning && preparation.RepeatableProvision)
-                    ? WorkspacePreparationPhase.Failed : WorkspacePreparationPhase.Unknown
+                    ? WorkspacePreparationPhase.Failed : WorkspacePreparationPhase.Unknown,
+                FailureDetail = preparation.Phase switch
+                {
+                    WorkspacePreparationPhase.Provisioning => "Workspace provisioning failed.",
+                    WorkspacePreparationPhase.Mounting => "Workspace mounting failed.",
+                    WorkspacePreparationPhase.Initializing => "Workspace initialization failed.",
+                    _ => "Workspace preparation failed."
+                }
             };
         }
 
@@ -152,12 +168,11 @@ public sealed partial class TrackActor
             var readyTrack = preparation.Phase == WorkspacePreparationPhase.Ready
                 ? _track with { Cwd = mounted!.MergedCwd, WorkspaceSpec = JsonHelpers.ToElement(preparation.Spec) }
                 : null;
-            var evt = readyTrack is null ? null : new EventEnvelopeDto(
-                null, _track.AreaId, TrackId, KernelEventKinds.TrackUpdated, JsonHelpers.ToElement(readyTrack), NowMs());
+            var evt = new EventEnvelopeDto(
+                null, _track.AreaId, TrackId, KernelEventKinds.TrackUpdated, JsonHelpers.ToElement(readyTrack ?? _track), NowMs());
             try
             {
-                if (evt is not null)
-                    await _eventHub.EnsureInitializedFromStoreAsync(_store, ct).ConfigureAwait(false);
+                await _eventHub.EnsureInitializedFromStoreAsync(_store, ct).ConfigureAwait(false);
                 await _store.SaveWorkspacePreparationAsync(TrackId, preparation, readyTrack, evt, ct).ConfigureAwait(false);
             }
             catch
@@ -172,18 +187,19 @@ public sealed partial class TrackActor
             }
 
             _workspacePreparation = preparation;
-            if (readyTrack is null)
-                return;
-
-            _track = readyTrack;
-            _mountedWorkspace = mounted;
+            if (readyTrack is not null)
+            {
+                _track = readyTrack;
+                _mountedWorkspace = mounted;
+            }
             try
             {
-                await _eventHub.PublishSyncedAfterStoreWriteAsync(_store, evt!, ct, allowFallback: false).ConfigureAwait(false);
+                await _eventHub.PublishSyncedAfterStoreWriteAsync(_store, evt, ct, allowFallback: false).ConfigureAwait(false);
             }
             finally
             {
-                await ResumeWorkspaceWorkCoreAsync(ct).ConfigureAwait(false);
+                if (readyTrack is not null)
+                    await ResumeWorkspaceWorkCoreAsync(ct).ConfigureAwait(false);
             }
         }, ct).ConfigureAwait(false);
     }

@@ -159,6 +159,7 @@ public sealed class SqliteMigratorTests
             Assert.Equal("0031_session_message_attachments.sql", migrator.Migrations[30].Name);
             Assert.Equal("0032_memory_tracks.sql", migrator.Migrations[31].Name);
             Assert.Equal("0033_track_origin.sql", migrator.Migrations[32].Name);
+            Assert.Equal("0034_assistant_preview_index.sql", migrator.Migrations[33].Name);
             await migrator.MigrateAsync(dbPath);
 
             // Idempotent re-run on already-initialized v1 database must not create a spurious backup.
@@ -176,6 +177,7 @@ public sealed class SqliteMigratorTests
             Assert.Equal(SqliteMigrator.CurrentSchemaVersion, await conn.ExecuteScalarAsync<long>("SELECT MAX(version) FROM schema_migrations;"));
             Assert.Equal(1L, await conn.ExecuteScalarAsync<long>("SELECT COUNT(*) FROM pragma_table_info('tracks') WHERE name = 'origin_track_id';"));
             Assert.Equal(1L, await conn.ExecuteScalarAsync<long>("SELECT partial FROM pragma_index_list('tracks') WHERE name = 'idx_tracks_origin';"));
+            Assert.Equal(1L, await conn.ExecuteScalarAsync<long>("SELECT partial FROM pragma_index_list('session_items') WHERE name = 'idx_items_session_assistant_latest';"));
             Assert.Equal(1L, await conn.ExecuteScalarAsync<long>("SELECT COUNT(*) FROM pragma_table_info('areas') WHERE name = 'execution_target_id';"));
             Assert.Equal(3L, await conn.ExecuteScalarAsync<long>("SELECT COUNT(*) FROM pragma_table_info('tracks') WHERE name IN ('flow_spec_json', 'flow_rev', 'flow_file_sha256');"));
             Assert.Equal(4L, await conn.ExecuteScalarAsync<long>("SELECT COUNT(*) FROM pragma_table_info('tasks') WHERE name IN ('trigger_run_key', 'outcome', 'outcome_summary', 'archived_at_ms');"));
@@ -263,6 +265,7 @@ public sealed class SqliteMigratorTests
                 "idx_turns_session_idx",
                 "idx_turns_session_epoch",
                 "idx_items_session",
+                "idx_items_session_assistant_latest",
                 "idx_items_turn",
                 "idx_inputs_delivery",
                 "idx_asks_track",
