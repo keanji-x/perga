@@ -8,9 +8,9 @@ Self-contained native packages for **macOS on Apple Silicon (`arm64`)** and **Li
 
 Perga moves multi-day and multi-week work — maintaining a repository, driving engineering OKRs, or running ongoing investment research — out of drifting chat sessions. Each goal gets its own isolated **Track**: conversation stays in the side pane while the main view continuously distills a read-only living report backed by kernel-verified facts. Orchestrate parallel workers across the CLIs you already use (**Claude Code, Codex, Antigravity, OpenCode, Kimi, Qwen, Devin, Factory, Grok, CodeBuddy, Qoder**, and more) with lightweight protocols, enforced cross-model review, background external watches, and shared human-AI Markdown memory.
 
-![Perga workspace: living report, parallel multi-model flow, PR CI watch, and side-pane Lead steering](docs/assets/hero.png)
+![Perga desktop workspace and mobile PWA Focus home: living report, parallel multi-model flow, PR CI watch, side-pane Lead steering, and mobile triage](docs/assets/hero.png)
 
-*A multi-worker delivery Track: living report and 4-stage flow (`Claude Sonnet 5.5` + `Gemini 4 Neon` workers, read-only `GPT-6.2 Astra` audit, PR CI watch) in the main pane, with `Lead` steering (`Claude Opus 5.5`) in the margin.*
+*Desktop workspace (living report, 4-stage multi-model flow, PR CI watch, and margin `Lead` steering) alongside the mobile PWA `Focus` inbox (`Needs attention`, `Unread updates`, and `Pinned`) synced to the same local workspace.*
 
 ## Key Capabilities
 
