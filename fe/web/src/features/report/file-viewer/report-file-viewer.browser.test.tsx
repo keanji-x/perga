@@ -243,3 +243,31 @@ it('renders Markdown with a line citation as formatted prose scrolled to the tar
   });
   expect(document.querySelector('[data-nc-report-file-source]')).toBeNull();
 });
+
+it.each([false, true])('keeps reading position across parent renders and accepts new line requests (restored=%s)', async restored => {
+  const port = files('notes.md', Array.from({ length: 160 }, (_, index) => `Paragraph ${index + 1}\n`).join('\n'));
+  const onClose = vi.fn();
+  const view = (restoreScroll: boolean, openRequest = 1, line = 120) => (
+    <div style={{ position: 'relative', width: 800, height: 400 }}>
+      <ReportFileViewer path="notes.md" files={port} fileRoot="/repo" wide onClose={onClose}
+        restoreScroll={restoreScroll} line={line} openRequest={openRequest} />
+    </div>
+  );
+  const { rerender } = render(view(restored));
+  await waitFor(() => expect(document.querySelector('[data-nc-markdown-highlight]')).not.toBeNull());
+  const layer = document.querySelector<HTMLElement>('[data-nc-report-file-viewer]')!;
+  if (restored) expect(layer.scrollTop).toBe(0);
+  layer.scrollTop = 600;
+  // Parent rerenders retain the entry's initial restoration decision.
+  rerender(view(restored));
+  expect(layer.scrollTop).toBe(600);
+  // A new open request gets a fresh history entry, so highlighting can center.
+  rerender(view(false, 2));
+  expect(layer.scrollTop).toBeGreaterThan(600);
+  const centered = layer.scrollTop;
+  layer.scrollTop = 600;
+  rerender(view(false, 3));
+  expect(layer.scrollTop).toBe(centered);
+  rerender(view(false, 3, 10));
+  expect(layer.scrollTop).toBeLessThan(centered);
+});

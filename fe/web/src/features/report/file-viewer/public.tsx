@@ -27,8 +27,11 @@ function basename(path: string): string {
  * card board.
  */
 export function ReportFileViewer({
-  path, line, endLine, silent = false, openRequest, files, fileRoot, wide, onClose, hasBackFocus, onFileOpened, onOpenFileLink, onOpenSourceLink, linkPreview, sourceInsertion,
+  path, line, endLine, silent = false, openRequest, files, fileRoot, wide, onClose, hasBackFocus, onFileOpened, onOpenFileLink, onOpenSourceLink, linkPreview, sourceInsertion, restoreScroll = false, initialSourceMode, onSourceModeChange,
 }: Readonly<{
+  restoreScroll?: boolean;
+  initialSourceMode?: boolean;
+  onSourceModeChange?: (sourceMode: boolean) => void;
   path: string;
   line?: number;
   endLine?: number;
@@ -53,9 +56,10 @@ export function ReportFileViewer({
     () => (line === undefined ? undefined : { start: line, end: endLine ?? line }),
     [line, endLine],
   );
+  const ready = resource.kind === 'loaded' || resource.kind === 'html' || resource.kind === 'image';
   const isMarkdownFile = resource.kind === 'loaded' && resource.format === 'markdown';
   const markdownJumpKey = JSON.stringify([path, line, endLine, openRequest]);
-  const [markdownSourceKey, setMarkdownSourceKey] = useState<string | null>(null);
+  const [markdownSourceKey, setMarkdownSourceKey] = useState<string | null>(() => initialSourceMode === true ? markdownJumpKey : null);
   const showMarkdownSource = isMarkdownFile && highlightLines !== undefined && markdownSourceKey === markdownJumpKey;
   const markdown = isMarkdownFile && !showMarkdownSource;
   const markdownText = markdown ? resource.text : null;
@@ -71,9 +75,9 @@ export function ReportFileViewer({
   }, [path, line, endLine, silent, openRequest]);
 
   useLayoutEffect(() => {
-    if (!markdown || highlightLines === undefined) return;
     const container = layerRef.current;
-    if (container === null) return;
+    if (!ready || container === null) return;
+    if (restoreScroll || !markdown || highlightLines === undefined) return;
     const target = container.querySelector<HTMLElement>('[data-nc-markdown-highlight]');
     if (target === null) return;
     const containerRect = container.getBoundingClientRect();
@@ -83,7 +87,7 @@ export function ReportFileViewer({
       : 24;
     const nextTop = container.scrollTop + (targetRect.top - containerRect.top) - offset;
     container.scrollTop = Math.max(0, nextTop);
-  }, [markdown, highlightLines, openRequest, markdownText]);
+  }, [ready, markdown, highlightLines, openRequest, markdownText, restoreScroll]);
 
   useLayerDismissal({
     isActive: true,
@@ -104,7 +108,7 @@ export function ReportFileViewer({
         type="button"
         className={styles.view}
         aria-pressed={markdown}
-        onClick={() => { setMarkdownSourceKey(null); }}
+        onClick={() => { setMarkdownSourceKey(null); onSourceModeChange?.(false); }}
       >
         Preview
       </button>
@@ -112,7 +116,7 @@ export function ReportFileViewer({
         type="button"
         className={styles.view}
         aria-pressed={showMarkdownSource}
-        onClick={() => { setMarkdownSourceKey(markdownJumpKey); }}
+        onClick={() => { setMarkdownSourceKey(markdownJumpKey); onSourceModeChange?.(true); }}
       >
         Source
       </button>
@@ -124,6 +128,7 @@ export function ReportFileViewer({
       ref={layerRef}
       className={highlightLines === undefined || markdown ? styles.layer : `${styles.layer} ${styles.lineJump}`}
       data-nc-report-file-viewer=""
+      data-nc-report-file-ready={ready ? '' : undefined}
       data-nc-report-file-wide={wide ? '' : undefined}
       data-nc-escape-layer=""
       role="region"
@@ -164,6 +169,9 @@ export function ReportFileViewer({
           text={resource.text}
           url={resource.url}
           highlightLines={highlightLines}
+          restoreScroll={restoreScroll}
+          initialSourceMode={initialSourceMode}
+          onSourceModeChange={onSourceModeChange}
         />}
         {resource.kind === 'loaded' && markdown && (
           <div className={styles.markdown}>
@@ -187,6 +195,7 @@ export function ReportFileViewer({
             {markdownViewToggle}
             {resource.truncated && <p className={styles.notice}>Showing the first 2 MiB of this file.</p>}
             <div data-nc-report-file-source=""><ReadOnlyCode text={resource.text} source={{ kind: 'filename', value: resource.path }}
+              scrollHighlight={!restoreScroll}
               highlightLines={highlightLines} highlightRequest={openRequest} wrapLines={showMarkdownSource} /></div>
           </div>
         )}
@@ -195,22 +204,26 @@ export function ReportFileViewer({
   );
 }
 
-function HtmlFileView({ path, text, url, highlightLines }: Readonly<{
+function HtmlFileView({ path, text, url, highlightLines, restoreScroll, initialSourceMode, onSourceModeChange }: Readonly<{
   path: string;
   text: string;
   url: string;
+  restoreScroll?: boolean;
+  initialSourceMode?: boolean;
+  onSourceModeChange?: (sourceMode: boolean) => void;
   highlightLines?: Readonly<{ start: number; end: number }>;
 }>) {
-  const [view, setView] = useState(highlightLines === undefined ? 'page' : 'source');
+  const [sourceMode, setSourceMode] = useState(initialSourceMode ?? highlightLines !== undefined);
   return <div className={styles.pageWrap}>
     <div className={styles.views} role="group" aria-label="Page view">
-      <button type="button" className={styles.view} aria-pressed={view === 'page'} onClick={() => { setView('page'); }}>Page</button>
-      <button type="button" className={styles.view} aria-pressed={view === 'source'} onClick={() => { setView('source'); }}>Source</button>
+      <button type="button" className={styles.view} aria-pressed={!sourceMode} onClick={() => { setSourceMode(false); onSourceModeChange?.(false); }}>Page</button>
+      <button type="button" className={styles.view} aria-pressed={sourceMode} onClick={() => { setSourceMode(true); onSourceModeChange?.(true); }}>Source</button>
     </div>
-    {view === 'page'
+    {!sourceMode
       ? <WorkspaceHtmlPage url={url} title={path} />
       : <div className={styles.pageSource} data-nc-report-file-source=""><ReadOnlyCode
-        text={text} source={{ kind: 'filename', value: path }} highlightLines={highlightLines} /></div>}
+        text={text} source={{ kind: 'filename', value: path }} highlightLines={highlightLines}
+        scrollHighlight={!restoreScroll} /></div>}
   </div>;
 }
 

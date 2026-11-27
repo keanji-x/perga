@@ -11,9 +11,11 @@ import styles from './code.module.css';
 
 const noHighlights = Object.freeze([] as const);
 
-export function ReadOnlyPane({ text, source, theme, highlightLines, highlightRequest, wrapLines = false }: ReadOnlyCodeProps) {
+export function ReadOnlyPane({ text, source, theme, highlightLines, highlightRequest, wrapLines = false, scrollHighlight = true }: ReadOnlyCodeProps) {
   const parent = useRef<HTMLDivElement | null>(null);
   const viewRef = useRef<EditorView | null>(null);
+  const initialTextRef = useRef(text);
+  const sourceRef = useRef({ kind: source.kind, value: source.value });
   const [configuration] = useState(() => new Compartment());
   const [highlights] = useState(() => new Compartment());
   const startLine = highlightLines?.start;
@@ -39,16 +41,37 @@ export function ReadOnlyPane({ text, source, theme, highlightLines, highlightReq
     ...(wrapLines ? [EditorView.lineWrapping] : []),
     ...(support === null ? [] : [support]),
   ], [support, theme, wrapLines]);
+  const initialExtensionsRef = useRef(extensions);
+  const appliedExtensionsRef = useRef<typeof extensions | null>(null);
   useEffect(() => {
     if (parent.current === null) return;
-    const view = new EditorView({ parent: parent.current, state: EditorState.create({ extensions: [configuration.of([]), highlights.of(noHighlights)] }) });
-    view.scrollDOM.dataset.ncCodeScroller = '';
+    const initialExtensions = initialExtensionsRef.current;
+    const view = new EditorView({
+      parent: parent.current,
+      state: EditorState.create({
+        doc: initialTextRef.current,
+        extensions: [configuration.of(initialExtensions), highlights.of(noHighlights)],
+      }),
+    });
+    appliedExtensionsRef.current = initialExtensions;
+    view.scrollDOM.dataset.ncCodeScroller = 'measuring';
     viewRef.current = view;
-    return () => { viewRef.current = null; view.destroy(); };
+    view.requestMeasure({
+      read: () => undefined,
+      write(_measured, measuredView) {
+        if (viewRef.current === measuredView) measuredView.scrollDOM.dataset.ncCodeScroller = '';
+      },
+    });
+    return () => {
+      viewRef.current = null;
+      appliedExtensionsRef.current = null;
+      view.destroy();
+    };
   }, [configuration, highlights]);
   useEffect(() => {
     const view = viewRef.current;
-    if (view === null) return;
+    if (view === null || appliedExtensionsRef.current === extensions) return;
+    appliedExtensionsRef.current = extensions;
     view.dispatch({ effects: configuration.reconfigure(extensions) });
   }, [configuration, extensions]);
   useEffect(() => {
@@ -68,7 +91,9 @@ export function ReadOnlyPane({ text, source, theme, highlightLines, highlightReq
   }, [text]);
   useEffect(() => {
     const view = viewRef.current;
-    if (view === null) return;
+    const previous = sourceRef.current;
+    sourceRef.current = { kind: source.kind, value: source.value };
+    if (view === null || (previous.kind === source.kind && previous.value === source.value)) return;
     view.dispatch({ selection: { anchor: 0 } });
     view.scrollDOM.scrollTop = 0;
     view.scrollDOM.scrollLeft = 0;
@@ -96,9 +121,9 @@ export function ReadOnlyPane({ text, source, theme, highlightLines, highlightReq
     }), { decorations: plugin => plugin.marks });
     view.dispatch({ effects: [
       highlights.reconfigure(extension),
-      EditorView.scrollIntoView(view.state.doc.line(startLine).from, { y: 'center' }),
+      ...(scrollHighlight ? [EditorView.scrollIntoView(view.state.doc.line(startLine).from, { y: 'center' })] : []),
     ] });
-  }, [highlights, startLine, endLine, highlightRequest, text, source.kind, source.value]);
+  }, [highlights, startLine, endLine, highlightRequest, scrollHighlight, text, source.kind, source.value]);
   return <div className={styles.code} data-nc-code-status={status}>
     <div className={styles.toolbar}>
       <span>{label}</span>

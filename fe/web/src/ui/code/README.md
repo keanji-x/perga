@@ -14,6 +14,8 @@ search adapter, or editing/history/completion lifecycle. Reads remain in
   New sources reset the reading position; growing sources preserve it. Keyboard
   arrows/selection work; Tab leaves the pane; no `/` or search handler is installed.
   Line numbers are excluded from accessible text.
+  `scrollHighlight` defaults to true; false decorates highlighted lines without
+  moving the viewport, letting the host restore its own reading position.
 - `MarkdownCode`: adapts Astryx's declared fence props; missing labels are plain text.
 
 The editor and selected upstream grammar load on demand. The immediate fallback

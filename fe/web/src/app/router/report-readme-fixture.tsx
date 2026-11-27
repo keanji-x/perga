@@ -45,7 +45,7 @@ export const README_TRACK_URL = `/track/${README_TRACK_ID}`;
 export const README_FILE_URL = `${README_TRACK_URL}?file=docs%2FREADME.md`;
 
 export function renderReadmeFixture(initial: string, detailReady: Promise<void> = Promise.resolve(),
-  options: Readonly<{ shortReport?: boolean; failFileRead?: boolean }> = {}) {
+  options: Readonly<{ shortReport?: boolean; failFileRead?: boolean; fileReadReady?: () => Promise<void> }> = {}) {
   let fileReadFailed = options.failFileRead ?? false;
   const requests: ApiRequest[] = [];
   const track = fixtureTrack(README_TRACK_ID, { areaId: 'project', title: 'Documentation preview', cwd: '/repo', sortOrder: 1, closedAtMs: null, createdAtMs: 1, updatedAtMs: 2 });
@@ -63,6 +63,7 @@ export function renderReadmeFixture(initial: string, detailReady: Promise<void> 
     }
     if (request.path === `/api/v1/tracks/${track.id}/report`) return ok({ taskDiagnostics: [] });
     if (request.path === `/api/v1/tracks/${track.id}/files?path=docs%2FREADME.md`) {
+      await options.fileReadReady?.();
       if (fileReadFailed) return { status: 500, statusText: 'Internal Server Error',
         body: { code: 'internal', message: 'secure workspace reads require Linux openat2 support' } };
       return ok({ path: 'docs/README.md', size: new TextEncoder().encode(readme).length, text: readme, truncated: false });
@@ -70,6 +71,7 @@ export function renderReadmeFixture(initial: string, detailReady: Promise<void> 
     if (request.path === `/api/v1/tracks/${track.id}/files?path=docs%2F..%2FREADME.md`) {
       return ok({ path: 'README.md', size: new TextEncoder().encode(rootReadme).length, text: rootReadme, truncated: false });
     }
+    if (request.path.endsWith('/files?path=docs%2Fprose-ratchet.md')) return ok({ path: 'docs/prose-ratchet.md', size: 46, text: '# Prose ratchet\n\n[Documentation](./README.md)\n', truncated: false });
     if (request.path.includes('/files?path=')) throw new Error(`Unexpected file read: ${request.path}`);
     if (request.path.includes('/items?')) return ok(sessionPage(card, [sessionItem(card.id, 1, 'Conversation remains available while reading documentation.')]));
     if (request.path === '/api/settings') return ok({});
@@ -85,5 +87,5 @@ export function renderReadmeFixture(initial: string, detailReady: Promise<void> 
   render(<QueryClientProvider client={client}><ThemeProvider storage={{ getItem: () => null, setItem: () => undefined }}>
     <RouterProvider router={router} />
   </ThemeProvider></QueryClientProvider>, { container });
-  return { router, requests, client, recoverFileRead: () => { fileReadFailed = false; } };
+  return { router, requests, client, recoverFileRead: () => { fileReadFailed = false; }, failFileRead: () => { fileReadFailed = true; } };
 }

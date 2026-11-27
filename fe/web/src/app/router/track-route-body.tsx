@@ -17,7 +17,7 @@ useRouterState
 import { useCallback,useEffect,useLayoutEffect,useMemo,useRef,type ReactNode } from 'react';
 import type { ReportPreparationPort } from '../../features/report/document/preparation.ts';
 import { TrackReportRegion,useTrackReportArrival,useTrackReportPresentation } from './track-report-presentation.tsx';
-import { useTrackViews,useTrackViewState } from './track-view-state.tsx';
+import { useTrackFileView, useTrackViews, useTrackViewState } from './track-view-state.tsx';
 
 import type { ApiTransportPort } from '../../../../core/api/types.ts';
 import type { UnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
@@ -28,6 +28,7 @@ import {
 agentSessionDtoToConversation
 } from '../../../../core/domain/conversation.ts';
 import { isAbsoluteFilePath, joinFilePath, parseFileLine, type ReportFileLinkTarget } from '../../../../core/domain/report-file.ts';
+import { normalizeWorkspaceDisplayPath } from '../../../../core/domain/report-file-layout.ts';
 import type { ReportSourceLinkTarget } from '../../../../core/domain/report-source.ts';
 import type { ReportLinkTarget } from '../../../../core/domain/report.ts';
 import { trackTaskInventory } from '../../../../core/domain/track-task-inventory.ts';
@@ -79,7 +80,7 @@ import {
 renderedMobilePanel,
 useGo,useGoSameTrack,
 usePlannerOpenIntent,
-useRouteCardId,useRouteFileLine,useRouteFilePath,useRouteFrom,useRouteHash,
+useRouteCardId,useRouteFileBackPath,useRouteFileLine,useRouteFilePath,useRouteFrom,useRouteHash,
 useRoutePanel,
 useTrackFileNavigation,
 useTrackPanelNavigation
@@ -160,6 +161,10 @@ export function TrackRouteBody({
   const rawRequestedFilePath = useRouteFilePath();
   const requestedFilePath = requestedCardId === null ? rawRequestedFilePath : null;
   const requestedFileLine = useRouteFileLine();
+  const backFilePath = useRouteFileBackPath();
+  const fileEntryKey = useRouterState({ select: (state) => state.location.state.__TSR_key
+    ?? (state.location.state.__TSR_index === undefined ? undefined : `index:${state.location.state.__TSR_index}`) });
+  const fileView = useTrackFileView(track.id, fileEntryKey, requestedFilePath);
   const silentFile = useRouterState({ select: (state) => state.location.state.ncFileSilent === true });
   const fileOpenRequest = useRouterState({ select: (state) => state.location.state.ncFileOpenRequest });
   const [resolvedFile, setResolvedFile] = useState<Readonly<{ requested: string; canonical: string }> | null>(null);
@@ -171,14 +176,15 @@ export function TrackRouteBody({
   const rememberReportFile = useCallback((path: string) => {
     setRecentFilePaths(recentFiles.record(track.id, path));
   }, [recentFiles, setRecentFilePaths, track.id]);
+  const displayFile = resolvedFile?.requested === requestedFilePath ? resolvedFile.canonical : requestedFilePath;
   const { openFile } = fileNavigation;
   const openReportFile = useCallback((target: ReportFileLinkTarget, focus = true, opener: Element | null = document.activeElement) => {
-    const opened = openFile(track.id, target.path, { ...target, focus });
+    const opened = openFile(track.id, target.path, { ...target, focus, fromPath: displayFile ?? undefined });
     if (opened && focus && requestedFilePath === null && opener instanceof HTMLElement) {
       fileReturnFocusRef.current = opener;
     }
     return opened;
-  }, [openFile, requestedFilePath, track.id]);
+  }, [displayFile, openFile, requestedFilePath, track.id]);
   const quickOpen = useTrackQuickOpen({
     trackId: track.id, transport, unauthorized, recent: recentFilePaths,
     open: openReportFile, remember: rememberReportFile,
@@ -468,6 +474,7 @@ export function TrackRouteBody({
       ? joinFilePath(track.agentCwd, displayFile) : displayFile;
     fileViewer = {
       label: displayFile + (lineSuffix ?? ''),
+      backLabel: backFilePath === null ? undefined : normalizeWorkspaceDisplayPath(backFilePath, track.agentCwd),
       fullPath,
       title: (
         <FileLayoutNav
@@ -482,6 +489,7 @@ export function TrackRouteBody({
       render: hasBackFocus => (
         <ReportFileViewer
           key={requestedFilePath}
+          {...fileView}
           path={requestedFilePath}
           {...parseFileLine(requestedFileLine)}
           silent={silentFile}

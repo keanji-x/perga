@@ -1,3 +1,4 @@
+import { verifyNestedReadmeHistory } from './report-readme-history.browser-fixture.ts';
 // Full production router, shell, file renderer and Conversation. Browser-only
 // oracles below cover geometry, paint order, actual pointer hits and scrolling.
 import '../../styles/entry.css';
@@ -159,13 +160,16 @@ it('reads a cold file with wheel, PageDown, Tab and document links, then closes 
   expect(reportScroll).toBe(0);
   await readWithPointerAndKeyboard(reportScroll, 'cold');
   expect(router.history.location.href).toBe(`${README_TRACK_URL}?file=docs%2F..%2FREADME.md`);
-  expect(router.history.length).toBe(1);
+  expect(router.history.length).toBe(2);
+  await userEvent.keyboard('{Escape}');
+  await expect.poll(() => router.history.location.href).toBe(README_FILE_URL);
+  await visibleReadme();
   await userEvent.keyboard('{Escape}');
   await expect.poll(() => router.history.location.href).toBe(README_TRACK_URL);
   await expect.element(page.getByRole('region', { name: 'File docs/../README.md' })).not.toBeInTheDocument();
   await scrollSettled(trackPage());
   expectReportPosition(reportScroll, 'cold close');
-  expect(router.history.length).toBe(1);
+  expect(router.history.length).toBe(2);
 });
 
 it('keeps the right-side conversation list usable while a report file is open', async () => {
@@ -242,10 +246,12 @@ it('reads from a wheel-scrolled Report with Conversation and restores its positi
 
   await readWithPointerAndKeyboard(reportScroll, 'conversation');
   expect(router.history.location.href).toBe(`${README_TRACK_URL}?file=docs%2F..%2FREADME.md`);
-  expect(router.history.length).toBe(2);
+  expect(router.history.length).toBe(3);
   expect(chatScroller.scrollTop).toBe(chatScroll);
   expect(chat.element()).toBe(conversation);
   await expect.element(chat.getByRole('combobox', { name: 'Message' })).toHaveTextContent('Keep this draft');
+  await page.getByRole('button', { name: 'Back to docs/README.md', exact: true }).click();
+  await visibleReadme();
   const back = page.getByRole('button', { name: 'Back to track', exact: true });
   expectHit(back.element());
   await back.click();
@@ -358,3 +364,7 @@ for (const width of [390, 1000, 1440]) for (const conversation of [false, true])
     expect(fixture.router.history.location.href).toBe(README_FILE_URL);
   });
 }
+
+it.each([false, true])('preserves nested document history and scroll (cold=%s)', async cold => {
+  await verifyNestedReadmeHistory(1440, cold);
+});

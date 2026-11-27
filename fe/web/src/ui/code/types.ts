@@ -8,4 +8,5 @@ export type ReadOnlyCodeProps = Readonly<{
   highlightLines?: Readonly<{ start: number; end: number }>;
   highlightRequest?: number;
   wrapLines?: boolean;
+  scrollHighlight?: boolean;
 }>;

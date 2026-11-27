@@ -12,7 +12,7 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
-  useGoSameTrack, useRouteCardId, useRouteFilePath, useRouteFrom, useRouteHash, useRoutePanel,
+  useGoSameTrack, useRouteCardId, useRouteFileBackPath, useRouteFilePath, useRouteFrom, useRouteHash, useRoutePanel,
   useRouteParam, useTrackFileNavigation, useTrackPanelNavigation, validateTrackSearch,
   type TrackSearch,
 } from './navigation.ts';
@@ -26,6 +26,7 @@ function Probe() {
   const from = useRouteFrom();
   const card = useRouteCardId();
   const file = useRouteFilePath();
+  const backPath = useRouteFileBackPath();
   const hash = useRouteHash();
   return (
     <div>
@@ -33,12 +34,18 @@ function Probe() {
       <span>{`from:${from ?? 'none'}`}</span>
       <span>{`card:${card ?? 'none'}`}</span>
       <span>{`file:${file ?? 'none'}`}</span>
+      <span>{`back:${backPath ?? 'Report'}`}</span>
       <span>{`hash:${hash ?? 'none'}`}</span>
       <button type="button" onClick={() => { openPanel(trackId, 'cards'); }}>open cards</button>
       <button type="button" onClick={() => { openPanel(trackId, 'tasks'); }}>open tasks</button>
       <button type="button" onClick={() => { closePanel(trackId); }}>close panel</button>
       <button type="button" onClick={() => { openFile(trackId, '/tmp/a.md', { line: 42, endLine: 60, focus: false }); }}>open file a</button>
       <button type="button" onClick={() => { openFile(trackId, 'docs/b.md'); }}>open file b</button>
+      <button type="button" onClick={() => { openFile(trackId, 'docs/b.md', { line: 12 }); }}>jump in b</button>
+      <button type="button" onClick={() => { openFile(trackId, 'docs/b.md', { fromPath: 'resolved/a.md' }); }}>open b from resolved a</button>
+      <button type="button" onClick={() => { openFile(trackId, 'docs/c.md'); }}>open file c</button>
+      <button type="button" onClick={() => { openFile(trackId, 'docs/../README.md'); }}>open readme alias</button>
+      <button type="button" onClick={() => { openFile(trackId, 'README.md', { fromPath: 'README.md' }); }}>open canonical readme</button>
       <button type="button" onClick={() => { closeFile(trackId); }}>close file</button>
       <button type="button" onClick={() => { goSameTrack(trackId, { card: undefined }, { replace: true }); }}>drop card</button>
       <button type="button" onClick={() => { goSameTrack('w9', { card: undefined }); }}>drop card on w9</button>
@@ -160,12 +167,13 @@ describe('closing the mobile panel', () => {
 });
 
 describe('file history', () => {
-  it('uses one marked entry across file switches and pops back to the Report', async () => {
+  it('pushes distinct files and returns through each file to the Report', async () => {
     const router = setup(['/', '/track/w1']);
     await userEvent.click(await screen.findByText('open file a'));
     await waitFor(() => { probe('file', '/tmp/a.md'); });
     expect(router.history.length).toBe(3);
     expect(router.history.location.state.ncFilePushed).toBe(true);
+    probe('back', 'Report');
     expect(router.history.location.state.ncFileSilent).toBe(true);
     expect(router.state.location.search).toMatchObject({ line: '42-60' });
 
@@ -173,13 +181,83 @@ describe('file history', () => {
     await waitFor(() => { probe('file', 'docs/b.md'); });
     expect(router.history.location.state.ncFileSilent).toBe(false);
     expect(router.state.location.search).not.toHaveProperty('line');
-    expect(router.history.length).toBe(3);
+    probe('back', '/tmp/a.md');
+    expect(router.history.length).toBe(4);
     expect(router.history.location.state.ncFilePushed).toBe(true);
 
+    await userEvent.click(screen.getByText('close file'));
+    await waitFor(() => { probe('file', '/tmp/a.md'); });
     await userEvent.click(screen.getByText('close file'));
     await waitFor(() => { probe('file', 'none'); });
     router.history.back();
     await waitFor(() => { expect(router.state.location.pathname).toBe('/'); });
+  });
+
+  it('replaces same-file line jumps and keeps the canonical predecessor label', async () => {
+    const router = setup(['/track/w1']);
+    await userEvent.click(await screen.findByText('open file a'));
+    await userEvent.click(screen.getByText('open b from resolved a'));
+    await waitFor(() => { probe('back', 'resolved/a.md'); });
+    expect(router.history.length).toBe(3);
+    await userEvent.click(screen.getByText('jump in b'));
+    await waitFor(() => { expect(router.state.location.search).toMatchObject({ line: 12 }); });
+    expect(router.history.length).toBe(3);
+    probe('back', 'resolved/a.md');
+    await userEvent.click(screen.getByText('close file'));
+    await waitFor(() => { probe('file', '/tmp/a.md'); });
+    probe('back', 'Report');
+    router.history.forward();
+    await waitFor(() => { probe('file', 'docs/b.md'); });
+    probe('back', 'resolved/a.md');
+    router.history.back();
+    await waitFor(() => { probe('file', '/tmp/a.md'); });
+    await userEvent.click(screen.getByText('close file'));
+    await waitFor(() => { probe('file', 'none'); });
+    await userEvent.click(screen.getByText('open file b'));
+    await waitFor(() => { probe('file', 'docs/b.md'); });
+    probe('back', 'Report');
+    expect(router.history.location.state.ncFileBackPath).toBeUndefined();
+  });
+
+  it('replaces a canonical same-file request and preserves its predecessor', async () => {
+    const router = setup(['/track/w1']);
+    await userEvent.click(await screen.findByText('open file a'));
+    await userEvent.click(screen.getByText('open readme alias'));
+    await waitFor(() => { probe('file', 'docs/../README.md'); });
+    expect(router.history.length).toBe(3);
+    await userEvent.click(screen.getByText('open canonical readme'));
+    await waitFor(() => { probe('file', 'README.md'); });
+    expect(router.history.length).toBe(3);
+    probe('back', '/tmp/a.md');
+    await userEvent.click(screen.getByText('close file'));
+    await waitFor(() => { probe('file', '/tmp/a.md'); });
+  });
+
+  it('pushes from a cold file and returns to that file before replacing with Report', async () => {
+    const router = setup(['/track/w1?file=/tmp/a.md']);
+    await userEvent.click(await screen.findByText('open file a'));
+    expect(router.history.length).toBe(1);
+    probe('back', 'Report');
+    await userEvent.click(screen.getByText('open file b'));
+    await waitFor(() => { probe('back', '/tmp/a.md'); });
+    expect(router.history.length).toBe(2);
+    await userEvent.click(screen.getByText('close file'));
+    await waitFor(() => { probe('file', '/tmp/a.md'); });
+    probe('back', 'Report');
+    const back = vi.spyOn(router.history, 'back');
+    await userEvent.click(screen.getByText('close file'));
+    await waitFor(() => { probe('file', 'none'); });
+    expect(router.state.location.pathname).toBe('/track/w1');
+    expect(back).not.toHaveBeenCalled();
+  });
+
+  it('does not advertise an unusable predecessor at the start of history', async () => {
+    const router = setup(['/track/w1?file=docs/b.md']);
+    await screen.findByText('open file b');
+    await router.navigate({ to: '/track/w1', search: { file: 'docs/b.md' }, replace: true,
+      state: { ncFilePushed: true, ncFileBackPath: '/tmp/a.md' } });
+    await waitFor(() => { probe('back', 'Report'); });
+    expect(router.history.canGoBack()).toBe(false);
   });
 
   it('closes a cold-start file deep link with replace instead of leaving the app', async () => {
@@ -244,4 +322,32 @@ it('transfers the Report back entry across a pushed mobile panel and file', asyn
   await waitFor(() => { expect(href(router)).toBe('/track/w1'); });
   router.history.back();
   await waitFor(() => { expect(href(router)).toBe('/'); });
+});
+
+it.each(['file-close', 'file-history', 'panel-close'] as const)('transfers the file predecessor through a panel replacement (%s)', async mode => {
+  const router = setup(['/track/w1']);
+  await userEvent.click(await screen.findByText('open file a'));
+  await userEvent.click(screen.getByText('open file b'));
+  await waitFor(() => { probe('back', '/tmp/a.md'); });
+  await userEvent.click(screen.getByText('open tasks'));
+  await waitFor(() => { probe('panel', 'tasks'); });
+  expect(router.history.location.state.ncPanelPushed).toBe(true);
+  expect(router.history.location.state.ncFileBackPath).toBe('/tmp/a.md');
+  await userEvent.click(screen.getByText('open cards'));
+  await waitFor(() => { probe('panel', 'cards'); });
+  expect(router.history.location.state.ncFileBackPath).toBe('/tmp/a.md');
+  if (mode === 'panel-close') {
+    await userEvent.click(screen.getByText('close panel'));
+  } else {
+    await userEvent.click(screen.getByText('open file c'));
+    await waitFor(() => { probe('file', 'docs/c.md'); });
+    probe('back', '/tmp/a.md');
+    expect(router.history.length).toBe(3);
+    if (mode === 'file-close') await userEvent.click(screen.getByText('close file'));
+    else router.history.back();
+  }
+  await waitFor(() => { probe('file', '/tmp/a.md'); });
+  probe('back', 'Report');
+  await userEvent.click(screen.getByText('close file'));
+  await waitFor(() => { expect(href(router)).toBe('/track/w1'); });
 });
