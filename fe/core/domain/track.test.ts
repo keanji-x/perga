@@ -3,8 +3,7 @@ import { describe,expect,it } from 'vitest';
 import { terminalPanelItem } from './panel-item.js';
 
 import { performApiRequest } from '../api/client.js';
-import type { TrackOverlayItemDto } from '../api/perga-v1.js';
-import { trackDtoSchema } from '../api/perga-v1.js';
+import { trackDtoSchema, trackOverlayItemDtoSchema, type TrackOverlayItemDto } from '../api/perga-v1.js';
 import { decodeWireEvent } from '../api/schemas.js';
 import type { Area } from './area.js';
 import { terminalPresentation } from './terminal-presentation.js';
@@ -194,7 +193,24 @@ describe('trackActivityFromOverlay & trackActivitiesFromOverlays', () => {
     workspaceFailed: false,
     notifiableSessions: [],
     updatedAtMs: 100,
+    previewText: null,
+    previewKind: null,
     ...over,
+  });
+
+  it('decodes legacy overlays and projects each bounded preview kind into track activity', () => {
+    const legacy = { trackId: 't1', areaId: 'a1' };
+    expect(trackActivityFromOverlay(trackOverlayItemDtoSchema.parse(legacy))).toMatchObject({
+      previewText: null, previewKind: null,
+    });
+    expect(trackActivityFromOverlay(trackOverlayItemDtoSchema.parse({
+      ...legacy, previewText: null, previewKind: null,
+    }))).toMatchObject({ previewText: null, previewKind: null });
+    for (const kind of ['ask', 'error', 'reply', 'summary']) {
+      const wire = trackOverlayItemDtoSchema.parse({ ...legacy, previewText: 'Preview', previewKind: kind });
+      expect(trackActivityFromOverlay(wire)).toMatchObject({ previewText: 'Preview', previewKind: kind });
+    }
+    expect(trackOverlayItemDtoSchema.safeParse({ ...legacy, previewKind: 'unknown' }).success).toBe(false);
   });
 
   it('maps blocked sessions and workspace failures to failed, asks/approvals to input, and otherwise none', () => {

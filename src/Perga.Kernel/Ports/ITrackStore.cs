@@ -40,7 +40,10 @@ public enum WorkspacePreparationPhase
 
 public sealed record WorkspacePreparation(WorkspaceProvisionRequest Request, string? Command,
     WorkspacePreparationPhase Phase = WorkspacePreparationPhase.Pending, WorkspaceSpec? Spec = null,
-    bool RepeatableProvision = false);
+    bool RepeatableProvision = false, string? FailureDetail = null);
+
+public sealed record TrackOverlayFallbackRequest(string TrackId, bool IncludeBlockedSessionError, bool IncludeWorkspaceError);
+public sealed record TrackOverlayFallback(string TrackId, string Text, TrackOverlayPreviewKind Kind);
 
 public sealed record TrackCreation(TrackDto Track, ReportDocument Report, string? TemplateSnapshot,
     AgentSessionDto Lead, IReadOnlyList<TaskDto> Tasks, SessionInputRequest? FirstInput,
@@ -104,6 +107,7 @@ public interface ITrackReadStore
     Task<IReadOnlyList<EventEnvelopeDto>> ListEventsSinceAsync(long sinceEventId, string? trackId = null, int limit = 500, CancellationToken ct = default);
     Task<ReadReceiptsResponseDto> GetReadReceiptsAsync(CancellationToken ct = default);
     Task<IReadOnlyList<TrackOverlayDto>> ListTrackOverlaysAsync(bool includeClosed = false, CancellationToken ct = default);
+    Task<IReadOnlyList<TrackOverlayFallback>> ListTrackOverlayFallbacksAsync(IReadOnlyList<TrackOverlayFallbackRequest> requests, CancellationToken ct);
     Task<string?> FindTrackIdBySessionAsync(string sessionId, CancellationToken ct);
     Task<string?> FindTrackIdByTerminalAsync(string terminalId, CancellationToken ct) => Task.FromResult<string?>(null);
     Task<IReadOnlyList<StoredExecutionTarget>> ListExecutionTargetsAsync(CancellationToken ct = default)

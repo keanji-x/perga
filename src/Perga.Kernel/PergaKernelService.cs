@@ -276,11 +276,37 @@ public sealed partial class PergaKernelService : IPergaKernel, IFlowTrackSpawner
         CancellationToken ct = default)
     {
         var stored = await _store.ListTrackOverlaysAsync(includeClosed, ct).ConfigureAwait(false);
+        return await MergeOverlaysAsync(stored, ct).ConfigureAwait(false);
+    }
+
+    internal async Task<TrackOverlaysResponseDto> MergeOverlaysAsync(
+        IReadOnlyList<TrackOverlayDto> stored, CancellationToken ct)
+    {
         var merged = new List<TrackOverlayDto>(stored.Count);
+        var invalidated = new Dictionary<string, int>(StringComparer.Ordinal);
         foreach (var item in stored)
         {
-            merged.Add(await MergeActiveOverlayAsync(item,
-                () => Actors.TryGetActive(item.TrackId, out var actor) ? actor : null, ct).ConfigureAwait(false));
+            var live = await MergeActiveOverlayAsync(item,
+                () => Actors.TryGetActive(item.TrackId, out var actor) ? actor : null, ct).ConfigureAwait(false);
+            if (live.PreviewKind is null && (live.HasBlockedSession ||
+                item.PreviewKind is TrackOverlayPreviewKind.Ask or TrackOverlayPreviewKind.Error))
+                invalidated.Add(item.TrackId, merged.Count);
+            merged.Add(live);
+        }
+
+        if (invalidated.Count > 0)
+        {
+            var requests = invalidated.Values.Select(position =>
+            {
+                var live = merged[position];
+                return new TrackOverlayFallbackRequest(live.TrackId, live.HasBlockedSession, live.WorkspaceFailed);
+            }).ToArray();
+            var fallbacks = await _store.ListTrackOverlayFallbacksAsync(requests, ct).ConfigureAwait(false);
+            foreach (var fallback in fallbacks)
+            {
+                var position = invalidated[fallback.TrackId];
+                merged[position] = merged[position] with { PreviewText = fallback.Text, PreviewKind = fallback.Kind };
+            }
         }
 
         return new TrackOverlaysResponseDto(merged);
@@ -302,6 +328,12 @@ public sealed partial class PergaKernelService : IPergaKernel, IFlowTrackSpawner
                 var next = getActive();
                 if (ReferenceEquals(next, actor)) break;
                 actor = next;
+            }
+            catch (JsonException)
+            {
+                // A cold actor can encounter damaged JSON during hydration.
+                // The storage projection has already guarded its preview reads.
+                return stored;
             }
         }
         return stored;

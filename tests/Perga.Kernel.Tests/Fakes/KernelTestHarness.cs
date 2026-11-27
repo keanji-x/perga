@@ -357,6 +357,19 @@ internal sealed partial class InMemoryTrackStore : ITrackStore
         }
     }
 
+    public Task<IReadOnlyList<TrackOverlayFallback>> ListTrackOverlayFallbacksAsync(
+        IReadOnlyList<TrackOverlayFallbackRequest> requests, CancellationToken ct)
+    {
+        lock (_gate)
+        {
+            var previews = new List<TrackOverlayFallback>();
+            foreach (var request in requests)
+                if (_reports.TryGetValue(request.TrackId, out var report) && TrackOverlayPreview.Normalize(report.Summary) is { } text)
+                    previews.Add(new(request.TrackId, text, TrackOverlayPreviewKind.Summary));
+            return Task.FromResult<IReadOnlyList<TrackOverlayFallback>>(previews);
+        }
+    }
+
     public Task<string?> FindTrackIdBySessionAsync(string sessionId, CancellationToken ct)
     {
         lock (_gate)

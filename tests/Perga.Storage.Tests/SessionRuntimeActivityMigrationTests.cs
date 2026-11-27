@@ -13,7 +13,8 @@ public sealed class SessionRuntimeActivityMigrationTests
         var path = Path.Combine(directory.FullName, "v26.db");
         try
         {
-            var original = SqliteMigrator.LoadEmbeddedMigrations().Where(migration => migration.Version <= 26).ToArray();
+            var migrations = SqliteMigrator.LoadEmbeddedMigrations();
+            var original = migrations.Where(migration => migration.Version <= 26).ToArray();
             await new SqliteMigrator(original).MigrateAsync(path);
             await using var connection = new SqliteConnection($"Data Source={path};Pooling=False;Foreign Keys=True");
             await connection.OpenAsync();
@@ -59,7 +60,7 @@ public sealed class SessionRuntimeActivityMigrationTests
                 """;
             await Assert.ThrowsAsync<SqliteException>(() => connection.ExecuteAsync(append, new { Kind = "assistant_text" }));
 
-            await new SqliteMigrator().MigrateAsync(path);
+            await new SqliteMigrator(migrations.Where(migration => migration.Version <= 27).ToArray()).MigrateAsync(path);
             Assert.Equal(history, await connection.QueryAsync<string>(readItems));
             Assert.Equal(schemaObjects, await connection.QueryAsync<string>(readSchemaObjects));
             Assert.Equal(foreignKeys, await connection.QueryAsync<string>(readForeignKeys));

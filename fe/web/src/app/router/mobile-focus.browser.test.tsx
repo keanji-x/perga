@@ -1,11 +1,15 @@
 import '../../styles/entry.css';
-import { cleanup } from '@testing-library/react';
+import { act, cleanup } from '@testing-library/react';
 import { afterEach, describe, expect, it } from 'vitest';
 import { commands, page, userEvent } from 'vitest/browser';
 
 import type { ApiRequest, ApiTransportResponse } from '../../../../core/api/types.ts';
+import { decodeEventFrame } from '../../../../core/events/protocol.ts';
+import { THEME_KEY } from '../../../../core/keys/storage.ts';
 import type { ReadReceipt } from '../../../../core/domain/read-receipts.ts';
+import { EventStream, type EventStreamSink, type UnconfiguredEventStream } from '../../systems/events/event-stream.ts';
 import { createReadReceiptsKernel } from '../providers/read-receipts-fixture.tsx';
+import type { ThemeStorage } from '../theme/public.tsx';
 import { renderDailyFixture } from './daily-planner-fixture.tsx';
 import { fixtureTrack } from './session-contract-fixture.ts';
 
@@ -20,8 +24,12 @@ type FocusFixtureOptions = Readonly<{
   initialReceipts?: readonly ReadReceipt[];
   manualUnreadTrackId?: string;
   askTrackUnreadSessionId?: string;
+  failedPreviewKind?: 'ask' | 'summary';
+  askUsesSummary?: boolean;
   shareScope?: unknown;
   holdOverlays?: boolean;
+  themeStorage?: ThemeStorage;
+  stream?: UnconfiguredEventStream;
 }>;
 
 function renderFocusFixture(options: FocusFixtureOptions = {}) {
@@ -60,9 +68,14 @@ function renderFocusFixture(options: FocusFixtureOptions = {}) {
     title: 'Mobile layout polish',
     updatedAtMs: now - 120_000,
   });
+  const failedTrack = fixtureTrack('t-failed', {
+    areaId: 'a-prod',
+    title: 'Workspace setup',
+    updatedAtMs: now - 180_000,
+  });
   const unreadProdTrack = fixtureTrack('t-unread-prod', {
     areaId: 'a-prod',
-    title: 'Design system review',
+    title: 'Design system review ' + 'with a very long title '.repeat(6),
     updatedAtMs: now - 600_000,
   });
   const pinnedTrack = fixtureTrack('t-pinned', {
@@ -99,6 +112,7 @@ function renderFocusFixture(options: FocusFixtureOptions = {}) {
 
   const prodTracks = [
     askTrack,
+    failedTrack,
     unreadProdTrack,
     pinnedTrack,
     closedTrack,
@@ -115,14 +129,40 @@ function renderFocusFixture(options: FocusFixtureOptions = {}) {
     ? new Promise<void>((resolve) => { releaseOverlays = resolve; })
     : null;
 
+  const pinnedOverlay = {
+    trackId: 't-pinned',
+    previewText: 'The roadmap is ready for review.',
+    previewKind: 'summary',
+    areaId: 'a-prod',
+    isWorking: false,
+    openAskCount: 0,
+    pendingApprovalCount: 0,
+    hasBlockedSession: false,
+    unreadMailCount: 0,
+    workspaceFailed: false,
+    updatedAtMs: now - 7_200_000,
+    notifiableSessions: [],
+  };
   const overlaysBody = {
     tracks: [
       {
+        trackId: 't-failed',
+        areaId: 'a-prod',
+        workspaceFailed: true,
+        openAskCount: options.failedPreviewKind === 'ask' ? 1 : 0,
+        updatedAtMs: now - 180_000,
+        previewText: options.failedPreviewKind === 'ask' ? 'Try mounting again?'
+          : options.failedPreviewKind === 'summary' ? 'The setup report is available.' : 'Mount timed out.',
+        previewKind: options.failedPreviewKind ?? 'error',
+      },
+      {
         trackId: 't-ask',
+        previewText: options.askUsesSummary ? 'The review report is available.' : 'Approve **the mobile layout**?',
+        previewKind: options.askUsesSummary ? 'summary' : 'ask',
         areaId: 'a-prod',
         isWorking: false,
-        openAskCount: 1,
-        pendingApprovalCount: 0,
+        openAskCount: options.askUsesSummary ? 0 : 1,
+        pendingApprovalCount: options.askUsesSummary ? 1 : 0,
         hasBlockedSession: false,
         unreadMailCount: 0,
         workspaceFailed: false,
@@ -133,6 +173,8 @@ function renderFocusFixture(options: FocusFixtureOptions = {}) {
       },
       {
         trackId: 't-unread-prod',
+        previewText: 'Reviewed **spacing** and [contrast](/report). ' + 'Long preview content. '.repeat(10),
+        previewKind: 'reply',
         areaId: 'a-prod',
         isWorking: false,
         openAskCount: 0,
@@ -143,20 +185,11 @@ function renderFocusFixture(options: FocusFixtureOptions = {}) {
         updatedAtMs: now - 600_000,
         notifiableSessions: [{ sessionId: 'ses-prod', lastNotifiableTurnAtMs: now - 600_000 }],
       },
-      {
-        trackId: 't-pinned',
-        areaId: 'a-prod',
-        isWorking: false,
-        openAskCount: 0,
-        pendingApprovalCount: 0,
-        hasBlockedSession: false,
-        unreadMailCount: 0,
-        workspaceFailed: false,
-        updatedAtMs: now - 7_200_000,
-        notifiableSessions: [],
-      },
+      pinnedOverlay,
       {
         trackId: 't-closed',
+        previewText: 'Previous layout archived.',
+        previewKind: 'summary',
         areaId: 'a-prod',
         isWorking: false,
         openAskCount: 0,
@@ -169,8 +202,10 @@ function renderFocusFixture(options: FocusFixtureOptions = {}) {
       },
       {
         trackId: 't-unread',
+        previewText: 'Checking checkpoint timing.',
+        previewKind: 'reply',
         areaId: 'a-back',
-        isWorking: false,
+        isWorking: true,
         openAskCount: 0,
         pendingApprovalCount: 0,
         hasBlockedSession: false,
@@ -210,6 +245,8 @@ function renderFocusFixture(options: FocusFixtureOptions = {}) {
     initial: '/',
     receipts,
     shareScope: options.shareScope,
+    themeStorage: options.themeStorage,
+    stream: options.stream,
     reply: async (request: ApiRequest): Promise<ApiTransportResponse | undefined> => {
       if (request.path === '/api/v1/areas') {
         return { status: 200, statusText: 'OK', body: [productArea, backendArea] };
@@ -233,7 +270,39 @@ function renderFocusFixture(options: FocusFixtureOptions = {}) {
     now,
     receipts,
     releaseOverlays: () => { releaseOverlays?.(); },
+    updatePinnedSummary: (summary: string) => { pinnedOverlay.previewText = summary; },
   };
+}
+
+function resolvedColor(value: string): string {
+  const probe = document.createElement('span');
+  probe.hidden = true;
+  probe.style.color = value;
+  document.body.append(probe);
+  const color = getComputedStyle(probe).color;
+  probe.remove();
+  return color;
+}
+
+function contrastRatio(ink: string, ...backgrounds: string[]): number {
+  const canvas = document.createElement('canvas');
+  const context = canvas.getContext('2d', { willReadFrequently: true })!;
+  const paint = (color: string) => {
+    context.fillStyle = color;
+    context.fillRect(0, 0, 1, 1);
+  };
+  const luminance = () => {
+    const [red, green, blue] = Array.from(context.getImageData(0, 0, 1, 1).data, (value) => {
+      const channel = value / 255;
+      return channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4;
+    });
+    return 0.2126 * red + 0.7152 * green + 0.0722 * blue;
+  };
+  backgrounds.forEach(paint);
+  const background = luminance();
+  paint(ink);
+  const foreground = luminance();
+  return (Math.max(background, foreground) + 0.05) / (Math.min(background, foreground) + 0.05);
 }
 
 describe('MobileFocusHome', () => {
@@ -245,9 +314,43 @@ describe('MobileFocusHome', () => {
     renderFocusFixture({ extraQuietCount: 12 });
 
     await expect.element(page.getByRole('heading', { name: 'Focus', exact: true })).toBeVisible();
-    await expect.element(page.getByRole('region', { name: 'Needs attention', exact: true })).toBeVisible();
-    await expect.element(page.getByRole('region', { name: 'Unread updates', exact: true })).toBeVisible();
-    await expect.element(page.getByRole('region', { name: 'Pinned', exact: true })).toBeVisible();
+    const feed = page.getByRole('list', { name: 'Tracks', exact: true });
+    await expect.element(feed).toBeVisible();
+    const rows = feed.getByRole('button').elements();
+    expect(rows).toHaveLength(17);
+    const failed = feed.getByRole('button', { name: /^Workspace setup.*Needs repair Mount timed out\./ });
+    const ask = feed.getByRole('button', { name: /^Mobile layout polish.*Waiting on you: Approve the mobile layout\?/ });
+    const reply = feed.getByRole('button', { name: /^Design system review.*Reply: Reviewed spacing and contrast\..* Unread$/ });
+    const running = feed.getByRole('button', { name: /^SQLite WAL checkpoint guard.*Running · Reply: Checking checkpoint timing\./ });
+    const summary = feed.getByRole('button', { name: /^Q4 Mobile Roadmap.*Summary: The roadmap is ready for review\./ });
+    const pinned = feed.getByRole('button', { name: /^Overflow track 1\b.*Pinned$/ });
+    expect(rows.slice(0, 6)).toEqual([failed, ask, reply, running, summary, pinned].map(row => row.element()));
+    expect(page.getByRole('heading').elements()).toHaveLength(1);
+    expect(feed.element().querySelector('section, footer, svg')).toBeNull();
+    expect(getComputedStyle(feed.element()).borderRadius).toBe('0px');
+    expect(getComputedStyle(failed.element(), '::before').content).toBe('none');
+    expect(getComputedStyle(failed.element()).borderLeftWidth).toBe('0px');
+    expect(getComputedStyle(ask.element().closest('li')!, '::before').height).toBe('1px');
+    const failureLabel = failed.getByText('Needs repair', { exact: true }).element();
+    expect(page.getByRole('button', { name: 'Mark all read', exact: true }).query()).toBeNull();
+
+    const firstTitle = failed.getByText('Workspace setup', { exact: true }).element();
+    const firstPreview = failureLabel.parentElement!;
+    const longTitle = reply.getByText(/^Design system review/).element();
+    const longPreview = reply.getByText('Reply:', { exact: true }).element().parentElement!;
+    await expect.element(ask.getByText('Product', { exact: true })).toBeVisible();
+    await expect.element(ask.getByText('· 2m', { exact: true })).toBeVisible();
+    expect(firstTitle.getBoundingClientRect().left).toBe(firstPreview.getBoundingClientRect().left);
+    expect(parseFloat(getComputedStyle(firstTitle).fontSize)).toBeGreaterThan(parseFloat(getComputedStyle(firstPreview).fontSize));
+    expect(getComputedStyle(longTitle).textOverflow).toBe('ellipsis');
+    expect(longTitle.scrollWidth).toBeGreaterThan(longTitle.clientWidth);
+    expect(getComputedStyle(longPreview).getPropertyValue('-webkit-line-clamp')).toBe('3');
+    expect(longPreview.scrollHeight).toBeGreaterThan(longPreview.clientHeight);
+    for (const row of rows) {
+      expect(row.scrollWidth).toBeLessThanOrEqual(row.clientWidth);
+      expect(row.getBoundingClientRect().left).toBe(0);
+      expect(row.getBoundingClientRect().right).toBe(width);
+    }
 
     // Only one visible mobile header and no floating folder orb or bottom composer dock.
     const headers = [...document.querySelectorAll('[data-nc-mobile-header]')]
@@ -266,7 +369,10 @@ describe('MobileFocusHome', () => {
     expect(feedScroll).not.toBeNull();
     const menuGlyph = page.getByRole('button', { name: 'Open workspace', exact: true }).element().querySelector('svg')!.getBoundingClientRect();
     const title = page.getByRole('heading', { name: 'Focus', exact: true }).element().getBoundingClientRect();
-    const contentLeft = feedScroll!.getBoundingClientRect().left + parseFloat(getComputedStyle(feedScroll!).paddingInlineStart);
+    const contentLeft = firstTitle.getBoundingClientRect().left;
+    const filterBar = page.getByRole('navigation', { name: 'Focus filters', exact: true }).element();
+    expect(feed.element().getBoundingClientRect().top).toBe(filterBar.getBoundingClientRect().bottom);
+    expect(getComputedStyle(filterBar).backgroundColor).toBe(getComputedStyle(headers[0]).backgroundColor);
     expect(Math.abs((menuGlyph.top + menuGlyph.height / 2) - (title.top + title.height / 2))).toBeLessThanOrEqual(1);
     expect(Math.abs(menuGlyph.left - contentLeft)).toBeLessThanOrEqual(1);
     expect(feedScroll!.scrollHeight).toBeGreaterThan(feedScroll!.clientHeight);
@@ -274,18 +380,166 @@ describe('MobileFocusHome', () => {
     await expect.element(page.getByRole('button', { name: /Overflow track 12/ })).toBeInViewport();
     feedScroll!.scrollTop = 0;
 
-    // Header actions, section action, and filter pills all meet the 44px touch target floor.
+    // Header actions, filter pills, and the unread utility action meet the 44px touch target floor.
     for (const label of ['Open workspace', 'Search tracks', 'New track'] as const) {
       const box = page.getByRole('button', { name: label, exact: true }).element().getBoundingClientRect();
       expect(box.width).toBeGreaterThanOrEqual(44);
       expect(box.height).toBeGreaterThanOrEqual(44);
     }
-    expect(page.getByRole('button', { name: 'Mark all read', exact: true }).element().getBoundingClientRect().height).toBeGreaterThanOrEqual(44);
     for (const pill of page.getByRole('navigation', { name: 'Focus filters', exact: true }).getByRole('button').elements()) {
       expect(pill.getBoundingClientRect().height).toBeGreaterThanOrEqual(44);
     }
 
+    await page.getByRole('button', { name: /^Unread/ }).click();
+    await expect.element(page.getByText('2 unread', { exact: true })).toBeVisible();
+    const markRead = page.getByRole('button', { name: 'Mark all read', exact: true }).element();
+    expect(markRead.getBoundingClientRect().height).toBeGreaterThanOrEqual(44);
+    expect(getComputedStyle(markRead.parentElement!).borderBottomWidth).toBe('1px');
+    expect(feed.element().getBoundingClientRect().bottom).toBe(feedScroll!.getBoundingClientRect().bottom);
     expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(width);
+  });
+
+  it.each([
+    ['light', 390, 844], ['light', 320, 640], ['dark', 390, 844], ['dark', 320, 640],
+  ] as const)('keeps inline warnings and the repair capsule readable in %s at %ix%i', async (theme, width, height) => {
+    await page.viewport(width, height);
+    renderFocusFixture({
+      failedPreviewKind: 'ask',
+      themeStorage: { getItem: key => key === THEME_KEY ? theme : null, setItem: () => undefined },
+    });
+    const heading = page.getByRole('heading', { name: 'Focus', exact: true });
+    const feed = page.getByRole('list', { name: 'Tracks', exact: true });
+    const failed = feed.getByRole('button', { name: /^Workspace setup.*Needs repair Waiting on you: Try mounting again\?/ });
+    const ask = feed.getByRole('button', { name: /^Mobile layout polish.*Waiting on you: Approve the mobile layout\?/ });
+    await expect.element(failed).toBeVisible();
+    await expect.poll(() => document.documentElement.dataset.theme).toBe(theme);
+    await heading.hover();
+
+    const failedPill = getComputedStyle(failed.getByText('Needs repair', { exact: true }).element());
+    const askLabel = getComputedStyle(ask.getByText('Waiting on you:', { exact: true }).element());
+    const failedAsk = failed.getByText('Waiting on you:', { exact: true }).element();
+    const failedAskLabel = getComputedStyle(failedAsk);
+    const failedInk = getComputedStyle(failedAsk.parentElement!).color;
+    const surface = getComputedStyle(feed.element()).backgroundColor;
+    const radius = getComputedStyle(feed.element()).getPropertyValue('--radius-pill').trim();
+    const filters = page.getByRole('navigation', { name: 'Focus filters' }).getByRole('button').elements();
+    expect(filters).toHaveLength(5);
+    for (const style of [...filters.map(element => getComputedStyle(element)), failedPill]) {
+      expect(style.borderRadius).toBe(radius);
+    }
+    expect(failedPill.backgroundColor).toBe(resolvedColor('var(--chip-error)'));
+    expect(failedPill.color).toBe(resolvedColor('var(--chip-on-error)'));
+    for (const style of [askLabel, failedAskLabel]) {
+      expect(style.color).toBe(resolvedColor('var(--warn-text)'));
+      expect(style.fontWeight).toBe(style.getPropertyValue('--weight-semibold').trim());
+      expect(style.display).toBe('inline');
+      expect(style.backgroundColor).toBe(resolvedColor('transparent'));
+      expect(style.borderTopWidth).toBe('0px');
+    }
+    expect(failedInk).toBe(resolvedColor('var(--text)'));
+    expect(getComputedStyle(failed.getByText('Workspace setup', { exact: true }).element()).color).toBe(failedInk);
+    expect(getComputedStyle(failed.element()).backgroundColor).toBe(resolvedColor('var(--error-soft)'));
+    expect(surface).toBe(resolvedColor('var(--surface-card)'));
+    const divider = getComputedStyle(ask.element().closest('li')!, '::before');
+    expect([divider.left, divider.right, divider.height]).toEqual(['0px', '0px', '1px']);
+    expect(divider.backgroundColor).toBe(resolvedColor('var(--error-border)'));
+
+    for (const { row, title, backgrounds, checkContrast } of [
+      {
+        row: ask, title: 'Mobile layout polish',
+        backgrounds: ['transparent', 'var(--overlay-hover)', 'var(--overlay-active)'],
+        checkContrast: (fill: string) => expect(contrastRatio(askLabel.color, surface, fill)).toBeGreaterThanOrEqual(4.5),
+      },
+      {
+        row: failed, title: 'Workspace setup',
+        backgrounds: ['var(--error-soft)', 'color-mix(in srgb, var(--error-soft) 80%, var(--overlay-hover))',
+          'color-mix(in srgb, var(--error-soft) 65%, var(--overlay-active))'],
+        checkContrast: (fill: string) => {
+          expect(contrastRatio(failedInk, surface, fill)).toBeGreaterThanOrEqual(4.5);
+          expect(contrastRatio(failedPill.color, surface, fill, failedPill.backgroundColor)).toBeGreaterThanOrEqual(4.5);
+          expect(contrastRatio(failedAskLabel.color, surface, fill)).toBeGreaterThanOrEqual(4.5);
+        },
+      },
+    ]) {
+      const verify = (background: string) => {
+        const fill = getComputedStyle(row.element()).backgroundColor;
+        expect(fill).toBe(resolvedColor(background));
+        checkContrast(fill);
+      };
+      verify(backgrounds[0]);
+      await row.hover();
+      verify(backgrounds[1]);
+      try {
+        await commands.mouseButton(`[data-nc-focus-feed] button:has-text("${title}")`, true);
+        verify(backgrounds[2]);
+      } finally {
+        await heading.hover();
+        await commands.mouseButton('', false);
+      }
+    }
+  });
+
+  it('labels unread summaries and quiet collaborator replies by their content', async () => {
+    await page.viewport(390, 844);
+    renderFocusFixture({
+      manualUnreadTrackId: 't-pinned',
+      initialReceipts: [{ kind: 'conversation', targetId: 'ses-prod', readThroughMs: Date.now(), manualUnread: false }],
+    });
+
+    await page.getByRole('button', { name: /^Unread/ }).click();
+    const unreadSummary = page.getByRole('button', { name: /^Q4 Mobile Roadmap.*Summary: The roadmap is ready for review\. Unread$/ });
+    await expect.element(unreadSummary).toBeVisible();
+    expect(getComputedStyle(unreadSummary.getByText('Unread', { exact: true }).element()).clipPath).toBe('inset(50%)');
+    await page.getByRole('button', { name: 'All', exact: true }).click();
+    const readReply = page.getByRole('button', { name: /^Design system review.*Reply: Reviewed spacing/ });
+    await expect.element(readReply).toBeVisible();
+    expect(readReply.getByText('Unread', { exact: true }).query()).toBeNull();
+  });
+
+  it.each([
+    ['ask', /Waiting on you: Try mounting again\?/],
+    ['summary', /Summary: The setup report is available\./],
+  ] as const)('keeps an unread track’s activity distinct from its %s preview', async (failedPreviewKind, preview) => {
+    await page.viewport(390, 844);
+    renderFocusFixture({
+      failedPreviewKind,
+      askUsesSummary: true,
+      manualUnreadTrackId: 't-failed',
+      askTrackUnreadSessionId: 'ses-ask',
+    });
+
+    const rows = [
+      page.getByRole('button', { name: new RegExp(`^Workspace setup.*Needs repair ${preview.source} Unread$`) }),
+      page.getByRole('button', { name: /^Mobile layout polish.*Waiting on you · Summary: The review report is available\. Unread$/ }),
+      page.getByRole('button', { name: /^SQLite WAL checkpoint guard.*Running · Reply: Checking checkpoint timing\. Unread$/ }),
+    ];
+    for (const row of rows) {
+      await expect.element(row).toBeVisible();
+      const label = row.getByText('Unread', { exact: true }).element();
+      expect(getComputedStyle(label).clipPath).toBe('inset(50%)');
+      expect(getComputedStyle(label).position).toBe('absolute');
+    }
+  });
+
+  it('refreshes the mounted summary preview on report.updated', async () => {
+    await page.viewport(390, 844);
+    let sink: EventStreamSink | undefined;
+    const stream = EventStream.create('ws://fixture.invalid', {
+      start: (_config, _url, active) => { sink = active; },
+      stop: () => { sink = undefined; },
+    });
+    const { now, updatePinnedSummary } = renderFocusFixture({ stream });
+    await expect.element(page.getByRole('button', { name: /^Q4 Mobile Roadmap.*Summary: The roadmap/ })).toBeVisible();
+
+    const summary = 'The roadmap is approved.';
+    updatePinnedSummary(summary);
+    const decoded = decodeEventFrame({
+      kind: 'report.updated', areaId: 'a-prod', trackId: 't-pinned', eventId: 1, eventVersion: 1,
+      createdAtMs: now, payload: { docRev: 2, summary },
+    });
+    if (decoded.status !== 'ready' || sink === undefined) throw new Error('Event stream was not ready');
+    act(() => sink?.frame(decoded.frame));
+    await expect.element(page.getByRole('button', { name: /^Q4 Mobile Roadmap.*Summary: The roadmap is approved/ })).toBeVisible();
   });
 
   it('keeps the Focus header, filters, and feed inside landscape safe areas', async () => {
@@ -299,16 +553,33 @@ describe('MobileFocusHome', () => {
       const menu = await page.getByRole('button', { name: 'Open workspace', exact: true }).findElement();
       const filters = page.getByRole('navigation', { name: 'Focus filters' });
       const focus = await filters.getByRole('button', { name: /^Focus\b/ }).findElement();
-      const card = await page.getByRole('button', { name: /Mobile layout polish/ }).findElement();
+      const row = page.getByRole('button', { name: /Mobile layout polish/ });
+      await row.findElement();
       const create = await page.getByRole('button', { name: 'New track', exact: true }).findElement();
 
       const glyph = menu.querySelector('svg')!.getBoundingClientRect();
-      const feedCard = card.getBoundingClientRect();
-      for (const [name, box] of Object.entries({ glyph, filter: focus.getBoundingClientRect(), feedCard, create: create.getBoundingClientRect() })) {
-        expect(box.left, name).toBeGreaterThanOrEqual(leftInset);
-        expect(box.right, name).toBeLessThanOrEqual(width - rightInset);
+      const rowTitle = row.getByText('Mobile layout polish', { exact: true }).element().getBoundingClientRect();
+      const rowMeta = row.getByText('· 2m', { exact: true }).element().getBoundingClientRect();
+      for (const box of [glyph, focus.getBoundingClientRect(), rowTitle, rowMeta, create.getBoundingClientRect()]) {
+        expect(box.left).toBeGreaterThanOrEqual(leftInset);
+        expect(box.right).toBeLessThanOrEqual(width - rightInset);
       }
-      expect(Math.abs(glyph.left - feedCard.left)).toBeLessThanOrEqual(1);
+      expect(Math.abs(glyph.left - rowTitle.left)).toBeLessThanOrEqual(1);
+      expect(rowTitle.left - leftInset).toBeCloseTo(width - rightInset - rowMeta.right, 0);
+      const reply = await page.getByRole('button', { name: /^Design system review/ }).findElement();
+      const divider = getComputedStyle(reply.closest('li')!, '::before');
+      expect(parseFloat(divider.left)).toBeCloseTo(rowTitle.left, 0);
+      expect(parseFloat(divider.right)).toBeCloseTo(width - rowMeta.right, 0);
+
+      await page.getByRole('button', { name: /^Unread/ }).click();
+      const markRead = await page.getByRole('button', { name: 'Mark all read', exact: true }).findElement();
+      expect(markRead.getBoundingClientRect().right).toBeCloseTo(rowMeta.right, 0);
+      expect(page.getByText('2 unread', { exact: true }).element().getBoundingClientRect().left).toBeCloseTo(rowTitle.left, 0);
+      await page.getByRole('button', { name: 'Search tracks', exact: true }).click();
+      await page.getByRole('combobox', { name: 'Filter by area', exact: true }).selectOptions('a-prod');
+      const reset = await page.getByRole('button', { name: 'Reset', exact: true }).findElement();
+      expect(reset.getBoundingClientRect().right).toBeCloseTo(rowMeta.right, 0);
+      expect(page.getByText('Found 1 track in Product').element().getBoundingClientRect().left).toBeCloseTo(rowTitle.left, 0);
     } finally {
       await commands.setHorizontalSafeArea(0, 0);
     }
@@ -328,8 +599,8 @@ describe('MobileFocusHome', () => {
 
     // Quiet open track is searchable directly from default Focus tab.
     await searchInput.fill('archive');
-    await expect.element(page.getByRole('region', { name: 'Other matches', exact: true })).toBeVisible();
-    await expect.element(page.getByRole('button', { name: /Archive cleanup notes/ })).toBeVisible();
+    await expect.element(page.getByRole('button', { name: /Archive cleanup notes.*No updates yet/ })).toBeVisible();
+    expect(page.getByRole('list', { name: 'Tracks', exact: true }).element().querySelector('mark')?.textContent).toBe('Archive');
     expect(page.getByRole('button', { name: 'Clear search', exact: true }).element().getBoundingClientRect().height).toBeGreaterThanOrEqual(44);
 
     // Switching to Pinned while searching shows a 1-tap rescue CTA that preserves the search query.
@@ -342,8 +613,16 @@ describe('MobileFocusHome', () => {
     // Closed track is also searchable from default Focus tab.
     await page.getByRole('button', { name: /^Focus/ }).click();
     await searchInput.fill('old mobile');
-    await expect.element(page.getByRole('region', { name: 'Closed tracks', exact: true })).toBeVisible();
-    await expect.element(page.getByRole('button', { name: /Old mobile shell notes/ })).toBeVisible();
+    await expect.element(page.getByRole('button', { name: /Old mobile shell notes.*Closed · Summary: Previous layout archived/ })).toBeVisible();
+
+    await searchInput.fill('product');
+    const area = page.getByRole('combobox', { name: 'Filter by area', exact: true });
+    await area.selectOptions('a-prod');
+    await expect.element(page.getByText('Found 5 tracks in Product')).toBeVisible();
+    expect(page.getByRole('list', { name: 'Tracks', exact: true }).element().querySelector('mark')?.textContent).toBe('Product');
+    await page.getByRole('button', { name: 'Reset', exact: true }).click();
+    expect((searchInput.element() as HTMLInputElement).value).toBe('');
+    expect((area.element() as HTMLSelectElement).value).toBe('');
 
     // IME composing Escape must NOT collapse search.
     const composingEsc = new KeyboardEvent('keydown', { key: 'Escape', keyCode: 229, bubbles: true, cancelable: true });
@@ -368,11 +647,15 @@ describe('MobileFocusHome', () => {
       askTrackUnreadSessionId: 'ses-ask',
     });
 
-    await expect.element(page.getByRole('region', { name: 'Unread updates', exact: true })).toBeVisible();
+    await expect.element(page.getByRole('button', { name: /Design system review/ })).toBeVisible();
+    expect(page.getByRole('button', { name: /Mobile layout polish/ }).elements()).toHaveLength(1);
+    expect(page.getByRole('button', { name: 'Mark all read', exact: true }).query()).toBeNull();
 
     // Scope to Product via inline search + Area select, then click Mark all read.
     await page.getByRole('button', { name: 'Search tracks', exact: true }).click();
     await page.getByRole('combobox', { name: 'Filter by area', exact: true }).selectOptions('a-prod');
+    await page.getByRole('button', { name: /^Unread/ }).click();
+    await expect.element(page.getByText('3 unread', { exact: true })).toBeVisible();
     await page.getByRole('button', { name: 'Mark all read', exact: true }).click();
 
     await expect.poll(() => receipts.posts().length).toBe(3);
@@ -389,7 +672,7 @@ describe('MobileFocusHome', () => {
 
     // Clearing Area scope proves Backend's unread track is still unread.
     await page.getByRole('combobox', { name: 'Filter by area', exact: true }).selectOptions('');
-    await expect.element(page.getByRole('region', { name: 'Unread updates', exact: true })).toBeVisible();
+    await expect.element(page.getByRole('list', { name: 'Tracks', exact: true })).toBeVisible();
     await expect.element(page.getByRole('button', { name: /SQLite WAL checkpoint guard/ })).toBeVisible();
   });
 
@@ -400,7 +683,7 @@ describe('MobileFocusHome', () => {
     await expect.element(page.getByRole('heading', { name: 'Focus', exact: true })).toBeVisible();
     expect(page.getByText('All caught up', { exact: true }).query()).toBeNull();
     pending.releaseOverlays();
-    await expect.element(page.getByRole('region', { name: 'Unread updates', exact: true })).toBeVisible();
+    await expect.element(page.getByRole('list', { name: 'Tracks', exact: true })).toBeVisible();
 
     cleanup();
 
@@ -456,10 +739,18 @@ describe('MobileFocusHome', () => {
 
   it('supports Workspace focus return, server-resolved Today navigation, dark theme, shareScope boundaries, and desktop resize round-trip', async () => {
     await page.viewport(390, 844);
-    document.documentElement.setAttribute('data-theme', 'dark');
-    const fixture = renderFocusFixture();
+    const persistedTheme = new Map<string, string>([[THEME_KEY, 'dark']]);
+    const fixture = renderFocusFixture({
+      themeStorage: {
+        getItem: (key) => persistedTheme.get(key) ?? null,
+        setItem: (key, value) => { persistedTheme.set(key, value); },
+      },
+    });
 
     await expect.element(page.getByRole('heading', { name: 'Focus', exact: true })).toBeVisible();
+    await expect.poll(() => document.documentElement.dataset.theme).toBe('dark');
+    const feed = await page.getByRole('list', { name: 'Tracks', exact: true }).findElement();
+    expect(feed.getBoundingClientRect().bottom).toBe(document.querySelector('[data-nc-focus-feed]')!.getBoundingClientRect().bottom);
     expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(390);
 
     // Closing Workspace restores focus to Focus Home's Open workspace button.
@@ -505,6 +796,8 @@ describe('MobileFocusHome', () => {
     renderFocusFixture({ shareScope: { trackId: 't-ask', token: 'share-token' } });
     await expect.element(page.getByRole('heading', { name: 'Focus', exact: true })).toBeVisible();
     expect(page.getByRole('button', { name: 'New track', exact: true }).query()).toBeNull();
+    await page.getByRole('button', { name: /^Unread/ }).click();
+    await expect.element(page.getByText('2 unread', { exact: true })).toBeVisible();
     expect(page.getByRole('button', { name: 'Mark all read', exact: true }).query()).toBeNull();
     await page.getByRole('button', { name: 'Open workspace', exact: true }).click();
     expect(page.getByRole('button', { name: 'Settings', exact: true }).query()).toBeNull();

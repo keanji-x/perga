@@ -468,6 +468,10 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable, IS
         CancellationToken ct = default) =>
         _overlayRepository.ListTrackOverlaysAsync(includeClosed, ct);
 
+    public Task<IReadOnlyList<TrackOverlayFallback>> ListTrackOverlayFallbacksAsync(
+        IReadOnlyList<TrackOverlayFallbackRequest> requests, CancellationToken ct) =>
+        _overlayRepository.ListTrackOverlayFallbacksAsync(requests, ct);
+
     public Task<IReadOnlyList<string>> MarkInFlightInterruptedOnBootAsync(CancellationToken ct) =>
         _bootRecoveryRepository.MarkInFlightInterruptedOnBootAsync(ct);
 

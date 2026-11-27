@@ -359,6 +359,27 @@ public sealed partial class TrackActor
             await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
             var open = _track.ClosedAtMs is null;
             var sessions = _sessions.Values.Where(s => s.ArchivedAtMs is null).ToArray();
+            var openAsks = open ? _interactions.OpenAsks() : [];
+            var blockingSessions = open ? sessions.Where(s =>
+                string.Equals(s.Status, "unknown", StringComparison.OrdinalIgnoreCase) && IsSessionBlockingTrack(s)).ToArray() : [];
+            var workspaceFailed = open && _workspacePreparation?.Phase is
+                WorkspacePreparationPhase.Failed or WorkspacePreparationPhase.Unknown;
+            var ask = openAsks.OrderByDescending(a => a.CreatedAtMs)
+                .ThenByDescending(a => a.Id, StringComparer.Ordinal).FirstOrDefault();
+            var askPreview = TrackOverlayPreview.Normalize(ask?.Questions.FirstOrDefault()?.Question);
+            var blocker = askPreview is null ? blockingSessions
+                .Where(s => !string.IsNullOrWhiteSpace(s.UnknownLastError) || !string.IsNullOrEmpty(s.UnknownTurnId))
+                .OrderByDescending(s => s.UpdatedAtMs).ThenByDescending(s => s.Id, StringComparer.Ordinal)
+                .FirstOrDefault() : null;
+            var errorPreview = TrackOverlayPreview.Normalize(blocker?.UnknownLastError);
+            // A current turn's stored error takes precedence over workspace detail.
+            var needsStoredError = errorPreview is null && !string.IsNullOrEmpty(blocker?.UnknownTurnId);
+            if (askPreview is null && errorPreview is null && !needsStoredError && workspaceFailed)
+                errorPreview = TrackOverlayPreview.Normalize(_workspacePreparation?.FailureDetail);
+
+            var keepStoredPreview = !needsStoredError &&
+                stored.PreviewKind is not (TrackOverlayPreviewKind.Ask or TrackOverlayPreviewKind.Error);
+            var preview = askPreview ?? errorPreview ?? (keepStoredPreview ? stored.PreviewText : null);
             return stored with
             {
                 IsWorking = open && (
@@ -368,19 +389,20 @@ public sealed partial class TrackActor
                         WorkspacePreparationPhase.Initializing or WorkspacePreparationPhase.Provisioned ||
                     sessions.Any(s => IsWorkingSessionStatus(s.Status)) ||
                     _taskCoordinator.Snapshot().Any(t => t.Status is TaskRunStatus.Running or TaskRunStatus.Verifying)),
-                OpenAskCount = open ? _interactions.OpenAsks().Count(a => a.Status == AskStatus.Open) : 0,
+                OpenAskCount = openAsks.Length,
                 PendingApprovalCount = open ? PendingApprovalCount : 0,
-                HasBlockedSession = open && sessions.Any(s =>
-                    string.Equals(s.Status, "unknown", StringComparison.OrdinalIgnoreCase) &&
-                    IsSessionBlockingTrack(s)),
-                WorkspaceFailed = open && _workspacePreparation?.Phase is
-                    WorkspacePreparationPhase.Failed or WorkspacePreparationPhase.Unknown,
+                HasBlockedSession = blockingSessions.Length > 0,
+                WorkspaceFailed = workspaceFailed,
                 UpdatedAtMs = Math.Max(stored.UpdatedAtMs, LastActivityAtMs),
                 NotifiableSessions = sessions
                     .Where(s => !_taskCoordinator.IsTaskOwnedSessionCore(s.Id) && s.LastNotifiableTurnAtMs is not null)
                     .OrderBy(s => s.Id, StringComparer.Ordinal)
                     .Select(s => new NotifiableSessionWatermarkDto(s.Id, s.LastNotifiableTurnAtMs!.Value))
-                    .ToArray()
+                    .ToArray(),
+                PreviewText = preview,
+                PreviewKind = askPreview is not null ? TrackOverlayPreviewKind.Ask
+                    : errorPreview is not null ? TrackOverlayPreviewKind.Error
+                    : keepStoredPreview ? stored.PreviewKind : null
             };
         }, ct, touchActivity: false);
 

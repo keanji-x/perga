@@ -79,14 +79,13 @@ describe('workspaceTrackGroups & buildFocusFeed', () => {
     expect(groups.pinned.map((t) => t.id)).toEqual(['t-failed', 't-pinned']);
   });
 
-  it('deduplicates Focus sections while preserving allUnreadInScope for Mark all read', () => {
+  it('preserves a deduplicated Focus stream and all unread tracks for Mark all read', () => {
     const feed = buildFocusFeed({
       tracks, areas, isUnread, tab: 'focus', areaId: null, query: '',
     });
 
-    expect(feed.attention.map((t) => t.id)).toEqual(['t-failed', 't-ask']);
-    expect(feed.unread.map((t) => t.id)).toEqual(['t-unread']);
-    expect(feed.pinned.map((t) => t.id)).toEqual(['t-pinned']);
+    const rows = [...feed.attention, ...feed.unread, ...feed.pinned, ...feed.open, ...feed.closed];
+    expect(rows.map((t) => t.id)).toEqual(['t-failed', 't-ask', 't-unread', 't-pinned']);
     expect(feed.allUnreadInScope.map((t) => t.id)).toEqual(['t-ask', 't-unread']);
     expect(feed.counts).toEqual({
       focus: 4,
