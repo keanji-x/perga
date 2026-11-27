@@ -576,6 +576,25 @@ public sealed partial class ReportDocEngineTests
     }
 
     [Theory]
+    [InlineData("# Notes", null)]
+    [InlineData("# Notes\n  ", null)]
+    [InlineData("# Notes", "Renamed")]
+    [InlineData("# Renamed", "Renamed")]
+    [InlineData("# Renamed\n  ", "Renamed")]
+    public void ReplaceSectionWithHeadingOnlyRejectsReplacementAndPreservesSection(string markdown, string? newSectionH1)
+    {
+        var doc = _engine.Parse("# Notes\n\n<!-- perga:notes rev=2 -->\nOriginal body.");
+        var original = Assert.Single(doc.Blocks);
+        var op = new BlockOp.ReplaceSectionOp("Notes", markdown, NewSectionH1: newSectionH1);
+
+        var error = Assert.Throws<ArgumentException>("ops", () =>
+            _engine.ApplyCommit(doc, WholeAnchor(doc), [op]));
+
+        Assert.StartsWith("Section body cannot be empty after the heading.", error.Message, StringComparison.Ordinal);
+        Assert.Equal(original, Assert.Single(doc.Blocks));
+    }
+
+    [Theory]
     [InlineData("")]
     [InlineData(" \t\r\n")]
     public void ReplaceSectionWithBlankMarkdownDeletesEveryBlockInTheSection(string markdown)

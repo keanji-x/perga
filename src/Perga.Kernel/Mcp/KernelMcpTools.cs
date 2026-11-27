@@ -198,9 +198,9 @@ public static class KernelMcpCatalog
                 Cheatsheet:
                 - anchor: { docRev, knownBlockRevs, wholeDocumentRead } from report_read, the previous report_commit receipt, or the initial anchor in the empty Report prompt.
                 - ops (non-empty array):
-                  - { op: "replace_section", sectionH1, markdown?, newSectionH1?, beforeBlockId?, afterBlockId? } creates, replaces, renames, or deletes an H1 section. Supply newSectionH1 without markdown to preserve its blocks, or markdown: "" on its own to delete the section. Use at most one placement ID and place the section next to a block outside it.
+                  - { op: "replace_section", sectionH1, markdown?, newSectionH1?, beforeBlockId?, afterBlockId? } creates, replaces, renames, or deletes an H1 section. Omit markdown with newSectionH1 to rename while keeping blocks; pass blank markdown alone to delete. Use at most one placement ID outside the section.
                   - { op: "edit_block", id, target, replacement } replaces a unique, exact match in a prose block. Use "" as replacement to delete the match.
-                  - { op: "upsert", id?, blockKind?: "prose"|"widget", markdown?, payload?, position?, sectionH1? } defaults to prose on insert. Omit position to append new blocks to the target section or to the document if the section is new. Reassigning a block to another existing section defaults to appending there. Omit blockKind, markdown and payload on update to preserve kind and content.
+                  - { op: "upsert", id?, blockKind?: "prose"|"widget", markdown?, payload?, position?, sectionH1? } defaults to prose on insert. Omit position to append on insert or section move, or keep position on in-section update; omit blockKind, markdown and payload on update to preserve them.
                   - { op: "delete", id }
                   - { op: "move", id, toIndex }
                 - Optional: summary, commitMessage, includeDocument. Set includeDocument=true to add renderedMarkdown and blocks to the receipt.
