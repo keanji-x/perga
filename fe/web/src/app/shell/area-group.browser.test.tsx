@@ -53,9 +53,12 @@ it('previews the Track count before the row limit and follows Show closed', asyn
   await expect.element(page.getByRole('button', { name: /^Show 2 more in Work/ })).toBeVisible();
   await area.hover();
   await expect.element(preview, { timeout: 2000 }).toBeVisible();
-  await expect.element(preview.getByText('Work · Jasper workstation', { exact: true })).toBeVisible();
+  await expect.element(preview.getByText('Work', { exact: true })).toBeVisible();
+  await expect.element(preview.getByText('Jasper workstation', { exact: true })).toBeVisible();
   await expect.element(preview.getByText('7 Tracks', { exact: true })).toBeVisible();
-  expect(preview.element().getBoundingClientRect().left).toBeGreaterThanOrEqual(area.element().getBoundingClientRect().right);
+  await expect.element(area).toHaveAttribute('aria-describedby', preview.element().id);
+  const newTrack = page.getByRole('button', { name: 'New track in Work' });
+  expect(preview.element().getBoundingClientRect().left).toBeGreaterThanOrEqual(newTrack.element().getBoundingClientRect().right);
   await page.screenshot({ path: './__screenshots__/area-track-count-preview.png' });
 
   await page.getByRole('button', { name: 'Area actions for Work' }).click();
@@ -67,6 +70,7 @@ it('previews the Track count before the row limit and follows Show closed', asyn
   await area.click();
   const expand = page.getByRole('button', { name: 'Expand area Work', exact: true });
   await expect.element(expand).toBeVisible();
+  await expect.element(preview).not.toBeInTheDocument();
   const newArea = page.getByRole('button', { name: 'New area' });
   await newArea.hover();
   (newArea.element() as HTMLButtonElement).focus();
