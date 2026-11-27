@@ -5,6 +5,7 @@ import type { UnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
 import { visibleAreas } from '../../../../core/domain/area.ts';
 import type { Track } from '../../../../core/domain/track.ts';
 import { MobileFocusHome } from '../../features/focus/public.tsx';
+import { TrackTitle } from '../../features/track/title/public.tsx';
 import { workspaceActivityErrorText, workspaceReadErrorText } from '../providers/query-read-feedback.ts';
 import { useReadReceipts } from '../providers/read-receipts.tsx';
 import { useWorkspace } from '../providers/workspace-queries.ts';
@@ -84,6 +85,7 @@ export function MobileFocusRoute({
       onOpenWorkspace={() => openMobileSection({ kind: 'areas', areaId: shownAreas[0]?.id }, 'workspace')}
       workspaceTriggerRef={workspaceTriggerRef}
       onOpenTrack={(trackId) => go({ name: 'track', trackId, from: 'pages' })}
+      renderTrackTitle={(track, content) => <TrackTitle track={track}>{content}</TrackTitle>}
       onNewTrack={handleNewTrack}
       onMarkAllRead={shareScope === null ? handleMarkAllRead : undefined}
     />

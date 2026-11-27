@@ -255,7 +255,7 @@ describe('workspace header navigation', () => {
     const router = setup('/');
     await userEvent.click(await screen.findByRole('button', { name: 'Open workspace' }));
     await userEvent.click(screen.getByRole('button', { name: 'Product' }));
-    await userEvent.click(await screen.findByRole('button', { name: 'Responsive mobile UI' }));
+    await userEvent.click(await screen.findByRole('button', { name: /^Responsive mobile UI\b/ }));
     await waitFor(() => { expect(href(router)).toBe('/track/w1?from=area'); });
     expect(document.querySelector('nav[aria-label="Primary"]')).toBeNull();
   });

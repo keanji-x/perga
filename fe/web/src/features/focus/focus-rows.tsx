@@ -1,7 +1,7 @@
 import type { ReactElement, ReactNode } from 'react';
 
 import { notificationPlainText, type ActivityState } from '../../../../core/domain/activity.ts';
-import { areaOf, type Area } from '../../../../core/domain/area.ts';
+import type { Area } from '../../../../core/domain/area.ts';
 import { formatRelativeTimestamp, type RelativeTimeFormatters } from '../../../../core/domain/relative-time.ts';
 import type { FocusFeedProjection, FocusTab } from '../../../../core/domain/track-groups.ts';
 import {
@@ -40,8 +40,10 @@ function activityLabel(track: Track, activity: ActivityState): RowLabel | null {
     case 'failed': return contentLabel('error');
     case 'attention': return contentLabel('ask');
     case 'working': return { text: 'Running', tone: styles.statusWorking };
-    case 'unread':
-    case 'quiet': return isClosed(track) ? { text: 'Closed' } : null;
+    case 'unread': return isClosed(track) ? { text: 'Closed' } : null;
+    case 'quiet':
+      if (isClosed(track)) return { text: 'Closed' };
+      return track.pinnedAt !== null ? { text: 'Pinned' } : null;
   }
 }
 
@@ -55,51 +57,79 @@ function contentLabel(kind: TrackPreviewKind | null): RowLabel | null {
   }
 }
 
-export function FocusTrackRow({
+/** The mobile feed row used in Focus and Workspace track lists. */
+export function MobileTrackFeedRow({
   track,
-  areas,
-  query,
+  areaName,
+  query = '',
   now,
   unread,
   formatters,
   onOpenTrack,
+  timestampMs = trackRecentAt(track),
+  current = false,
+  previewLines = 3,
+  surface = 'edge',
+  trailingAction,
+  renderTitle,
 }: Readonly<{
   track: Track;
-  areas: readonly Area[];
-  query: string;
+  areaName?: string;
+  query?: string;
   now: number;
   unread: boolean;
   formatters: RelativeTimeFormatters;
   onOpenTrack: (trackId: string) => void;
+  timestampMs?: number;
+  current?: boolean;
+  previewLines?: 2 | 3;
+  surface?: 'edge' | 'card';
+  trailingAction?: ReactNode;
+  renderTitle?: (track: Track, content: ReactNode) => ReactNode;
 }>) {
-  const area = areaOf(track.areaId, areas);
-  const title = trackDisplayTitle(track.title);
-  const time = formatRelativeTimestamp(trackRecentAt(track), now, formatters);
-  const unreadWhileOpen = !isClosed(track) && unread;
-  const activity = trackActivityState(track, unreadWhileOpen);
+  const title = highlightMatch(trackDisplayTitle(track.title), query);
+  const time = formatRelativeTimestamp(timestampMs, now, formatters);
+  const closed = isClosed(track);
+  const activity = trackActivityState(track, unread);
   const preview = track.previewText === null ? '' : notificationPlainText(track.previewText).trim();
   const status = activityLabel(track, activity);
   const content = preview === '' ? null : contentLabel(track.previewKind);
   const prefix = content ?? status;
   const failed = activity === 'failed';
-  const showUnreadUpdate = activity === 'unread' && preview === '';
-  const announceUnread = unreadWhileOpen && !showUnreadUpdate;
+  const showUnreadUpdate = prefix === null && activity === 'unread' && preview === '';
+  const announceUnread = unread && !showUnreadUpdate;
+  const itemClass = [
+    styles.feedItem,
+    surface === 'card' ? styles.feedItemCard : '',
+    current ? styles.feedItemCurrent : '',
+    failed ? styles.feedItemFailed : '',
+  ].join(' ');
 
   return (
-    <li className={failed ? `${styles.feedItem} ${styles.feedItemFailed}` : styles.feedItem}>
-      <button type="button" className={failed ? `${styles.feedRow} ${styles.feedRowFailed}` : styles.feedRow} onClick={() => onOpenTrack(track.id)}>
+    <li className={itemClass}>
+      <button
+        type="button"
+        className={styles.feedRow}
+        aria-current={current ? 'page' : undefined}
+        onClick={() => onOpenTrack(track.id)}
+      >
         <span className={styles.feedTopRow}>
-          <span className={activity === 'quiet' ? styles.feedTitle : `${styles.feedTitle} ${styles.feedTitleActive}`}>
-            {highlightMatch(title, query)}
+          <span
+            className={styles.feedTitle}
+            data-nc-active={current || (!closed && activity !== 'quiet') || undefined}
+          >
+            {renderTitle === undefined ? title : renderTitle(track, title)}
           </span>
-          {(area !== undefined || time !== '') && (
+          {' '}
+          {(areaName !== undefined || time !== '') && (
             <span className={styles.feedMeta}>
-              {area !== undefined && <span className={styles.feedArea}>{highlightMatch(area.name, query)}</span>}
-              {time !== '' && <span>{area !== undefined ? ` · ${time}` : time}</span>}
+              {areaName !== undefined && <span className={styles.feedArea}>{highlightMatch(areaName, query)}</span>}
+              {time !== '' && <span>{areaName !== undefined ? ` · ${time}` : time}</span>}
             </span>
           )}
         </span>
-        <span className={preview === '' ? styles.feedFallback : styles.feedPreview}>
+        {' '}
+        <span className={preview === '' ? styles.feedFallback : styles.feedPreview} data-nc-preview-lines={previewLines}>
           {status !== null && content !== null && status.text !== content.text && (
             <><span className={status.tone ?? styles.statusMuted}>{status.text}</span>{status.pill || content.pill ? ' ' : ' · '}</>
           )}
@@ -109,12 +139,15 @@ export function FocusTrackRow({
           {prefix?.pill && preview !== '' && ' '}
           {preview || (prefix === null && (
             <span className={showUnreadUpdate ? styles.statusReply : styles.statusMuted}>
-              {showUnreadUpdate ? 'Unread update' : track.pinnedAt !== null ? 'Pinned' : 'No updates yet'}
+              {showUnreadUpdate ? 'Unread update' : 'No updates yet'}
             </span>
           ))}
         </span>
-        {announceUnread && <span className={styles.srOnly}> Unread</span>}
+        {' '}
+        {closed && status?.text !== 'Closed' && <span className={styles.srOnly}>Closed</span>}
+        {announceUnread && <span className={styles.srOnly}>Unread</span>}
       </button>
+      {trailingAction != null && <div className={styles.feedAction}>{trailingAction}</div>}
     </li>
   );
 }

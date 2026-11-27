@@ -5,6 +5,7 @@ import { useMemo, useRef } from 'react';
 import { visibleAreas, type Area } from '../../../../../core/domain/area.ts';
 import { createRelativeTimeFormatters, formatRelativeTimestamp } from '../../../../../core/domain/relative-time.ts';
 import { isClosed, trackRecentAt, type Track } from '../../../../../core/domain/track.ts';
+import { MobileTrackFeedRow } from '../../../features/focus/public.tsx';
 import { TrackTitle } from '../../../features/track/title/public.tsx';
 import { EmptyState } from '../../../ui/empty-state/public.tsx';
 import { ErrorBox } from '../../../ui/error-box/public.tsx';
@@ -15,7 +16,7 @@ import type { MobileTracksProps } from './tracks-types.ts';
 import styles from './navigation.module.css';
 
 export function WorkspaceLevelOne({
-  areas, tracksByArea, areaId, onBack, onCreateArea, onSelectArea, onOpenTrack, onOpenSettings, onOpenToday, onOpenMemory,
+  areas, tracksByArea, areaId, currentTrackId, onBack, onCreateArea, onSelectArea, onOpenTrack, onOpenSettings, onOpenToday, onOpenMemory,
   isUnread, readError, readLoading, onRetryRead, accountLabel = 'Account', accountInitial = 'A', onSignOut, onSetupAccount, shareMode = false, nowMs,
 }: MobileTracksProps) {
   const shown = visibleAreas(areas);
@@ -191,29 +192,22 @@ export function WorkspaceLevelOne({
 
             {closedExpanded && allClosedTracks.length > 0 && (
               <ul className={`${styles.groupCard} ${styles.closedSubCard}`}>
-                {allClosedTracks.map(({ track, areaName }) => {
-                  const closedTime = formatRelativeTimestamp(track.closedAt ?? track.updatedAt, now, timeFormatters);
-                  return (
-                    <li key={track.id} className={styles.groupItem}>
-                      <button type="button" className={styles.rowButton} onClick={() => onOpenTrack(track.id)}>
-                        <span className={styles.rowIcon} aria-hidden="true">
-                          <Icon name="archive" size="sm" />
-                        </span>
-                        <span className={styles.rowBody}>
-                          <span className={styles.rowTitleCalm}><TrackTitle track={track} /></span>
-                          <span className={styles.rowMeta}>
-                            {areaName}{closedTime !== '' ? ` · Closed ${closedTime}` : ' · Closed'}
-                          </span>
-                        </span>
-                        <span className={styles.rowTrailing}>
-                          <span className={styles.rowChevron} aria-hidden="true">
-                            <Icon name="chevron-right" size="sm" />
-                          </span>
-                        </span>
-                      </button>
-                    </li>
-                  );
-                })}
+                {allClosedTracks.map(({ track, areaName }) => (
+                  <MobileTrackFeedRow
+                    key={track.id}
+                    track={track}
+                    areaName={areaName}
+                    now={now}
+                    unread={isUnread(track)}
+                    formatters={timeFormatters}
+                    onOpenTrack={onOpenTrack}
+                    current={track.id === currentTrackId}
+                    renderTitle={(track) => <TrackTitle track={track} />}
+                    timestampMs={track.closedAt ?? track.updatedAt}
+                    previewLines={2}
+                    surface="card"
+                  />
+                ))}
               </ul>
             )}
           </section>

@@ -322,7 +322,7 @@ describe('MobileFocusHome', () => {
     const ask = feed.getByRole('button', { name: /^Mobile layout polish.*Waiting on you: Approve the mobile layout\?/ });
     const reply = feed.getByRole('button', { name: /^Design system review.*Reply: Reviewed spacing and contrast\..* Unread$/ });
     const running = feed.getByRole('button', { name: /^SQLite WAL checkpoint guard.*Running · Reply: Checking checkpoint timing\./ });
-    const summary = feed.getByRole('button', { name: /^Q4 Mobile Roadmap.*Summary: The roadmap is ready for review\./ });
+    const summary = feed.getByRole('button', { name: /^Q4 Mobile Roadmap.*Pinned · Summary: The roadmap is ready for review\./ });
     const pinned = feed.getByRole('button', { name: /^Overflow track 1\b.*Pinned$/ });
     expect(rows.slice(0, 6)).toEqual([failed, ask, reply, running, summary, pinned].map(row => row.element()));
     expect(page.getByRole('heading').elements()).toHaveLength(1);
@@ -336,7 +336,7 @@ describe('MobileFocusHome', () => {
 
     const firstTitle = failed.getByText('Workspace setup', { exact: true }).element();
     const firstPreview = failureLabel.parentElement!;
-    const longTitle = reply.getByText(/^Design system review/).element();
+    const longTitle = reply.getByText(/^Design system review/).element().parentElement!;
     const longPreview = reply.getByText('Reply:', { exact: true }).element().parentElement!;
     await expect.element(ask.getByText('Product', { exact: true })).toBeVisible();
     await expect.element(ask.getByText('· 2m', { exact: true })).toBeVisible();
@@ -438,7 +438,7 @@ describe('MobileFocusHome', () => {
     }
     expect(failedInk).toBe(resolvedColor('var(--text)'));
     expect(getComputedStyle(failed.getByText('Workspace setup', { exact: true }).element()).color).toBe(failedInk);
-    expect(getComputedStyle(failed.element()).backgroundColor).toBe(resolvedColor('var(--error-soft)'));
+    expect(getComputedStyle(failed.element().closest('li')!).backgroundColor).toBe(resolvedColor('var(--error-soft)'));
     expect(surface).toBe(resolvedColor('var(--surface-card)'));
     const divider = getComputedStyle(ask.element().closest('li')!, '::before');
     expect([divider.left, divider.right, divider.height]).toEqual(['0px', '0px', '1px']);
@@ -462,7 +462,8 @@ describe('MobileFocusHome', () => {
       },
     ]) {
       const verify = (background: string) => {
-        const fill = getComputedStyle(row.element()).backgroundColor;
+        const surfaceElement = row === failed ? row.element().closest('li')! : row.element();
+        const fill = getComputedStyle(surfaceElement).backgroundColor;
         expect(fill).toBe(resolvedColor(background));
         checkContrast(fill);
       };
@@ -613,7 +614,11 @@ describe('MobileFocusHome', () => {
     // Closed track is also searchable from default Focus tab.
     await page.getByRole('button', { name: /^Focus/ }).click();
     await searchInput.fill('old mobile');
-    await expect.element(page.getByRole('button', { name: /Old mobile shell notes.*Closed · Summary: Previous layout archived/ })).toBeVisible();
+    const archived = page.getByRole('button', { name: /Old mobile shell notes.*Closed · Summary: Previous layout archived/ });
+    await expect.element(archived).toBeVisible();
+    const highlightedTitle = archived.getByText('Old mobile', { exact: true }).element();
+    expect(highlightedTitle.tagName).toBe('MARK');
+    expect(getComputedStyle(highlightedTitle.parentElement!).textDecorationLine).toBe('line-through');
 
     await searchInput.fill('product');
     const area = page.getByRole('combobox', { name: 'Filter by area', exact: true });

@@ -311,7 +311,6 @@
   }
 
   .utilityBar,
-  .feedRow,
   .feedNotice,
   .emptyWrap {
     padding-left: calc(env(safe-area-inset-left) + var(--space-4));
@@ -370,7 +369,24 @@
   }
 
   .feedItem {
+    --feed-left: calc(env(safe-area-inset-left) + var(--space-4));
+    --feed-right: calc(env(safe-area-inset-right) + var(--space-4));
     position: relative;
+    display: flex;
+    min-inline-size: 0;
+  }
+
+  .feedItemCard {
+    --feed-left: var(--space-4);
+    --feed-right: var(--space-4);
+  }
+
+  .feedItemCurrent {
+    background: var(--selection-bg);
+  }
+
+  .feedItemFailed {
+    background: var(--error-soft);
   }
 
   .feedItem + .feedItem::before,
@@ -383,8 +399,8 @@
 
   .feedItem + .feedItem::before {
     inset-block-start: 0;
-    left: calc(env(safe-area-inset-left) + var(--space-4));
-    right: calc(env(safe-area-inset-right) + var(--space-4));
+    left: var(--feed-left);
+    right: var(--feed-right);
     background: color-mix(in srgb, var(--hairline) 65%, transparent);
   }
 
@@ -403,9 +419,12 @@
     display: flex;
     flex-direction: column;
     gap: var(--space-1);
-    inline-size: 100%;
+    flex: 1 1 auto;
+    min-inline-size: 0;
     min-block-size: var(--header-primary-h);
     padding-block: var(--space-3);
+    padding-left: var(--feed-left);
+    padding-right: var(--feed-right);
     border: 0;
     background: transparent;
     text-align: start;
@@ -421,17 +440,34 @@
     background: var(--overlay-active);
   }
 
-  .feedRowFailed {
-    background: var(--error-soft);
-  }
-
-  .feedRowFailed:hover,
-  .feedRowFailed:focus-visible {
+  .feedItemFailed:has(> .feedRow:is(:hover, :focus-visible)) {
     background: color-mix(in srgb, var(--error-soft) 80%, var(--overlay-hover));
   }
 
-  .feedRowFailed:active {
+  .feedItemFailed:has(> .feedRow:active) {
     background: color-mix(in srgb, var(--error-soft) 65%, var(--overlay-active));
+  }
+
+  .feedItemFailed > .feedRow {
+    background: transparent;
+  }
+
+  .feedRow:has(+ .feedAction) {
+    padding-inline-end: var(--space-2);
+  }
+
+  .feedAction {
+    display: flex;
+    flex: none;
+    align-self: flex-start;
+    padding-block-start: var(--space-1);
+    padding-left: 0;
+    padding-right: calc(var(--feed-right) - var(--space-3));
+  }
+
+  .feedAction:dir(rtl) {
+    padding-left: calc(var(--feed-left) - var(--space-3));
+    padding-right: 0;
   }
 
   .feedTopRow {
@@ -453,9 +489,17 @@
     color: color-mix(in srgb, var(--text) 82%, var(--text-2));
   }
 
-  .feedTitleActive {
+  .feedTitle[data-nc-active] {
     color: var(--text);
     font-weight: var(--weight-semibold);
+  }
+
+  .feedItemCurrent .feedTitle {
+    color: var(--accent);
+  }
+
+  .feedItemCurrent.feedItemFailed {
+    box-shadow: inset 0 0 0 var(--space-px) var(--accent);
   }
 
   .feedMeta {
@@ -490,14 +534,18 @@
     overflow-wrap: anywhere;
   }
 
+  .feedPreview[data-nc-preview-lines='2'] {
+    -webkit-line-clamp: 2;
+  }
+
   .feedFallback {
     text-overflow: ellipsis;
     white-space: nowrap;
   }
 
-  .feedRowFailed .feedTitle,
-  .feedRowFailed .feedPreview,
-  .feedRowFailed .feedFallback {
+  .feedItemFailed .feedTitle,
+  .feedItemFailed .feedPreview,
+  .feedItemFailed .feedFallback {
     color: var(--text);
   }
 

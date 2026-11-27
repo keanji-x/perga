@@ -124,15 +124,14 @@ describe('compact navigation interaction contracts', () => {
     </UiPreferencesProvider>);
     fireEvent.click(screen.getByRole('button', { name: 'Open workspace' }));
     fireEvent.click(screen.getByRole('button', { name: 'Product' }));
-    const marker = () => screen.getByRole('button', { name: /^Responsive mobile UI/ })
-      .querySelector('[data-nc-activity]')?.getAttribute('data-nc-activity') ?? null;
-    await waitFor(() => expect(marker()).toBe('unread'));
-    expect(screen.getByRole('button', { name: 'Responsive mobile UI' })).toBeTruthy();
+    const openTracks = screen.getByRole('region', { name: 'Open tracks' });
+    await waitFor(() => expect(openTracks.textContent).toContain('Unread update'));
+    expect(screen.getByRole('button', { name: /^Responsive mobile UI.*Unread update$/ })).toBeTruthy();
 
     // Read elsewhere; this tab sees it when it is shown again.
     await receipts.transport.send({ method: 'POST', path: '/api/v1/read-receipts/conversation/s1/read', credentials: 'include', body: { readThroughMs: 150 } });
     act(() => { window.dispatchEvent(new Event('visibilitychange')); });
-    await waitFor(() => expect(marker()).toBeNull());
+    await waitFor(() => expect(openTracks.textContent).toContain('No updates yet'));
   });
 });
 

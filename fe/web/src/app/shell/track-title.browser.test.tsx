@@ -94,7 +94,7 @@ describe('shared Track title in production hosts', () => {
     expect(onOpenTrack).toHaveBeenCalledWith('w1');
     view.unmount();
     render(<div style={{ height: '100dvh' }}><MobileTracks {...props} view="tracks" /></div>);
-    expect(decoration(screen.getByRole('button', { name: 'Alpha, closed' }))).toBe('line-through');
+    expect(decoration(screen.getByRole('button', { name: /^Alpha\b.*\bClosed$/ }))).toBe('line-through');
   });
 });
 

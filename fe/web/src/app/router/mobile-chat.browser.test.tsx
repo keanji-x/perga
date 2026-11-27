@@ -159,12 +159,16 @@ it('shows no draft entry on desktop and never dispatches an empty message', asyn
   expect(requests.filter((request) => request.method !== 'GET')).toHaveLength(0);
 });
 
+function areaTrackRow(name: RegExp = /^Project evidence\b/) {
+  return page.getByRole('region', { name: 'Open tracks', exact: true }).getByRole('button', { name });
+}
+
 it('keeps workspace navigation as Area and Track lists with no filters', async () => {
   await page.viewport(390, 844);
   const { requests } = renderDailyFixture();
   await page.getByRole('button', { name: 'Open workspace', exact: true }).click();
   await page.getByRole('button', { name: 'Project', exact: true }).click();
-  await expect.element(page.getByRole('button', { name: 'Project evidence', exact: true })).toBeVisible();
+  await expect.element(areaTrackRow()).toBeVisible();
   expect(page.getByRole('radio').query()).toBeNull();
   await page.getByRole('button', { name: 'Area actions', exact: true }).click();
   await expect.element(page.getByRole('button', { name: 'New track', exact: true })).toBeVisible();
@@ -178,14 +182,14 @@ it('opens the existing Track page from the title and returns directly to the rep
   await page.getByRole('button', { name: 'Switch track, 2026-10-04', exact: true }).click();
   await expect.element(page.getByRole('region', { name: 'Open tracks', exact: true })).toBeVisible();
   expect(page.getByRole('menu').query()).toBeNull();
-  await expect.element(page.getByRole('button', { name: 'Project evidence', exact: true })).toBeVisible();
+  await expect.element(areaTrackRow()).toBeVisible();
   await page.getByRole('button', { name: 'Back to Report', exact: true }).click();
   await expect.element(page.getByRole('button', { name: 'Switch track, 2026-10-04', exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Switch track, 2026-10-04', exact: true }).click();
-  await page.getByRole('button', { name: 'Project evidence', exact: true }).click();
+  await areaTrackRow().click();
   await expect.poll(() => router.state.location.pathname).toBe('/track/project');
   await page.getByRole('button', { name: 'Switch track, Project', exact: true }).click();
-  await expect.element(page.getByRole('button', { name: 'Project evidence', exact: true })).toHaveAttribute('aria-current', 'page');
+  await expect.element(areaTrackRow()).toHaveAttribute('aria-current', 'page');
   await page.getByRole('button', { name: 'Back to Report', exact: true }).click();
   expect(router.state.location.pathname).toBe('/track/project');
   expect(requests.filter((request) => request.method !== 'GET')).toHaveLength(0);
@@ -203,7 +207,7 @@ it.each([320, 390])('keeps a long title readable in the document header and its 
   expect(label.getBoundingClientRect().right).toBeLessThanOrEqual(icon.getBoundingClientRect().left);
   await expect.element(page.getByRole('heading', { name: projectTitle, exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Switch track, Project', exact: true }).click();
-  await expect.element(page.getByRole('button', { name: projectTitle, exact: true })).toBeVisible();
+  await expect.element(areaTrackRow(new RegExp(`^${projectTitle}`))).toBeVisible();
   expect(requests.filter((request) => request.method !== 'GET')).toHaveLength(0);
 });
 
@@ -279,7 +283,7 @@ it.each(['/track/project', '/area/project-area/new'])('returns from mobile track
   await expect.element(back).toBeVisible();
   await back.click();
   await expect.element(page.getByRole('region', { name: 'Open tracks', exact: true })).toBeVisible();
-  await expect.element(page.getByRole('button', { name: 'Project evidence', exact: true })).toBeVisible();
+  await expect.element(areaTrackRow()).toBeVisible();
   await page.getByRole('button', { name: 'New track', exact: true }).click();
   await expect.element(draft).toHaveTextContent('保留未提交的 Track 草稿');
   await back.click();
