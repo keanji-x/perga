@@ -167,6 +167,20 @@ describe('TrackPage header', () => {
     expect(onCloseBoard).toHaveBeenCalledOnce();
   });
 
+  it.each([undefined, 'docs/README.md'])('labels desktop and mobile file Back with %s', async backLabel => {
+    const onClose = vi.fn();
+    renderPage({ fileViewer: { label: 'README.md', fullPath: '/repo/README.md', backLabel,
+      render: () => <div>Document</div>, onClose } });
+    const desktopLabel = backLabel === undefined ? 'Back to track' : `Back to ${backLabel}`;
+    const desktop = screen.getByTitle(desktopLabel);
+    expect(desktop.getAttribute('aria-label')).toBe(desktopLabel);
+    await userEvent.click(desktop);
+    const buttons = screen.getAllByRole('button', { name: backLabel === undefined ? 'Back to Report' : desktopLabel });
+    const mobile = buttons.find(button => button !== desktop)!;
+    await userEvent.click(mobile);
+    expect(onClose).toHaveBeenCalledTimes(2);
+  });
+
   it('makes the compact header return an open overlay to the Report', async () => {
     const onCloseBoard = vi.fn();
     renderPage({ board: <div>file</div>, onCloseBoard });

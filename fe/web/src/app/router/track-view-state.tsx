@@ -1,3 +1,4 @@
+import type { FileScrollOffset } from '../../features/report/file-viewer/public.tsx';
 import { createTerminalWorkbenchSessions } from '../../features/track/workbench/public.tsx';
 import { createContext, useContext, useLayoutEffect, useRef, type ReactNode } from 'react';
 import { useRouterState } from '@tanstack/react-router';
@@ -5,11 +6,12 @@ import { useState } from '../../ui/state/public.ts';
 import { createReportPreparationCache } from '../../features/report/document/preparation.ts';
 import type { TrackSearch } from './track-search.ts';
 
-type Offset = Readonly<{ top: number; left: number }>;
+type ScrollOffset = Readonly<{ top: number; left: number }>;
 type TrackView = {
   search: TrackSearch;
   progressOpen: boolean;
-  scroll: Map<string, Offset>;
+  fileScroll: Map<string, FileScrollOffset>;
+  scroll: Map<string, ScrollOffset>;
 };
 
 function createTrackViews() {
@@ -21,7 +23,7 @@ function createTrackViews() {
     ensure: (id: string) => {
       let view = views.get(id);
       if (view === undefined) {
-        view = { search: {}, scroll: new Map(), progressOpen: false };
+        view = { search: {}, scroll: new Map(), fileScroll: new Map(), progressOpen: false };
         views.set(id, view);
       }
       return view;

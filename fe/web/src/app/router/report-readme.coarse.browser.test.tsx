@@ -1,3 +1,4 @@
+import { verifyNestedReadmeHistory } from './report-readme-history.browser-fixture.ts';
 import '../../styles/entry.css';
 import { cleanup } from '@testing-library/react';
 import { afterEach, expect, it } from 'vitest';
@@ -53,4 +54,8 @@ it('opens a Track conversation from a mobile Report file and returns to the same
   await commands.tap('button[aria-label="Back to Report"]');
   await expect.element(file).not.toBeInTheDocument();
   expect(router.history.location.href).toBe(README_TRACK_URL);
+});
+
+it.each([false, true])('preserves nested document history and scroll (cold=%s)', async cold => {
+  await verifyNestedReadmeHistory(390, cold);
 });

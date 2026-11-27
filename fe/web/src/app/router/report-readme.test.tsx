@@ -75,11 +75,16 @@ it('resolves the real README parent link through the same scoped file navigation
   const parent = await screen.findByRole('region', { name: 'File docs/../README.md' });
   await within(parent).findByRole('heading', { name: 'Why Perga?', level: 3 });
   expect(router.history.location.href).toBe(`${README_TRACK_URL}?file=docs%2F..%2FREADME.md`);
-  expect(router.history.length).toBe(1);
+  expect(router.history.length).toBe(2);
   expect(requests.filter(request => request.path.includes('/files?')).map(request => request.path)).toEqual([
     `/api/v1/tracks/${README_TRACK_ID}/files?path=docs%2FREADME.md`,
     `/api/v1/tracks/${README_TRACK_ID}/files?path=docs%2F..%2FREADME.md`,
   ]);
+  fireEvent.click(screen.getByTitle('Back to docs/README.md'));
+  await readmeDocument();
+  expect(router.history.location.href).toBe(README_FILE_URL);
+  fireEvent.click(screen.getByRole('button', { name: 'Back to track' }));
+  await waitFor(() => expect(router.history.location.href).toBe(README_TRACK_URL));
 });
 
 

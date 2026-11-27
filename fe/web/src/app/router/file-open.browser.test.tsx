@@ -391,7 +391,7 @@ it('opens the typed home path from a warm listing unless a candidate is explicit
   await expect.poll(() => router.state.location.search as TrackSearch).toMatchObject({ file: '~/notes-old.md', line: 42 });
 });
 
-it('opens from Ctrl+P, positions the range, orders recent files, and pops back to the Report in one step', async () => {
+it('opens from Ctrl+P, positions the range, and updates recency when returning through file history', async () => {
   await page.viewport(1280, 410);
   const { router } = fileFixture();
   const reportLink = page.getByRole('button', { name: 'Read report file' });
@@ -426,12 +426,16 @@ it('opens from Ctrl+P, positions the range, orders recent files, and pops back t
   await expect.element(dialog().getByRole('option', { name: 'src/code.ts' })).toHaveAttribute('aria-selected', 'true');
   await userEvent.keyboard('{Enter}');
   await expect.poll(markedLines).toEqual(['content on line 12']);
+  await page.getByRole('button', { name: 'Back to docs/example.txt', exact: true }).click();
+  await expect.poll(() => router.state.location.search as TrackSearch).toMatchObject({ file: 'docs/example.txt', line: '125-127' });
   await back().click();
   await expect.poll(() => router.state.location.search as TrackSearch).not.toHaveProperty('file');
   await expect.element(reportLink).toHaveFocus();
 
   await userEvent.keyboard('{Control>}p{/Control}');
-  await expect.element(dialog().getByRole('option').first()).toHaveAttribute('aria-label', 'src/code.ts');
+  const recent = dialog().getByRole('group', { name: 'Recent' }).getByRole('option');
+  await expect.element(recent.nth(0)).toHaveAttribute('aria-label', 'docs/example.txt');
+  await expect.element(recent.nth(1)).toHaveAttribute('aria-label', 'src/code.ts');
 });
 
 it('opens the Daily Track from Today with Ctrl+P and ignores silent AI opens there', async () => {
@@ -716,6 +720,8 @@ it('shows the canonical path of an explicitly opened image in the page header an
     await dialog().getByRole('option', { name: 'src/code.ts' }).click();
     await expect.element(page.getByText('src/code.ts', { exact: true })).toHaveAttribute('title', '/tmp/src/code.ts');
     expect(header.query()).toBeNull();
+    await page.getByRole('button', { name: 'Back to ' + canonical, exact: true }).click();
+    await expect.element(header).toBeVisible();
     await back().click();
     await expect.element(page.getByRole('button', { name: 'Read report file' })).toBeVisible();
   } finally {
@@ -946,4 +952,23 @@ it('opens global Quick Open from the filename-only mobile header trigger, hides 
   // Second Escape from the restored mobile trigger closes ReportFileViewer back to Report.
   await userEvent.keyboard('{Escape}');
   await expect.poll(() => router.state.location.search as TrackSearch).not.toHaveProperty('file');
+});
+
+it('restores the code scrollport through file Back and recenters a repeated open request', async () => {
+  await page.viewport(1280, 850);
+  fileFixture();
+  await openComposer();
+  await typeCommand('/open docs/example.txt:125-127');
+  await expect.poll(markedLines).toEqual(['content on line 125', 'content on line 126', 'content on line 127']);
+  const scroller = () => document.querySelector<HTMLElement>('[data-nc-report-file-viewer] [data-nc-code-scroller]')!;
+  scroller().scrollTop = 40;
+  await expect.poll(() => scroller().scrollTop).toBe(40);
+  await typeCommand('/open src/code.ts:12');
+  await expect.poll(markedLines).toEqual(['content on line 12']);
+  await page.getByRole('button', { name: 'Back to docs/example.txt', exact: true }).click();
+  await expect.element(page.getByRole('region', { name: 'File docs/example.txt' }).getByLabelText('Code')).toBeVisible();
+  await expect.poll(() => scroller()?.scrollTop).toBe(40);
+  await typeCommand('/open docs/example.txt:125-127');
+  await expect.poll(highlightIsCentered).toBe(true);
+  expect(scroller().scrollTop).toBeGreaterThan(40);
 });

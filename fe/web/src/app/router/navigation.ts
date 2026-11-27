@@ -22,6 +22,7 @@ declare module '@tanstack/history' {
     /** Explicit report-anchor activation, independent of file/panel navigation. */
     ncReportAnchorIntent?: string;
     ncFilePushed?: boolean;
+    ncFileBackPath?: string;
     ncFileSilent?: boolean;
     ncFileOpenRequest?: number;
     ncOpenPlanner?: boolean;
@@ -484,14 +485,22 @@ export function hasFilePushedMarker(state: unknown): boolean {
   return (state as Record<string, unknown>)[FILE_PUSHED_STATE_KEY] === true;
 }
 
-export type FileOpenOptions = FileLineLocation & Readonly<{ focus?: boolean }>;
+export type FileOpenOptions = FileLineLocation & Readonly<{ focus?: boolean; fromPath?: string }>;
 
 export type TrackFileNavigation = Readonly<{
   openFile: (expectedTrackId: string, path: string, options?: FileOpenOptions) => boolean;
   closeFile: (expectedTrackId: string) => void;
 }>;
 
-/** Report opens push a return entry. Switching surfaces replaces the current entry and reuses a marked Report return when available. */
+/** The label follows the same history guard as closeFile. */
+export function useRouteFileBackPath(): string | null {
+  const history = useRouter().history as RouterHistory;
+  return useRouterState({ select: (state) => hasFilePushedMarker(state.location.state)
+    && history.canGoBack() && typeof state.location.state.ncFileBackPath === 'string'
+    ? state.location.state.ncFileBackPath : null });
+}
+
+/** Distinct files push; same-file jumps and surface switches replace. */
 export function useTrackFileNavigation(alias?: TrackRouteAlias): TrackFileNavigation {
   const router = useRouter();
   const history = router.history as RouterHistory;
@@ -511,13 +520,20 @@ export function useTrackFileNavigation(alias?: TrackRouteAlias): TrackFileNaviga
       go({ name: 'track', trackId: expectedTrackId, filePath: path, fileLine: line });
       return true;
     }
-    const switchingFile = filePathFromLocation(location) !== null;
+    const currentFile = filePathFromLocation(location);
+    const sameFile = currentFile === path;
     const switchingPanel = panelFromLocation(location) !== null;
     const leavingCard = cardIdFromLocation(location) !== null;
-    const replace = switchingFile || switchingPanel || leavingCard;
-    const pushedFromReport = !replace || (!leavingCard && (
-      (switchingFile && hasFilePushedMarker(location.state)) || (switchingPanel && hasPanelPushedMarker(location.state))
+    const replace = sameFile || switchingPanel || leavingCard;
+    const pushed = !replace || (!leavingCard && (
+      (sameFile && hasFilePushedMarker(location.state)) || (switchingPanel && hasPanelPushedMarker(location.state))
     ));
+    const backPath = sameFile
+      ? (typeof location.state.ncFileBackPath === 'string' ? location.state.ncFileBackPath : undefined)
+      : switchingPanel
+        ? (hasPanelPushedMarker(location.state) && typeof location.state.ncFileBackPath === 'string'
+          ? location.state.ncFileBackPath : undefined)
+        : (!leavingCard && currentFile !== null ? (options?.fromPath ?? currentFile) : undefined);
     void navigate({
       to: trackPath(expectedTrackId, alias),
       search,
@@ -526,7 +542,8 @@ export function useTrackFileNavigation(alias?: TrackRouteAlias): TrackFileNaviga
       state: (previous) => ({
         ...previous,
         ncPanelPushed: false,
-        ncFilePushed: pushedFromReport,
+        ncFilePushed: pushed,
+        ncFileBackPath: backPath,
         ncFileSilent: silent,
         // A new request can repeat the same file and line.
         ncFileOpenRequest: (previous.ncFileOpenRequest ?? 0) + 1,
@@ -585,12 +602,18 @@ export function useTrackPanelNavigation(alias?: TrackRouteAlias): TrackPanelNavi
     }
     const switching = panelFromLocation(location) !== null;
     const switchingFile = filePathFromLocation(location) !== null;
+    const backPath = switchingFile && hasFilePushedMarker(location.state) && typeof location.state.ncFileBackPath === 'string'
+      ? location.state.ncFileBackPath
+      : undefined;
     void navigate({
       to: trackPath(expectedTrackId, alias),
       search,
       hash: true,
       replace: switching || switchingFile,
-      state: switching ? true : { ncPanelPushed: !switchingFile || hasFilePushedMarker(location.state) },
+      state: switching ? true : {
+        ncPanelPushed: !switchingFile || hasFilePushedMarker(location.state),
+        ncFileBackPath: backPath,
+      },
     });
   }, [go, location, navigate, alias]);
 

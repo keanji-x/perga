@@ -243,3 +243,32 @@ it('renders Markdown with a line citation as formatted prose scrolled to the tar
   });
   expect(document.querySelector('[data-nc-report-file-source]')).toBeNull();
 });
+
+it.each([false, true])('keeps reading position across parent renders and accepts new line requests (restored=%s)', async restored => {
+  const port = files('notes.md', Array.from({ length: 160 }, (_, index) => `Paragraph ${index + 1}\n`).join('\n'));
+  const onClose = vi.fn();
+  const view = (savedScroll: Readonly<{ top: number; left: number }> | undefined, openRequest = 1, line = 120) => (
+    <div style={{ position: 'relative', width: 800, height: 400 }}>
+      <ReportFileViewer path="notes.md" files={port} fileRoot="/repo" wide onClose={onClose}
+        scrollKey="entry" savedScroll={savedScroll} line={line} openRequest={openRequest} />
+    </div>
+  );
+  const { rerender } = render(view(restored ? { top: 300, left: 0 } : undefined));
+  await waitFor(() => expect(document.querySelector('[data-nc-markdown-highlight]')).not.toBeNull());
+  const layer = document.querySelector<HTMLElement>('[data-nc-report-file-viewer]')!;
+  if (restored) expect(layer.scrollTop).toBe(300);
+  layer.scrollTop = 600;
+  // Parent snapshots can change identity or lag behind the live DOM position.
+  rerender(view({ top: 300, left: 0 }));
+  expect(layer.scrollTop).toBe(600);
+  rerender(view(undefined));
+  expect(layer.scrollTop).toBe(600);
+  rerender(view({ top: 300, left: 0 }, 2));
+  expect(layer.scrollTop).toBeGreaterThan(600);
+  const centered = layer.scrollTop;
+  layer.scrollTop = 600;
+  rerender(view({ top: 300, left: 0 }, 3));
+  expect(layer.scrollTop).toBe(centered);
+  rerender(view({ top: 300, left: 0 }, 3, 10));
+  expect(layer.scrollTop).toBeLessThan(centered);
+});

@@ -107,7 +107,7 @@ export type TrackPageProps = Readonly<{
   /** The card grid covers the workspace. A file covers only the reading column. */
   board?: ReactNode;
   onCloseBoard?: () => void;
-  fileViewer?: Readonly<{ label: string; fullPath: string; title?: ReactNode; render: (hasBackFocus: () => boolean) => ReactNode; onClose: () => void }>;
+  fileViewer?: Readonly<{ backLabel?: string; label: string; fullPath: string; title?: ReactNode; render: (hasBackFocus: () => boolean) => ReactNode; onClose: () => void }>;
   /** Which secondary panel the mobile report is showing, or `null`. The panel is a navigation destination, so its identity lives in the URL and `app/router` reads it. */
   panel?: MobilePanelKind | null;
   onOpenPanel?: (panel: MobilePanelKind) => void;
@@ -175,6 +175,7 @@ export function TrackPage({ fillReading = false, articleMasthead = !fillReading,
     mobileTitleEditRef.current = begin;
     setCanEditMobileTitle(begin !== null);
   }, []);
+  const desktopBackLabel = fileViewer?.backLabel !== undefined ? 'Back to ' + fileViewer.backLabel : 'Back to track';
   const closeSurface = fileViewer?.onClose ?? onCloseBoard;
   const titleInHeader = compactViewport && mobileHeaderTitleHost !== null && closeSurface === undefined;
   useLayoutEffect(() => {
@@ -418,8 +419,8 @@ export function TrackPage({ fillReading = false, articleMasthead = !fillReading,
                 type="button"
                 data-nc-role="icon"
                 className={styles.headerBack}
-                aria-label="Back to track"
-                title="Back to track"
+                aria-label={desktopBackLabel}
+                title={desktopBackLabel}
                 ref={headerBackRef}
                 onClick={closeSurface}
               >
@@ -497,7 +498,7 @@ export function TrackPage({ fillReading = false, articleMasthead = !fillReading,
             {!titleInHeader && originLink}
           </> : undefined}
           level={1}
-          backLabel={closeSurface === undefined ? mobileBackLabel : 'Report'}
+          backLabel={closeSurface === undefined ? mobileBackLabel : (fileViewer?.backLabel ?? 'Report')}
           onBack={closeSurface ?? onMobileBack}
           backRef={mobileBackRef}
           actions={compactViewport && fileOpen && onReply !== undefined ? (

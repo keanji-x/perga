@@ -28,6 +28,7 @@ import {
 agentSessionDtoToConversation
 } from '../../../../core/domain/conversation.ts';
 import { isAbsoluteFilePath, joinFilePath, parseFileLine, type ReportFileLinkTarget } from '../../../../core/domain/report-file.ts';
+import { normalizeWorkspaceDisplayPath } from '../../../../core/domain/report-file-layout.ts';
 import type { ReportSourceLinkTarget } from '../../../../core/domain/report-source.ts';
 import type { ReportLinkTarget } from '../../../../core/domain/report.ts';
 import { trackTaskInventory } from '../../../../core/domain/track-task-inventory.ts';
@@ -36,7 +37,7 @@ toTrack,trackActivityFromSnapshot,trackDisplayTitle
 } from '../../../../core/domain/track.ts';
 import { parkedWorkerNotices,workbenchTerminalCardIds } from '../../../../core/view/track-page.ts';
 import { ReportEmpty } from '../../features/report/empty/public.tsx';
-import { FileLayoutNav, ReportFileViewer } from '../../features/report/file-viewer/public.tsx';
+import { FileLayoutNav, ReportFileViewer, type FileScrollOffset } from '../../features/report/file-viewer/public.tsx';
 import { ReportOutline } from '../../features/report/outline/public.tsx';
 import { RecentFiles } from '../../features/report/recent-files/public.tsx';
 import { reportSourcePosition,type ReportSourcePosition } from '../../features/report/source/placement.ts';
@@ -79,7 +80,7 @@ import {
 renderedMobilePanel,
 useGo,useGoSameTrack,
 usePlannerOpenIntent,
-useRouteCardId,useRouteFileLine,useRouteFilePath,useRouteFrom,useRouteHash,
+useRouteCardId,useRouteFileBackPath,useRouteFileLine,useRouteFilePath,useRouteFrom,useRouteHash,
 useRoutePanel,
 useTrackFileNavigation,
 useTrackPanelNavigation
@@ -160,6 +161,9 @@ export function TrackRouteBody({
   const rawRequestedFilePath = useRouteFilePath();
   const requestedFilePath = requestedCardId === null ? rawRequestedFilePath : null;
   const requestedFileLine = useRouteFileLine();
+  const backFilePath = useRouteFileBackPath();
+  const fileEntryKey = useRouterState({ select: (state) => state.location.state.__TSR_key
+    ?? (state.location.state.__TSR_index === undefined ? undefined : `index:${state.location.state.__TSR_index}`) });
   const silentFile = useRouterState({ select: (state) => state.location.state.ncFileSilent === true });
   const fileOpenRequest = useRouterState({ select: (state) => state.location.state.ncFileOpenRequest });
   const [resolvedFile, setResolvedFile] = useState<Readonly<{ requested: string; canonical: string }> | null>(null);
@@ -171,14 +175,15 @@ export function TrackRouteBody({
   const rememberReportFile = useCallback((path: string) => {
     setRecentFilePaths(recentFiles.record(track.id, path));
   }, [recentFiles, setRecentFilePaths, track.id]);
+  const displayFile = resolvedFile?.requested === requestedFilePath ? resolvedFile.canonical : requestedFilePath;
   const { openFile } = fileNavigation;
   const openReportFile = useCallback((target: ReportFileLinkTarget, focus = true, opener: Element | null = document.activeElement) => {
-    const opened = openFile(track.id, target.path, { ...target, focus });
+    const opened = openFile(track.id, target.path, { ...target, focus, fromPath: displayFile ?? undefined });
     if (opened && focus && requestedFilePath === null && opener instanceof HTMLElement) {
       fileReturnFocusRef.current = opener;
     }
     return opened;
-  }, [openFile, requestedFilePath, track.id]);
+  }, [displayFile, openFile, requestedFilePath, track.id]);
   const quickOpen = useTrackQuickOpen({
     trackId: track.id, transport, unauthorized, recent: recentFilePaths,
     open: openReportFile, remember: rememberReportFile,
@@ -273,6 +278,9 @@ export function TrackRouteBody({
   /* `'rows'` unconditionally: an empty list with a `+` over it is the whole feature. */
   const trackViews = useTrackViews();
   if (trackViews === null) throw new Error('Terminal workbench requires TrackViewProvider');
+  const rememberFileScroll = useCallback((key: string, offset: FileScrollOffset) => {
+    trackViews.ensure(track.id).fileScroll.set(key, offset);
+  }, [track.id, trackViews]);
   const workbench = useTerminalWorkbench({ session: trackViews.terminals.forTrack(track.id), trackId: track.id, cards, defaultCardIds: defaultTerminalIds, ordinaryCardOpen: requestedCardId !== null,
     onHide: () => { if (requestedCardId !== null && cards.some(card => card.id === requestedCardId && card.kind === 'terminal')) goSameTrack(track.id, { card: undefined }, { replace: true }); },
     create: (body, key) => trackMutations.createTerminal(track.id, body, key),
@@ -461,13 +469,13 @@ export function TrackRouteBody({
     )}
   </>;
   let fileViewer: TrackPageProps['fileViewer'];
-  if (requestedFilePath !== null) {
-    const displayFile = resolvedFile?.requested === requestedFilePath ? resolvedFile.canonical : requestedFilePath;
+  if (requestedFilePath !== null && displayFile !== null) {
     const lineSuffix = requestedFileLine === undefined ? undefined : `:${requestedFileLine}`;
     const fullPath = isAbsoluteFilePath(track.agentCwd) && !isAbsoluteFilePath(displayFile) && !/^~(?:\/|$)/.test(displayFile)
       ? joinFilePath(track.agentCwd, displayFile) : displayFile;
     fileViewer = {
       label: displayFile + (lineSuffix ?? ''),
+      backLabel: backFilePath === null ? undefined : normalizeWorkspaceDisplayPath(backFilePath, track.agentCwd),
       fullPath,
       title: (
         <FileLayoutNav
@@ -482,6 +490,9 @@ export function TrackRouteBody({
       render: hasBackFocus => (
         <ReportFileViewer
           key={requestedFilePath}
+          scrollKey={fileEntryKey}
+          savedScroll={fileEntryKey === undefined ? undefined : trackViews.ensure(track.id).fileScroll.get(fileEntryKey)}
+          onScrollOffset={rememberFileScroll}
           path={requestedFilePath}
           {...parseFileLine(requestedFileLine)}
           silent={silentFile}

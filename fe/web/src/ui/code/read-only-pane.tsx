@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import { Compartment, EditorState, Prec } from '@codemirror/state';
 import { Decoration, EditorView, ViewPlugin, keymap, lineNumbers } from '@codemirror/view';
 import { standardKeymap } from '@codemirror/commands';
@@ -11,13 +11,17 @@ import styles from './code.module.css';
 
 const noHighlights = Object.freeze([] as const);
 
-export function ReadOnlyPane({ text, source, theme, highlightLines, highlightRequest, wrapLines = false }: ReadOnlyCodeProps) {
+export function ReadOnlyPane({ text, source, theme, highlightLines, highlightRequest, wrapLines = false, savedScroll, onScrollOffset }: ReadOnlyCodeProps) {
   const parent = useRef<HTMLDivElement | null>(null);
   const viewRef = useRef<EditorView | null>(null);
   const [configuration] = useState(() => new Compartment());
   const [highlights] = useState(() => new Compartment());
   const startLine = highlightLines?.start;
   const endLine = highlightLines?.end;
+  const highlightKey = JSON.stringify([startLine, endLine, highlightRequest]);
+  const scrollProps = useRef({ savedScroll, onScrollOffset, highlightKey });
+  scrollProps.current = { savedScroll, onScrollOffset, highlightKey };
+  const restoredHighlight = useRef<string | null>(null);
   const { description, support, status } = useCodeLanguage(source, text);
   const label = status === 'ready' ? description?.name
     : status === 'loading' ? `Loading ${description?.name}…`
@@ -44,8 +48,22 @@ export function ReadOnlyPane({ text, source, theme, highlightLines, highlightReq
     const view = new EditorView({ parent: parent.current, state: EditorState.create({ extensions: [configuration.of([]), highlights.of(noHighlights)] }) });
     view.scrollDOM.dataset.ncCodeScroller = '';
     viewRef.current = view;
-    return () => { viewRef.current = null; view.destroy(); };
+    const remember = () => {
+      if (view.scrollDOM.isConnected) scrollProps.current.onScrollOffset?.({ top: view.scrollDOM.scrollTop, left: view.scrollDOM.scrollLeft });
+    };
+    view.scrollDOM.addEventListener('scroll', remember);
+    return () => {
+      view.scrollDOM.removeEventListener('scroll', remember);
+      viewRef.current = null;
+      view.destroy();
+    };
   }, [configuration, highlights]);
+  useLayoutEffect(() => () => {
+    const view = viewRef.current;
+    if (view !== null && view.scrollDOM.isConnected) {
+      scrollProps.current.onScrollOffset?.({ top: view.scrollDOM.scrollTop, left: view.scrollDOM.scrollLeft });
+    }
+  }, []);
   useEffect(() => {
     const view = viewRef.current;
     if (view === null) return;
@@ -70,13 +88,26 @@ export function ReadOnlyPane({ text, source, theme, highlightLines, highlightReq
     const view = viewRef.current;
     if (view === null) return;
     view.dispatch({ selection: { anchor: 0 } });
-    view.scrollDOM.scrollTop = 0;
-    view.scrollDOM.scrollLeft = 0;
+    const saved = scrollProps.current.savedScroll;
+    restoredHighlight.current = saved === undefined ? null : scrollProps.current.highlightKey;
+    view.scrollDOM.scrollTop = saved?.top ?? 0;
+    view.scrollDOM.scrollLeft = saved?.left ?? 0;
     view.dispatch({ effects: view.scrollSnapshot() });
+    if (saved !== undefined) {
+      view.requestMeasure({
+        read: () => undefined,
+        write(_measured, measuredView) {
+          measuredView.scrollDOM.scrollTop = saved.top;
+          measuredView.scrollDOM.scrollLeft = saved.left;
+        },
+      });
+    }
   }, [source.kind, source.value]);
   useEffect(() => {
     const view = viewRef.current;
     if (view === null) return;
+    const restoring = restoredHighlight.current === highlightKey;
+    if (!restoring) restoredHighlight.current = null;
     if (startLine === undefined || endLine === undefined || !Number.isSafeInteger(startLine)
       || !Number.isSafeInteger(endLine) || startLine < 1 || endLine < startLine || startLine > view.state.doc.lines) {
       if (highlights.get(view.state) !== noHighlights) view.dispatch({ effects: highlights.reconfigure(noHighlights) });
@@ -96,9 +127,9 @@ export function ReadOnlyPane({ text, source, theme, highlightLines, highlightReq
     }), { decorations: plugin => plugin.marks });
     view.dispatch({ effects: [
       highlights.reconfigure(extension),
-      EditorView.scrollIntoView(view.state.doc.line(startLine).from, { y: 'center' }),
+      ...(restoring ? [] : [EditorView.scrollIntoView(view.state.doc.line(startLine).from, { y: 'center' })]),
     ] });
-  }, [highlights, startLine, endLine, highlightRequest, text, source.kind, source.value]);
+  }, [highlights, startLine, endLine, highlightKey, text, source.kind, source.value]);
   return <div className={styles.code} data-nc-code-status={status}>
     <div className={styles.toolbar}>
       <span>{label}</span>
