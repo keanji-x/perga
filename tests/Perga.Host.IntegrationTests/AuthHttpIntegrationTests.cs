@@ -15,6 +15,7 @@ using Perga.Host.Auth;
 using Perga.Host.Configuration;
 using Perga.Host.Http;
 using Perga.Host.IntegrationTests.Fixtures;
+using Perga.Host.Serialization;
 using Perga.Kernel.Ports;
 using Perga.Storage.Sqlite;
 
@@ -115,9 +116,9 @@ public sealed class AuthHttpIntegrationTests
         using var browser = host.Factory.CreateDefaultClient(new Uri(secure ? "https://localhost" : "http://localhost"));
         using var first = await LoginAsync(browser, $" \t{BrowserAuthentication.Username.ToUpperInvariant()} \n");
         Assert.True(first.IsSuccessStatusCode, await first.Content.ReadAsStringAsync());
-        var original = (await first.Content.ReadFromJsonAsync<SessionIdentityDto>())!;
+        var original = (await first.Content.ReadFromJsonAsync<SessionIdentityDto>(PergaJsonDefaults.ApiOptions))!;
         using var second = await LoginAsync(browser);
-        var identity = (await second.Content.ReadFromJsonAsync<SessionIdentityDto>())!;
+        var identity = (await second.Content.ReadFromJsonAsync<SessionIdentityDto>(PergaJsonDefaults.ApiOptions))!;
         var cookie = BrowserAuthentication.ReadCookie(second);
         Assert.NotEqual(original.SessionId, identity.SessionId);
         Assert.Equal(identity.SessionId, Assert.Single(second.Headers.GetValues("X-Perga-Session-Id")));
@@ -125,6 +126,7 @@ public sealed class AuthHttpIntegrationTests
         Assert.Equal("Test Owner", identity.DisplayName);
         Assert.StartsWith("usr_", identity.UserId);
         Assert.Equal("owner", identity.Role);
+        Assert.Equal(AuthSessionMode.Owner, identity.Mode);
         AssertCookie(second, secure);
         Assert.Equal("no-store", second.Headers.CacheControl!.ToString());
 
@@ -132,14 +134,14 @@ public sealed class AuthHttpIntegrationTests
         using var sessionResponse = await browser.GetAsync("/api/v1/auth/session");
         Assert.Equal("no-store", sessionResponse.Headers.CacheControl!.ToString());
         Assert.Contains("Cookie", sessionResponse.Headers.Vary);
-        Assert.Equal(identity, await sessionResponse.Content.ReadFromJsonAsync<SessionIdentityDto>());
+        Assert.Equal(identity, await sessionResponse.Content.ReadFromJsonAsync<SessionIdentityDto>(PergaJsonDefaults.ApiOptions));
 
         using var staleRequest = new HttpRequestMessage(HttpMethod.Post, "/api/v1/auth/logout") { Content = JsonContent.Create(new { }) };
         staleRequest.Headers.Add("X-Perga-Session-Id", original.SessionId);
         using var stale = await browser.SendAsync(staleRequest);
         Assert.Equal(HttpStatusCode.NoContent, stale.StatusCode);
         Assert.False(stale.Headers.Contains("Set-Cookie"));
-        Assert.Equal(identity, await browser.GetFromJsonAsync<SessionIdentityDto>("/api/v1/auth/session"));
+        Assert.Equal(identity, await browser.GetFromJsonAsync<SessionIdentityDto>("/api/v1/auth/session", PergaJsonDefaults.ApiOptions));
 
         using var logoutRequest = new HttpRequestMessage(HttpMethod.Post, "/api/v1/auth/logout") { Content = JsonContent.Create(new { }) };
         if (secure)
@@ -181,16 +183,54 @@ public sealed class AuthHttpIntegrationTests
             new { username = "owner", password = "password", extra = true });
         await AssertErrorAsync(extraField, 400, "invalid_json");
         using var tooLarge = await host.Client.PostAsync("/api/v1/auth/login",
-            new StringContent(new string('a', 4_097), Encoding.UTF8, "application/json"));
-        await AssertErrorAsync(tooLarge, 413, "request_body_too_large");
+            new StringContent(new string('a', 16_385), Encoding.UTF8, "application/json"));
+        var limit = await AssertErrorAsync(tooLarge, 413, "request_body_too_large");
+        Assert.Equal("Authentication requests are limited to 16384 bytes.", limit.Error);
 
-        using var stream = new MemoryStream(new byte[4_097]);
+        using var stream = new MemoryStream(new byte[16_385]);
         using var streamed = new StreamContent(stream);
         streamed.Headers.ContentType = new("application/json");
         using var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/auth/login") { Content = streamed };
         request.Headers.TransferEncodingChunked = true;
         using var tooLargeStream = await host.Client.SendAsync(request);
-        await AssertErrorAsync(tooLargeStream, 413, "request_body_too_large");
+        Assert.Equal(limit, await AssertErrorAsync(tooLargeStream, 413, "request_body_too_large"));
+    }
+
+    [Fact]
+    public async Task WebSetupAndLoginAcceptTheMaximumUtf8Password()
+    {
+        await using var host = new PergaHostTestCluster(configureHostOptions: options => options.RequireAuth = true);
+        var password = string.Concat(Enumerable.Repeat("😀", 1_024));
+        Assert.Equal(4_096, Encoding.UTF8.GetByteCount(password));
+
+        using var setup = await host.Client.PostAsJsonAsync("/api/v1/auth/setup",
+            new { username = "owner", password, displayName = "Owner" });
+        Assert.Equal(HttpStatusCode.Created, setup.StatusCode);
+        using var login = await LoginAsync(host.Client, "owner", password);
+        Assert.Equal(HttpStatusCode.OK, login.StatusCode);
+    }
+
+    [Fact]
+    public async Task ProviderSpecificInformationFilterCannotLogTheLaunchToken()
+    {
+        const string category = "Microsoft.AspNetCore.Hosting.Diagnostics";
+        var logs = new LogCaptureProvider(LogLevel.Information);
+        await using var host = new PergaHostTestCluster(configureExtraServices: services =>
+        {
+            services.AddSingleton<ILoggerProvider>(logs);
+            services.AddLogging(logging => logging.AddFilter<LogCaptureProvider>(category, LogLevel.Information));
+        });
+        var loggerFactory = host.Services.GetRequiredService<ILoggerFactory>();
+        loggerFactory.CreateLogger("Perga.Auth.Test").LogInformation("Other information remains visible");
+        loggerFactory.CreateLogger(category).LogWarning("Hosting warnings remain visible");
+        var token = await File.ReadAllTextAsync(Path.Combine(host.DataDir, "runtime", "local-launch-token"));
+
+        using var launch = await host.Client.GetAsync($"/auth/local?token={token}");
+        Assert.Equal(HttpStatusCode.Found, launch.StatusCode);
+        Assert.True(launch.Headers.Contains("Set-Cookie"));
+        Assert.Contains(logs.Entries, entry => entry.Message == "Other information remains visible");
+        Assert.Contains(logs.Entries, entry => entry.Message == "Hosting warnings remain visible");
+        Assert.DoesNotContain(logs.Entries, entry => entry.Message.Contains(token, StringComparison.Ordinal));
     }
 
     [Fact]

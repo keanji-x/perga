@@ -41,12 +41,17 @@ public sealed class SqliteAuthAdministration(string dbPath) : IAuthOwnerWriter
 
     private static SystemAuthStatusDto Unconfigured(int version) => new(version, false, null, null, false, 0);
 
+    internal const string InsertInitialOwner = """
+        INSERT INTO auth_users (id, username, display_name, password_hash, password_updated_at_ms, created_at_ms, updated_at_ms)
+        VALUES (@Id, @Username, @DisplayName, @PasswordHash, @Now, @Now, @Now)
+        ON CONFLICT DO NOTHING;
+        """;
+
+    internal static string NewUserId() => $"usr_{Guid.NewGuid():N}";
+
     public Task<bool> CreateInitialOwnerAsync(string username, string displayName, string passwordHash, long nowMs, CancellationToken ct) =>
-        WriteAsync("""
-            INSERT INTO auth_users (id, username, display_name, password_hash, password_updated_at_ms, created_at_ms, updated_at_ms)
-            VALUES (@Id, @Username, @DisplayName, @PasswordHash, @Now, @Now, @Now)
-            ON CONFLICT DO NOTHING;
-            """, new { Id = $"usr_{Guid.NewGuid():N}", Username = username, DisplayName = displayName, PasswordHash = passwordHash, Now = nowMs },
+        WriteAsync(InsertInitialOwner,
+            new { Id = NewUserId(), Username = username, DisplayName = displayName, PasswordHash = passwordHash, Now = nowMs },
             revokeAt: null, ct);
 
     public Task<bool> RotateOwnerPasswordAsync(string passwordHash, long nowMs, CancellationToken ct) =>

@@ -32,7 +32,8 @@ type RailOptions = {
   theme?: 'light' | 'dark'; collapsed?: boolean; mainLayer?: boolean; currentPath?: string; areaCount?: number;
 };
 
-function Rail({ theme, collapsed: initiallyCollapsed, mainLayer, currentPath, areaCount }: Required<RailOptions>) {
+function Rail({ theme, collapsed: initiallyCollapsed, mainLayer, currentPath, areaCount, onSetupAccount }:
+  Required<RailOptions> & { onSetupAccount?: () => void }) {
   const [collapsed, setCollapsed] = useState(initiallyCollapsed);
   const areas = AREAS.slice(0, areaCount);
   const tracks = areas.some((area) => area.id === LAST_TRACK.areaId) ? [LAST_TRACK] : [];
@@ -59,10 +60,11 @@ function Rail({ theme, collapsed: initiallyCollapsed, mainLayer, currentPath, ar
           onDeleteTrack={vi.fn()}
           onOpenSettings={vi.fn()}
           onOpenPlugins={vi.fn()}
-          onSignOut={vi.fn()}
+          onSignOut={onSetupAccount === undefined ? vi.fn() : undefined}
+          onSetupAccount={onSetupAccount}
           collapsed={collapsed}
           onToggleCollapsed={() => setCollapsed((value) => !value)}
-          userLabel="Kenji Xie"
+          userLabel={onSetupAccount === undefined ? 'Kenji Xie' : 'Local'}
         />
         {/* Stands in for `.main`'s content: its column, at the highest rank
             that content uses in place (the sticky headers at `--z-sticky`). */}
@@ -283,4 +285,15 @@ it('reveals the recovery menu when hiding an Area from deeply scrolled folders',
   expect(document.activeElement).toBe(options);
   expect(options.getBoundingClientRect().top).toBeGreaterThanOrEqual(rail.getBoundingClientRect().top);
   expectUncovered(options);
+});
+
+
+it('offers account setup from the Local menu', async () => {
+  const setup = vi.fn();
+  await page.viewport(1400, VIEWPORT_H);
+  render(receipts.wrap(<Rail theme="light" collapsed={false} mainLayer={false} currentPath="/" areaCount={1} onSetupAccount={setup} />));
+  await page.getByRole('button', { name: 'Account menu for Local' }).click();
+  expect(page.getByRole('menuitem', { name: 'Sign out' }).elements()).toHaveLength(0);
+  await page.getByRole('menuitem', { name: 'Set up account & password…' }).click();
+  expect(setup).toHaveBeenCalledOnce();
 });

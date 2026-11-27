@@ -18,6 +18,13 @@ internal sealed class IsolatedPergaHostFactory(
 {
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
+        builder.ConfigureAppConfiguration((_, config) => config.AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            // The endpoint key still exists with a null value, which Kestrel rejects.
+            ["Kestrel:Endpoints:Http:Url"] = "http://127.0.0.1:0",
+            ["urls"] = null,
+            ["ASPNETCORE_URLS"] = null
+        }));
         configureHost?.Invoke(builder);
         builder.ConfigureTestServices(services =>
         {

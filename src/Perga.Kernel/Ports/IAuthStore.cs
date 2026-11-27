@@ -9,9 +9,19 @@ public sealed record AuthUserRecord(
 public sealed record NewAuthSession(
     string Id, string TokenHash, long CreatedAtMs, long ExpiresAtMs, string? UserAgent, string? CreatedIp);
 
+public enum AuthSetupState { NeedsWebSetup, ExistingDataRequiresCli, Configured }
+public enum InitialOwnerSetupOutcome { Created, AlreadyConfigured, ExistingDataRequiresCli }
+
+public sealed record NewInitialOwner(string Username, string DisplayName, string PasswordHash);
+
+public sealed record InitialOwnerSetupResult(InitialOwnerSetupOutcome Outcome, SessionIdentityDto? Identity = null);
+
 public interface IAuthStore
 {
     Task<AuthUserRecord?> GetOwnerAsync(CancellationToken ct);
+    Task<AuthSetupState> GetSetupStateAsync(CancellationToken ct);
+    Task<InitialOwnerSetupResult> TryCreateInitialOwnerWithSessionAsync(
+        NewInitialOwner owner, NewAuthSession session, bool allowExistingBusinessData, CancellationToken ct);
     Task<SessionIdentityDto?> TryCreateSessionIfVersionMatchesAsync(AuthUserRecord owner, NewAuthSession session, CancellationToken ct);
     Task<bool> UpgradePasswordHashIfVersionMatchesAsync(AuthUserRecord owner, string hash, long nowMs, CancellationToken ct);
     Task<SessionIdentityDto?> GetValidOwnerSessionByTokenHashAsync(string tokenHash, long nowMs, CancellationToken ct);

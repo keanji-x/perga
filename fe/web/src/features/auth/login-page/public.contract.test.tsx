@@ -22,7 +22,7 @@ describe('login page oracle contracts', () => {
 
   it('INV-LOGIN-001 reloads the whole document after successful login', async () => {
     const reload = vi.fn();
-    render(<LoginPage login={() => Promise.resolve({ userId: 'u', displayName: 'Owner', username: 'owner', expiresAtMs: 2000000000000, role: 'admin', sessionId: 's' })} reload={reload} />);
+    render(<LoginPage login={() => Promise.resolve({ userId: 'u', displayName: 'Owner', username: 'owner', expiresAtMs: 2000000000000, mode: 'owner', role: 'admin', sessionId: 's' })} reload={reload} />);
     await userEvent.type(screen.getByLabelText('Username'), 'owner');
     await userEvent.type(screen.getByLabelText('Password'), 'secret');
     await userEvent.click(screen.getByRole('button', { name: 'Sign in' }));
@@ -75,7 +75,7 @@ it('an ordinary web login unmount aborts its attempt and cannot reload a later f
   fireEvent.submit(form); view.unmount();
   expect(signal.aborted).toBe(true);
   render(<LoginPage login={() => Promise.resolve(null)} reload={reload} />);
-  await act(async () => { finish({ userId: 'owner', displayName: 'Owner', username: 'owner', expiresAtMs: 2000000000000, role: 'owner', sessionId: 'old-attempt' }); await Promise.resolve(); });
+  await act(async () => { finish({ userId: 'owner', displayName: 'Owner', username: 'owner', expiresAtMs: 2000000000000, mode: 'owner', role: 'owner', sessionId: 'old-attempt' }); await Promise.resolve(); });
   expect(reload).not.toHaveBeenCalled();
   expect(screen.queryByRole('alert')).toBeNull();
 });

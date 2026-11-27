@@ -53,6 +53,7 @@ export type AppRouterDeps = Readonly<{
   uiPreferences?: UiPreferences;
   submittedStorage?: () => Storage;
   shareScope?: unknown;
+  onOwnerSetupComplete?: (() => void) | undefined;
 }>;
 
 function renderNothing(): null { return null; }
@@ -70,7 +71,7 @@ export function createRouteTree(deps: AppRouterDeps): AnyRoute {
       cardRuntime={cards} recentFiles={recentFiles} />;
   const rootRoute = createRootRouteWithContext<DraftBackContext>()({ component: () => (
     <UiPreferencesProvider preferences={preferences}><ReadReceiptsProvider transport={transport} unauthorized={unauthorized}>
-      <TrackViewProvider><DraftBackLifecycle><MobileConversationProvider><ShellRoute submittedStorage={deps.submittedStorage} transport={transport} unauthorized={unauthorized} shareScope={shareScope} /></MobileConversationProvider></DraftBackLifecycle></TrackViewProvider>
+      <TrackViewProvider><DraftBackLifecycle><MobileConversationProvider><ShellRoute submittedStorage={deps.submittedStorage} transport={transport} unauthorized={unauthorized} shareScope={shareScope} onOwnerSetupComplete={deps.onOwnerSetupComplete} /></MobileConversationProvider></DraftBackLifecycle></TrackViewProvider>
     </ReadReceiptsProvider></UiPreferencesProvider>
   ) });
 
@@ -158,6 +159,12 @@ export function createRouteTree(deps: AppRouterDeps): AnyRoute {
     component: renderNothing,
   });
 
+  const accountRoute = createRoute({
+    getParentRoute: () => rootRoute,
+    path: '/settings/account',
+    component: renderNothing,
+  });
+
   const aboutRoute = createRoute({
     getParentRoute: () => rootRoute,
     path: '/settings/about',
@@ -165,7 +172,7 @@ export function createRouteTree(deps: AppRouterDeps): AnyRoute {
   });
   return rootRoute.addChildren([
     indexRoute, newTrackRoute, trackRoute, settingsRoute,
-    plannersRoute, appearanceRoute, aboutRoute,
+    plannersRoute, appearanceRoute, accountRoute, aboutRoute,
     ...(shareScope === null ? [globalMemoryRoute, areaMemoryRoute] : []),
   ]);
 }
@@ -185,10 +192,13 @@ export function createAppRouter(deps: AppRouterDeps) {
   return router;
 }
 
-function ShellRoute({ transport, unauthorized, submittedStorage, shareScope }: { submittedStorage?: () => Storage; transport: ApiTransportPort; unauthorized: UnauthorizedChannel; shareScope: unknown }) {
+function ShellRoute({ transport, unauthorized, submittedStorage, shareScope, onOwnerSetupComplete }: Pick<
+  AppRouterDeps, 'transport' | 'unauthorized' | 'submittedStorage' | 'shareScope' | 'onOwnerSetupComplete'
+>) {
   const go = useGo();
   const currentUser = useCurrentUser();
   const signOut = useSignOut();
+  const local = currentUser?.mode === 'local';
   return (
     <ConversationProvider submittedStorage={submittedStorage}><NewTrackDraftProvider submittedStorage={submittedStorage}>
       <AppShell
@@ -198,7 +208,9 @@ function ShellRoute({ transport, unauthorized, submittedStorage, shareScope }: {
         onOpenSettings={() => go({ name: 'settings' })}
         onOpenPlugins={undefined}
         userLabel={currentUser?.displayName}
-        onSignOut={currentUser !== null && signOut !== null ? () => signOut(currentUser.sessionId) : undefined}
+        onSignOut={!local && currentUser !== null && signOut !== null ? () => signOut(currentUser.sessionId) : undefined}
+        onSetupAccount={local ? () => go({ name: 'settings-account' }) : undefined}
+        onOwnerSetupComplete={onOwnerSetupComplete}
       />
     </NewTrackDraftProvider></ConversationProvider>
   );

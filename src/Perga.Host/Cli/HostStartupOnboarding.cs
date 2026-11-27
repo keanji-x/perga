@@ -1,13 +1,10 @@
 using System.Net.Sockets;
 using System.Runtime.InteropServices;
 using Microsoft.AspNetCore.Connections;
-using Perga.Host.Auth;
-using Perga.Kernel.Ports;
-using Perga.Storage.Sqlite;
 
 namespace Perga.Host.Cli;
 
-/// <summary>First-run interactive owner onboarding and friendly startup error formatting for <c>perga</c>.</summary>
+/// <summary>Interactive terminal detection and friendly startup error formatting for <c>perga</c>.</summary>
 public static class HostStartupOnboarding
 {
     public const string InitOwnerCommand = "perga auth init-owner --username owner --allow-migrate";
@@ -25,68 +22,6 @@ public static class HostStartupOnboarding
 
     [DllImport("libc")]
     private static extern int getpgrp();
-
-    /// <summary>
-    /// Prompts to create the initial owner account on an interactive first start against persistent storage.
-    /// Returns <c>0</c> to continue server startup, or a non-zero exit code if owner creation failed.
-    /// </summary>
-    public static async Task<int> EnsureInteractiveOwnerIfNeededAsync(
-        IAuthStore authStore,
-        string dbPath,
-        bool isEphemeral,
-        bool isTestingEnvironment,
-        bool isInteractive,
-        TextReader input,
-        TextWriter output,
-        TextWriter error,
-        Func<string[], TextReader, TextWriter, TextWriter, CancellationToken, Task<int>>? runAuthCliAsync = null,
-        CancellationToken ct = default)
-    {
-        if (!isInteractive || isTestingEnvironment || isEphemeral)
-            return 0;
-
-        if (authStore is SqliteTrackStore sqliteStore)
-            await sqliteStore.InitializeAsync(ct).ConfigureAwait(false);
-
-        if (await authStore.GetOwnerAsync(ct).ConfigureAwait(false) is not null)
-            return 0;
-
-        await output.WriteLineAsync($"No owner account is configured yet for {dbPath}.").ConfigureAwait(false);
-        await output.WriteAsync("Create one now so you can sign in? [Y/n] ").ConfigureAwait(false);
-        await output.FlushAsync(ct).ConfigureAwait(false);
-
-        var answer = await input.ReadLineAsync(ct).ConfigureAwait(false);
-        var trimmed = answer?.Trim();
-        var shouldCreate = answer is not null &&
-                           (trimmed!.Length == 0 ||
-                            trimmed.Equals("y", StringComparison.OrdinalIgnoreCase) ||
-                            trimmed.Equals("yes", StringComparison.OrdinalIgnoreCase));
-
-        if (!shouldCreate)
-        {
-            var pathArgument = FormatCliPathArgument(dbPath);
-            await output.WriteLineAsync($"Hint: run '{InitOwnerCommand} --db-path {pathArgument}' before signing in.").ConfigureAwait(false);
-            return 0;
-        }
-
-        await output.WriteAsync("Username [owner]: ").ConfigureAwait(false);
-        await output.FlushAsync(ct).ConfigureAwait(false);
-        var rawUsername = await input.ReadLineAsync(ct).ConfigureAwait(false);
-        var username = string.IsNullOrWhiteSpace(rawUsername) ? "owner" : rawUsername.Trim();
-
-        var runner = runAuthCliAsync ?? AuthCliCommand.RunAsync;
-        return await runner(
-            ["auth", "init-owner", "--username", username, "--allow-migrate", "--db-path", dbPath],
-            input,
-            output,
-            error,
-            ct).ConfigureAwait(false);
-    }
-
-    private static string FormatCliPathArgument(string path) =>
-        path.Length > 0 && path.All(static c => char.IsAsciiLetterOrDigit(c) || c is '_' or '.' or '/' or '+' or ':' or '@' or '-')
-            ? path
-            : $"'{path.Replace("'", "'\\''", StringComparison.Ordinal)}'";
 
     public static string? FormatConfigurationError(Exception exception)
     {

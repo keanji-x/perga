@@ -17,7 +17,7 @@ it('exposes the verified identity and clears old artifacts on a session switch',
   const client=new QueryClient();
   const clear=vi.spyOn(client,'clear');
   const transport=(sessionId:string):ApiTransportPort=>({send:()=>Promise.resolve({status:200,statusText:'OK',body:{
-    userId:'jian',displayName:'Jian',username: 'owner', expiresAtMs: 2000000000000, role:'owner',sessionId,
+    userId:'jian',displayName:'Jian',username: 'owner', expiresAtMs: 2000000000000, mode: 'owner', role:'owner',sessionId,
   }})});
   const unauthorized=createUnauthorizedChannel({enqueue:task=>task()});
   const runtime={deleteDatabase:vi.fn(),idbDatabaseName:'fixture'};

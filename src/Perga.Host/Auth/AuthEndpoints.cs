@@ -9,14 +9,15 @@ using Perga.Host.Configuration;
 using Perga.Host.Http;
 using Perga.Host.Serialization;
 using Perga.Host.WebSockets;
+using Perga.Kernel.Auth;
 using Perga.Kernel.Ports;
 
 namespace Perga.Host.Auth;
 
-internal static class AuthEndpoints
+internal static partial class AuthEndpoints
 {
-    private const int LoginBodyLimit = 4096;
-    private static readonly JsonSerializerOptions LoginJson = new(PergaJsonDefaults.ApiOptions)
+    private const int AuthBodyLimit = 16_384;
+    private static readonly JsonSerializerOptions AuthJson = new(PergaJsonDefaults.ApiOptions)
     {
         UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow,
         PropertyNameCaseInsensitive = false,
@@ -38,6 +39,7 @@ internal static class AuthEndpoints
         auth.MapPost("/logout", LogoutAsync).AllowAnonymous().WithMetadata(new RequestOriginGuard.BrowserWriteApi())
             .WithMetadata(new NoRequestBody(), new OptionalWebSession(), new RequestHeader(WebSessionCookie.SessionIdHeader, false))
             .Produces(204);
+        MapSetupEndpoints(endpoints, auth);
     }
 
     private static async Task LoginAsync(HttpContext context, IAuthStore store, IAuthPasswordHasher hasher,
@@ -53,38 +55,18 @@ internal static class AuthEndpoints
         LoginRateLimiter limiter, PergaHostOptions options, TimeProvider time, ILoggerFactory loggerFactory)
     {
         var ct = context.RequestAborted;
-        if (!RequestOriginGuard.HasApplicationJson(context.Request))
-            return Error(415, "unsupported_media_type", "Login requires application/json.");
-        if (context.Request.ContentLength > LoginBodyLimit)
-            return BodyTooLarge();
-
-        LoginRequest? request;
-        var buffer = new byte[LoginBodyLimit + 1];
-        try
-        {
-            var length = await context.Request.Body.ReadAtLeastAsync(buffer, buffer.Length, false, ct);
-            if (length > LoginBodyLimit)
-                return BodyTooLarge();
-            request = JsonSerializer.Deserialize<LoginRequest>(buffer.AsSpan(0, length), LoginJson);
-        }
-        catch (JsonException)
-        {
-            return HttpErrorHandling.BadRequest("invalid_json", "Invalid login request.");
-        }
-        finally
-        {
-            CryptographicOperations.ZeroMemory(buffer);
-        }
+        var (request, error) = await ReadRequestAsync<LoginRequest>(context, "login");
+        if (error is not null)
+            return error;
 
         if (string.IsNullOrWhiteSpace(request?.Username) || string.IsNullOrWhiteSpace(request.Password))
             return HttpErrorHandling.BadRequest("invalid_argument", "A username and password are required.");
-        if (AuthCredentials.NormalizeUsername(request.Username) is not { } username ||
-            !AuthCredentials.IsValidPassword(request.Password, 1))
+        if (OwnerCredentials.NormalizeUsername(request.Username) is not { } username ||
+            !OwnerCredentials.IsValidPassword(request.Password, 1))
             return InvalidCredentials();
 
         var password = request.Password;
-        var ip = context.Connection.RemoteIpAddress;
-        var ipKey = (ip?.IsIPv4MappedToIPv6 == true ? ip.MapToIPv4() : ip)?.ToString() ?? "loopback";
+        var ipKey = RequestIp(context);
         using var attempt = limiter.TryReserve(ipKey, username, out var retrySeconds);
         if (attempt is null)
             return Throttled(context, retrySeconds);
@@ -133,21 +115,13 @@ internal static class AuthEndpoints
             }
         }
 
-        var expires = now.AddDays(options.AuthSessionLifetimeDays);
-        var (cookie, hash) = WebSessionCookie.Create();
-        var userAgent = context.Request.Headers.UserAgent.ToString();
-        var identity = await store.TryCreateSessionIfVersionMatchesAsync(owner, new(
-            $"aus_{Guid.NewGuid():N}", hash, now.ToUnixTimeMilliseconds(), expires.ToUnixTimeMilliseconds(),
-            userAgent.Length > 512 ? userAgent[..512] : userAgent, ipKey), ct);
+        var (cookie, session) = CreateOwnerSession(context, options, now);
+        var identity = await store.TryCreateSessionIfVersionMatchesAsync(owner, session, ct);
         if (identity is null)
             return InvalidCredentials();
 
         ct.ThrowIfCancellationRequested();
-        var attributes = WebSessionCookie.Attributes(context, options);
-        attributes.Expires = expires;
-        context.Response.Cookies.Append(WebSessionCookie.Name(context, options), cookie, attributes);
-        context.Response.Headers[WebSessionCookie.SessionIdHeader] = identity.SessionId;
-        await Results.Json(identity, PergaJsonDefaults.ApiOptions).ExecuteAsync(context);
+        await WriteSession(context, options, cookie, identity, 200).ExecuteAsync(context);
         ct.ThrowIfCancellationRequested();
         attempt.Succeed();
         return null;
@@ -157,6 +131,9 @@ internal static class AuthEndpoints
     {
         NoStore(context);
         var session = context.Features.Get<AuthenticatedSession>()!.Identity;
+        if (session.Mode == AuthSessionMode.Local)
+            return Results.Json(session, PergaJsonDefaults.ApiOptions);
+
         try
         {
             await store.TouchSessionLastSeenIfStaleAsync(session.SessionId, time.GetUtcNow().ToUnixTimeMilliseconds(), context.RequestAborted);
@@ -169,7 +146,7 @@ internal static class AuthEndpoints
     }
 
     private static async Task<IResult> LogoutAsync(HttpContext context, IAuthStore store, PergaHostOptions options,
-        TimeProvider time, AuthWebSocketRegistry sockets)
+        TimeProvider time, AuthWebSocketRegistry sockets, LocalSessionManager localSessions)
     {
         NoStore(context);
         await context.AuthenticateAsync(PergaAuthSchemes.WebSession);
@@ -180,14 +157,74 @@ internal static class AuthEndpoints
 
         if (session is not null)
         {
-            await store.RevokeSessionByTokenHashAsync(session.TokenHash, time.GetUtcNow().ToUnixTimeMilliseconds(), CancellationToken.None);
-            sockets.DisconnectSession(session.Identity.SessionId);
+            if (session.Identity.Mode == AuthSessionMode.Local)
+                localSessions.Revoke(session.TokenHash, sockets);
+            else
+            {
+                await store.RevokeSessionByTokenHashAsync(session.TokenHash, time.GetUtcNow().ToUnixTimeMilliseconds(), CancellationToken.None);
+                sockets.DisconnectSession(session.Identity.SessionId);
+            }
         }
         context.Response.Cookies.Delete(WebSessionCookie.Name(context, options), WebSessionCookie.Attributes(context, options));
         return Results.NoContent();
     }
 
-    private static IResult BodyTooLarge() => Error(413, "request_body_too_large", "Login requests are limited to 4096 bytes.");
+    private static async Task<(T? Request, IResult? Error)> ReadRequestAsync<T>(HttpContext context, string name) where T : class
+    {
+        if (!RequestOriginGuard.HasApplicationJson(context.Request))
+            return (null, Error(415, "unsupported_media_type", "The request requires application/json."));
+        if (context.Request.ContentLength > AuthBodyLimit)
+            return (null, BodyTooLarge());
+
+        var buffer = new byte[AuthBodyLimit + 1];
+        try
+        {
+            var length = await context.Request.Body.ReadAtLeastAsync(buffer, buffer.Length, false, context.RequestAborted);
+            return length > AuthBodyLimit
+                ? (null, BodyTooLarge())
+                : (JsonSerializer.Deserialize<T>(buffer.AsSpan(0, length), AuthJson), null);
+        }
+        catch (JsonException)
+        {
+            return (null, HttpErrorHandling.BadRequest("invalid_json", $"Invalid {name} request."));
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(buffer);
+        }
+    }
+
+    private static (string Cookie, NewAuthSession Session) CreateOwnerSession(
+        HttpContext context, PergaHostOptions options, DateTimeOffset now)
+    {
+        var (cookie, hash) = WebSessionCookie.Create();
+        var userAgent = context.Request.Headers.UserAgent.ToString();
+        return (cookie, new($"aus_{Guid.NewGuid():N}", hash, now.ToUnixTimeMilliseconds(),
+            now.AddDays(options.AuthSessionLifetimeDays).ToUnixTimeMilliseconds(),
+            userAgent.Length > 512 ? userAgent[..512] : userAgent, RequestIp(context)));
+    }
+
+    private static string RequestIp(HttpContext context)
+    {
+        var ip = context.Connection.RemoteIpAddress;
+        return (ip?.IsIPv4MappedToIPv6 == true ? ip.MapToIPv4() : ip)?.ToString() ?? "loopback";
+    }
+
+    private static void WriteSessionCookie(HttpContext context, PergaHostOptions options, string cookie, SessionIdentityDto identity)
+    {
+        var attributes = WebSessionCookie.Attributes(context, options);
+        attributes.Expires = DateTimeOffset.FromUnixTimeMilliseconds(identity.ExpiresAtMs);
+        context.Response.Cookies.Append(WebSessionCookie.Name(context, options), cookie, attributes);
+    }
+
+    private static IResult WriteSession(HttpContext context, PergaHostOptions options, string cookie, SessionIdentityDto identity, int status)
+    {
+        WriteSessionCookie(context, options, cookie, identity);
+        context.Response.Headers[WebSessionCookie.SessionIdHeader] = identity.SessionId;
+        return Results.Json(identity, PergaJsonDefaults.ApiOptions, statusCode: status);
+    }
+
+    private static IResult BodyTooLarge() => Error(413, "request_body_too_large", $"Authentication requests are limited to {AuthBodyLimit} bytes.");
     private static IResult InvalidCredentials() => Error(401, "invalid_credentials", "Invalid username or password.");
 
     private static IResult Throttled(HttpContext context, int retrySeconds)

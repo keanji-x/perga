@@ -379,7 +379,7 @@ describe('Track mobile presentation', () => {
       const indexBounds = (await index.findElement()).getBoundingClientRect();
       expect(indexBounds.left).toBeGreaterThanOrEqual(leftInset);
       expect(indexBounds.right).toBeLessThanOrEqual(width - rightInset);
-      for (const name of ['Appearance', 'Planners', 'About']) {
+      for (const name of ['Appearance', 'Planners', 'Account', 'About']) {
         const category = await index.getByRole('button', { name, exact: true }).findElement();
         const { left, right } = category.getBoundingClientRect();
         expect(left, name).toBeGreaterThanOrEqual(leftInset);

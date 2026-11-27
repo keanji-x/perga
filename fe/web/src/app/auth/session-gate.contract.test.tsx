@@ -16,7 +16,7 @@ import { createAppRouter } from '../router/public.tsx';
 import { bootTestCardRuntime } from '../router/test-card-runtime.ts';
 
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); window.history.replaceState({}, '', '/'); });
-const identity = { userId: 'u', displayName: 'Owner', username: 'owner', expiresAtMs: 2000000000000, role: 'admin', sessionId: 's' };
+const identity = { userId: 'u', displayName: 'Owner', username: 'owner', expiresAtMs: 2000000000000, mode: 'owner' as const, role: 'admin', sessionId: 's' };
 
 function cleanupRuntime() {
   return { deleteDatabase: vi.fn(), idbDatabaseName: IDB_DB_NAME };

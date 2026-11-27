@@ -1,7 +1,7 @@
-import { loginOperation, type SessionIdentity } from '../../../../core/api/auth.ts';
+import { authSetupStatusOperation, exchangeLocalTokenOperation, loginOperation, setupOwnerOperation, type SessionIdentity } from '../../../../core/api/auth.ts';
 import type { ApiTransportPort } from '../../../../core/api/types.ts';
-import { ApiError, classifyFailure, refusedText } from '../../../../core/domain/failure-class.ts';
-import { LOGIN_FAILURES, LOGIN_TEXT, LoginThrottledError } from '../../../../core/domain/login.ts';
+import { ApiError, classifyFailure, readWriteFailure, refusedText, type WriteText } from '../../../../core/domain/failure-class.ts';
+import { LOCAL_TOKEN_TEXT, LOGIN_FAILURES, LOGIN_TEXT, LoginThrottledError, OwnerAlreadyConfiguredError, SETUP_FAILURES, SETUP_TEXT } from '../../../../core/domain/login.ts';
 import { runOperation } from '../providers/query-operation.ts';
 
 /**
@@ -28,5 +28,36 @@ export async function loginWithTransport(
     const message = refusedText(failure, LOGIN_TEXT.refused);
     const nextStep = failure.kind === 'http' ? failure.nextStep : undefined;
     throw new Error(nextStep ? `${message} ${nextStep}` : message, { cause });
+  }
+}
+
+export function fetchAuthSetupStatus(transport: ApiTransportPort, signal: AbortSignal) {
+  return runOperation(transport, { ...authSetupStatusOperation(), signal }, undefined);
+}
+
+export function setupOwnerWithTransport(
+  transport: ApiTransportPort, username: string, password: string, signal: AbortSignal,
+): Promise<SessionIdentity> {
+  return runSetupWrite(transport, setupOwnerOperation({ username, password, displayName: null }), SETUP_TEXT, signal);
+}
+
+export function exchangeLocalTokenWithTransport(
+  transport: ApiTransportPort, token: string, signal: AbortSignal,
+): Promise<SessionIdentity> {
+  return runSetupWrite(transport, exchangeLocalTokenOperation({ token: token.trim() }), LOCAL_TOKEN_TEXT, signal);
+}
+
+async function runSetupWrite(
+  transport: ApiTransportPort,
+  operation: ReturnType<typeof setupOwnerOperation>,
+  text: WriteText,
+  signal: AbortSignal,
+): Promise<SessionIdentity> {
+  try {
+    return await runOperation(transport, { ...operation, signal }, undefined);
+  } catch (cause: unknown) {
+    const result = readWriteFailure(cause, SETUP_FAILURES, text);
+    if (result.is === 'done') throw new OwnerAlreadyConfiguredError();
+    throw new Error(result.text, { cause });
   }
 }

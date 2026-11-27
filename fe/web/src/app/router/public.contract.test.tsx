@@ -94,7 +94,7 @@ describe('route registration', () => {
   it('registers the product routes', () => {
     expect(registeredPaths()).toEqual([
       '/', '/area/$areaId/new', '/track/$trackId', '/settings',
-      '/settings/planners', '/settings/appearance', '/settings/about',
+      '/settings/planners', '/settings/appearance', '/settings/account', '/settings/about',
       '/memory', '/area/$areaId/memory',
     ]);
   });
@@ -120,6 +120,7 @@ describe('route registration', () => {
       'settings-planners': { name: 'settings-planners' },
 
       'settings-appearance': { name: 'settings-appearance' },
+      'settings-account': { name: 'settings-account' },
       'settings-about': { name: 'settings-about' },
     };
     const targets: NavTarget[] = Object.values(samples);

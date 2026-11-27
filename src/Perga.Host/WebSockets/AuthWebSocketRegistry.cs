@@ -1,10 +1,11 @@
+using Perga.Host.Auth;
 using Perga.Host.Configuration;
 using Perga.Kernel.Ports;
 
 namespace Perga.Host.WebSockets;
 
 internal sealed class AuthWebSocketRegistry(
-    IAuthStore store, TimeProvider time, PergaHostOptions options, ILogger<AuthWebSocketRegistry> logger) : BackgroundService
+    IAuthStore store, TimeProvider time, PergaHostOptions options, LocalSessionManager localSessions, ILogger<AuthWebSocketRegistry> logger) : BackgroundService
 {
     private static readonly TimeSpan Deadline = TimeSpan.FromSeconds(2);
     private readonly object _gate = new();
@@ -22,6 +23,20 @@ internal sealed class AuthWebSocketRegistry(
     }
 
     public void DisconnectSession(string id) => Disconnect(id, expected: null);
+
+    public void DisconnectLocalSessions()
+    {
+        lock (_gate)
+        {
+            foreach (var (id, session) in _sessions)
+            {
+                if (!IsLocalSession(id))
+                    continue;
+                _sessions.Remove(id);
+                session.Revoked.TrySetResult();
+            }
+        }
+    }
 
     private void Disconnect(string id, Registration? expected)
     {
@@ -107,7 +122,10 @@ internal sealed class AuthWebSocketRegistry(
     {
         try
         {
-            return await store.IsOwnerSessionValidAsync(id, time.GetUtcNow().ToUnixTimeMilliseconds(), ct);
+            var nowMs = time.GetUtcNow().ToUnixTimeMilliseconds();
+            if (IsLocalSession(id))
+                return !await localSessions.CheckOwnerAsync(store, this, ct) && localSessions.IsValidSessionId(id, nowMs);
+            return await store.IsOwnerSessionValidAsync(id, nowMs, ct);
         }
         catch (Exception) when (ct.IsCancellationRequested)
         {
@@ -116,6 +134,8 @@ internal sealed class AuthWebSocketRegistry(
             throw;
         }
     }, ct);
+
+    private static bool IsLocalSession(string id) => id.StartsWith("loc_", StringComparison.Ordinal);
 
     internal sealed class Registration
     {

@@ -54,6 +54,8 @@ internal static class PergaAuthentication
         services.AddOptions<LoginRateLimitOptions>();
         services.TryAddSingleton<IAuthPasswordHasher, AuthPasswordHasher>();
         services.TryAddSingleton<LoginRateLimiter>();
+        services.TryAddSingleton<LocalSessionManager>();
+        services.AddHostedService<LocalAuthStartup>();
         services.TryAddSingleton<AuthWebSocketRegistry>();
         services.AddHostedService(sp => sp.GetRequiredService<AuthWebSocketRegistry>());
 
@@ -79,14 +81,19 @@ internal static class PergaAuthentication
 
 internal sealed class WebSessionAuthenticationHandler(
     IOptionsMonitor<AuthenticationSchemeOptions> options, ILoggerFactory logger, UrlEncoder encoder,
-    IAuthStore store, TimeProvider time, PergaHostOptions hostOptions)
+    IAuthStore store, TimeProvider time, PergaHostOptions hostOptions, LocalSessionManager localSessions, AuthWebSocketRegistry sockets)
     : AuthenticationHandler<AuthenticationSchemeOptions>(options, logger, encoder)
 {
     protected override async Task<AuthenticateResult> HandleAuthenticateAsync()
     {
         if (WebSessionCookie.ReadHash(Context, hostOptions) is not { } hash)
             return AuthenticateResult.NoResult();
-        var session = await store.GetValidOwnerSessionByTokenHashAsync(hash, time.GetUtcNow().ToUnixTimeMilliseconds(), Context.RequestAborted);
+        var nowMs = time.GetUtcNow().ToUnixTimeMilliseconds();
+        var session = await store.GetValidOwnerSessionByTokenHashAsync(hash, nowMs, Context.RequestAborted);
+        if (session is null && localSessions.IsActive && !hostOptions.RequireAuth &&
+            LocalSessionManager.IsDirectLoopback(Context, hostOptions) &&
+            !await localSessions.CheckOwnerAsync(store, sockets, Context.RequestAborted))
+            session = localSessions.TryGetValidSession(hash, nowMs);
         if (session is null)
             return AuthenticateResult.NoResult();
 

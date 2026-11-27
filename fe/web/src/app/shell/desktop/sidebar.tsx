@@ -58,6 +58,7 @@ export type SidebarProps = Readonly<{
   onOpenPlugins?: (() => void) | undefined;
   /** Delegates sign-out to the session owner. */
   onSignOut?: (() => void) | undefined;
+  onSetupAccount?: (() => void) | undefined;
   /** Hides the unimplemented Recipes row on Perga v1 servers. */
   /** Owned by the shell: collapsing changes the shell grid, not just the rail. */
   collapsed: boolean;
@@ -85,7 +86,7 @@ export function initialsOf(label: string): string {
 export function Sidebar({
   areas, executionTargets, tracksByArea, tracks, trackGroups: memberships, currentPath, shareScope = null, onGo,
   onShareTrack, onShareArea, onRequestCreateArea, onRequestEditArea, onDeleteArea, onNewTrack, onSetPinned, onDeleteTrack,
-  onOpenSettings, onOpenPlugins, onSignOut, collapsed, onToggleCollapsed,
+  onOpenSettings, onOpenPlugins, onSignOut, onSetupAccount, collapsed, onToggleCollapsed,
   userLabel = 'You', nowMs, readError = null, activityError = null,
   readLoading = false, onRetryRead = () => undefined,
 }: SidebarProps) {
@@ -377,7 +378,9 @@ export function Sidebar({
               items={[
                 { label: 'Settings', onSelect: onOpenSettings },
                 ...(onOpenPlugins === undefined ? [] : [{ label: 'Plugins', onSelect: onOpenPlugins }]),
-                ...(onSignOut === undefined ? [] : [{ label: 'Sign out', onSelect: onSignOut }]),
+                ...(onSetupAccount === undefined
+                  ? (onSignOut === undefined ? [] : [{ label: 'Sign out', onSelect: onSignOut }])
+                  : [{ label: 'Set up account & password…', onSelect: onSetupAccount }]),
               ]}
               wrapClassName={styles.menuWrap}
               menuClassName={styles.menu}

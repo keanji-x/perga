@@ -31,3 +31,28 @@ export class LoginThrottledError extends Error {
     this.retryAfterSeconds = retryAfterSeconds;
   }
 }
+
+type AuthWriteFailure = 'refused' | 'unknown';
+
+export const SETUP_FAILURES: FailureTable<AuthWriteFailure | 'done'> = Object.freeze({
+  rules: Object.freeze([
+    Object.freeze({ status: Object.freeze([409]), code: 'owner_already_configured', is: 'done' as const }),
+    Object.freeze({ status: Object.freeze({ from: 400, to: 499 }), is: 'refused' as const }),
+  ]),
+  unauthorized: 'refused',
+  otherwise: 'unknown',
+});
+
+export const SETUP_TEXT: WriteText = Object.freeze({
+  refused: 'Account setup was refused.',
+  unknown: 'Account setup could not be confirmed. Try again.',
+});
+
+export class OwnerAlreadyConfiguredError extends Error {
+  constructor() { super('An owner account already exists.'); }
+}
+
+export const LOCAL_TOKEN_TEXT: WriteText = Object.freeze({
+  refused: 'The local launch token was refused.',
+  unknown: 'The local session could not be opened. Try again.',
+});

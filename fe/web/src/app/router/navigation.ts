@@ -56,6 +56,7 @@ export type NavTarget =
   /** Settings › Planners — whether each Planner provider can run now (#1817). */
   | Readonly<{ name: 'settings-planners' }>
   | Readonly<{ name: 'settings-appearance' }>
+  | Readonly<{ name: 'settings-account' }>
   | Readonly<{ name: 'settings-about' }>;
 
 export type GoOptions = Readonly<{ replace?: boolean }>;
@@ -76,6 +77,7 @@ export function pathFor(target: NavTarget): string {
     case 'settings': return '/settings';
     case 'settings-planners': return '/settings/planners';
     case 'settings-appearance': return '/settings/appearance';
+    case 'settings-account': return '/settings/account';
     case 'settings-about': return '/settings/about';
   }
 }

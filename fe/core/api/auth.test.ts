@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
-import { loginOperation, logoutOperation, sessionIdentitySchema } from './auth.js';
+import { exchangeLocalTokenOperation, loginOperation, logoutOperation, sessionIdentitySchema, setupOwnerOperation } from './auth.js';
 import { performApiRequest } from './client.js';
 
 const identity = Object.freeze({
   userId: 'owner', username: 'owner', displayName: 'Owner', role: 'owner',
-  sessionId: 'session-1', expiresAtMs: 2_000_000_000_000,
+  sessionId: 'session-1', expiresAtMs: 2_000_000_000_000, mode: 'owner',
 });
 
 describe('core/api auth behavior', () => {
@@ -25,6 +25,25 @@ describe('core/api auth behavior', () => {
       else expect(result.error.kind).toBe('decode');
     },
   );
+
+  it.each([
+    { mode: 'owner', status: 201, wrongMode: 'local', wrongStatus: 200,
+      operation: setupOwnerOperation({ username: 'owner', password: 'sample password', displayName: null }) },
+    { mode: 'local', status: 200, wrongMode: 'owner', wrongStatus: 201,
+      operation: exchangeLocalTokenOperation({ token: 'token' }) },
+  ])('verifies the $mode session status, mode and header', async ({ mode, status, wrongMode, wrongStatus, operation }) => {
+    const send = (status: number, mode: string, sessionId: string | undefined) => {
+      const headers: Record<string, string> = sessionId === undefined ? {} : { 'x-perga-session-id': sessionId };
+      return { send: () => Promise.resolve({ status, statusText: '', body: { ...identity, mode }, headers }) };
+    };
+    const id = identity.sessionId;
+    const failed = { status: 'failed', error: { kind: 'decode' } };
+    expect(await performApiRequest(send(status, mode, id), operation)).toMatchObject({ status: 'ready' });
+    expect(await performApiRequest(send(status, wrongMode, id), operation)).toMatchObject(failed);
+    expect(await performApiRequest(send(wrongStatus, mode, id), operation)).toMatchObject(failed);
+    expect(await performApiRequest(send(status, mode, undefined), operation)).toMatchObject(failed);
+    expect(await performApiRequest(send(status, mode, 'another-session'), operation)).toMatchObject(failed);
+  });
 
   it('requires logout to return 204', async () => {
     const send = (status: number) => ({ send: () => Promise.resolve({ status, statusText: '', body: undefined }) });

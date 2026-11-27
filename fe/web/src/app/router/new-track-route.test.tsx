@@ -22,7 +22,7 @@ import { createMemoryStorage } from './share-reuse-fixture.ts';
 import { createAppRouter } from './public.tsx';
 import { bootTestCardRuntime } from './test-card-runtime.ts';
 
-const IDENTITY = { userId: 'track-create-owner', displayName: 'Owner', username: 'owner', expiresAtMs: 2000000000000, role: 'owner', sessionId: 'one' } as const;
+const IDENTITY = { userId: 'track-create-owner', displayName: 'Owner', username: 'owner', expiresAtMs: 2000000000000, mode: 'owner', role: 'owner', sessionId: 'one' } as const;
 const DRAFT_KEY = createStorageKey('track-create-v1', IDENTITY.userId, 'c1');
 const FIRST_SEND_KEY = createStorageKey('pending-track-initial-sends-v1');
 

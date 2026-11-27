@@ -125,7 +125,8 @@ public sealed class OpenApiExportTests
         foreach (var endpoint in endpoints)
         {
             var path = endpoint.RoutePattern.RawText!;
-            var anonymous = path is "/healthz" or "/api/v1/auth/login" or "/api/v1/auth/logout";
+            var anonymous = path is "/healthz" or "/api/v1/auth/login" or "/api/v1/auth/logout"
+                or "/api/v1/auth/setup" or "/api/v1/auth/local" or "/auth/local";
             Assert.Equal(anonymous, endpoint.Metadata.GetMetadata<IAllowAnonymous>() is not null);
             if (anonymous) continue;
             var policy = path switch
@@ -140,6 +141,7 @@ public sealed class OpenApiExportTests
         Assert.True(count > 50);
         using var document = JsonDocument.Parse(OpenApiDocumentExporter.Export(app));
         var paths = document.RootElement.GetProperty("paths");
+        Assert.False(paths.TryGetProperty("/auth/local", out _));
         Assert.Equal(0, paths.GetProperty("/api/v1/auth/login").GetProperty("post").GetProperty("security").GetArrayLength());
         Assert.Equal("SessionIdentityDto", paths.GetProperty("/api/v1/auth/session").GetProperty("get")
             .GetProperty("responses").GetProperty("200").GetProperty("content").GetProperty("application/json")

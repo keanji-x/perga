@@ -1,7 +1,8 @@
-import { expect, test as base, type Page, type Response } from '@playwright/test';
+import { expect, test as base, type Locator, type Page, type Response } from '@playwright/test';
 import { sessionIdentitySchema } from '../core/api/auth.ts';
+import { areaDtoSchema } from '../core/api/perga-v1.ts';
 import { IDB_DB_NAME, PENDING_TRACK_INITIAL_SENDS_KEY, SYNC_CURSOR_KEY } from '../core/keys/storage.ts';
-import { authOwner, withAuthBuild, withAuthHost, type AuthBuild, type AuthHost } from './helpers/auth-host.ts';
+import { authOwner, nonLoopbackWithoutAuthExit, withAuthBuild, withAuthHost, type AuthBuild, type AuthHost } from './helpers/auth-host.ts';
 
 const test = base.extend<{ authHost: AuthHost; proxied: boolean }, { authBuild: AuthBuild }>({
   proxied: [false, { option: true }],
@@ -15,8 +16,20 @@ const test = base.extend<{ authHost: AuthHost; proxied: boolean }, { authBuild: 
 const sessionPath = '/api/v1/auth/session';
 const loginPath = '/api/v1/auth/login';
 const logoutPath = '/api/v1/auth/logout';
-const signInHeading = (page: Page) => page.getByRole('heading', { name: 'Sign in' });
+const signInHeading = (page: Page) => page.getByRole('heading', { name: 'Perga', exact: true });
 const accountMenu = (page: Page) => page.getByRole('button', { name: `Account menu for ${authOwner.displayName}` });
+
+async function expectFormToFitNarrowViewports(page: Page, form: Locator) {
+  for (const width of [390, 320]) {
+    await page.setViewportSize({ width, height: 844 });
+    await expect(form).toBeVisible();
+    await expect.poll(() => form.evaluate(element => {
+      const bounds = element.getBoundingClientRect();
+      return bounds.left >= 0 && bounds.right <= window.innerWidth && element.scrollWidth <= element.clientWidth &&
+        document.documentElement.scrollWidth <= window.innerWidth;
+    }), { message: `The form fits a ${width}px viewport` }).toBe(true);
+  }
+}
 
 async function submitCredentials(page: Page, username: string, password: string): Promise<Response> {
   await page.getByLabel('Username').fill(username);
@@ -78,7 +91,7 @@ test('gates a deep link and synchronizes login and retried logout across tabs', 
   page.on('request', recordApi);
   await page.goto(new URL('/settings', authHost.origin).href);
   await expect(signInHeading(page)).toBeVisible();
-  expect(new Set(preLoginApi)).toEqual(new Set([sessionPath]));
+  expect(new Set(preLoginApi)).toEqual(new Set([sessionPath, '/api/v1/auth/setup']));
   page.off('request', recordApi);
   let navigations = 0;
   page.on('framenavigated', frame => { if (frame === page.mainFrame()) navigations++; });
@@ -207,4 +220,98 @@ test.describe('trusted TLS ingress', () => {
     await expect(insecurePage.getByRole('alert')).toHaveText('An HTTPS connection is required.');
     await expect(insecurePage.getByText('Access Perga over HTTPS using direct TLS or a configured trusted reverse proxy.')).toBeVisible();
   });
+});
+
+
+test('refuses a production non-loopback bind before an owner is configured', async ({ authBuild }) => {
+  const { code, stderr } = await nonLoopbackWithoutAuthExit(authBuild);
+  expect(code).toBe(1);
+  expect(stderr).toContain('--require-auth');
+  expect(stderr).toContain('non-loopback');
+});
+
+test('exchanges the launch link, upgrades Local in Account and keeps its workspace', async ({ authBuild, page }) => {
+  await withAuthHost(authBuild, false, async (host) => {
+    const setupReads: string[] = [];
+    page.on('request', (request) => {
+      if (request.method() === 'GET' && new URL(request.url()).pathname === '/api/v1/auth/setup') setupReads.push(request.method());
+    });
+    const token = await host.readLaunchToken();
+    await page.goto(`${host.origin}/auth/local?token=${token}`);
+    await expect(page).toHaveURL(`${host.origin}/`);
+    const localMenu = page.getByRole('button', { name: 'Account menu for Local' });
+    await expect(localMenu).toBeVisible();
+    expect(setupReads).toEqual([]);
+    const area = await page.request.post(`${host.origin}/api/v1/areas`, { data: { name: 'Local notes' } });
+    expect(area.status()).toBe(201);
+    const createdArea = areaDtoSchema.parse(await area.json());
+
+    await localMenu.click();
+    await expect(page.getByRole('menuitem', { name: 'Sign out' })).toHaveCount(0);
+    await page.getByRole('menuitem', { name: 'Set up account & password…' }).click();
+    await expect(page).toHaveURL(`${host.origin}/settings/account`);
+    const dialog = page.getByRole('dialog', { name: 'Settings' });
+    await expect(dialog.getByLabel('Username')).toHaveValue('owner');
+    expect(setupReads).toEqual([]);
+    await dialog.getByLabel('Username').fill('notes-owner');
+    await dialog.getByLabel('Password', { exact: true }).fill(authOwner.password);
+    await dialog.getByRole('button', { name: 'Show password' }).click();
+    await expect(dialog.getByLabel('Password', { exact: true })).toHaveAttribute('type', 'text');
+    await dialog.getByRole('button', { name: 'Hide password' }).click();
+    await dialog.getByRole('button', { name: 'Enable password protection' }).click();
+    await expect(dialog.getByText('Password protection is active.')).toBeVisible();
+    const areas = await page.request.get(`${host.origin}/api/v1/areas`);
+    expect(areas.ok()).toBe(true);
+    expect(await areas.json()).toContainEqual(expect.objectContaining({ id: createdArea.id, name: 'Local notes' }));
+    await expect(dialog.getByRole('button', { name: 'Enable password protection' })).toHaveCount(0);
+
+    await page.keyboard.press('Escape');
+    await page.getByRole('button', { name: 'Account menu for notes-owner' }).click();
+    await expect(page.getByRole('menuitem', { name: 'Set up account & password…' })).toHaveCount(0);
+    expect(setupReads).toEqual([]);
+    await page.getByRole('menuitem', { name: 'Sign out' }).click();
+    await expect(signInHeading(page)).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Sign in' })).toBeVisible();
+  }, 'local');
+});
+
+test('require-auth opens first-run registration, signs in and stays configured', async ({ authBuild, page }) => {
+  await withAuthHost(authBuild, false, async (host) => {
+    await page.goto(host.origin);
+    await expect(page.getByRole('heading', { name: 'Create your account' })).toBeVisible();
+    const desktop = page.viewportSize()!;
+    await expectFormToFitNarrowViewports(page, page.locator('form'));
+    await page.setViewportSize(desktop);
+    await expect(page.getByLabel('Username')).toHaveValue('owner');
+    await expect(page.getByLabel('Password', { exact: true })).toHaveAttribute('autocomplete', 'new-password');
+    await page.getByLabel('Password', { exact: true }).fill(authOwner.password);
+    await page.getByRole('button', { name: 'Create account' }).click();
+    const menu = page.getByRole('button', { name: 'Account menu for owner', exact: true });
+    await expect(menu).toBeVisible();
+    await page.reload();
+    await menu.click();
+    await page.getByRole('menuitem', { name: 'Sign out' }).click();
+    await expect(page.getByRole('button', { name: 'Sign in' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Create account' })).toHaveCount(0);
+  }, 'require-auth');
+});
+
+test('opens a pasted local token and offers account setup from mobile Workspace', async ({ authBuild, page }) => {
+  await withAuthHost(authBuild, false, async (host) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto(host.origin);
+    const token = await host.readLaunchToken();
+    await page.getByLabel('Local launch token').fill(token);
+    await page.getByRole('button', { name: 'Open workspace', exact: true }).click();
+    const workspace = page.getByRole('dialog', { name: 'Tracks and settings' });
+    await page.getByRole('button', { name: 'Open workspace', exact: true }).click();
+    await expect(workspace.getByRole('button', { name: 'Sign out' })).toHaveCount(0);
+    await workspace.getByRole('button', { name: 'Set up password' }).click();
+    await expect(page).toHaveURL(`${host.origin}/settings/account`);
+    await expect(page.getByRole('heading', { name: 'Account', exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Enable password protection' })).toBeVisible();
+    await expectFormToFitNarrowViewports(page, page.locator('form').filter({
+      has: page.getByRole('button', { name: 'Enable password protection' }),
+    }));
+  }, 'local');
 });

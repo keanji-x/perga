@@ -14,6 +14,7 @@ using Perga.Host.Mcp;
 using Perga.Host.Serialization;
 using Perga.Host.SystemUpgrade;
 using Perga.Kernel.Ports;
+using Perga.Storage.Sqlite;
 
 var daemon = HostDaemonRuntime.FromProcess();
 var foreground = daemon is null ? HostDaemonCommand.ForegroundOptions(args) : null;
@@ -36,10 +37,22 @@ if (args.Contains("--export-openapi", StringComparer.Ordinal))
     exportPath = Path.GetFullPath(destination);
 }
 var managed = daemon is not null || foreground is not null;
-var builder = PergaHttpEndpoints.CreateBuilder(exportPath is not null ? [] :
-    managed ? HostDaemonOptions.ConfigurationArguments(args) : args);
+var builder = PergaHttpEndpoints.CreateBuilder(exportPath is not null ? [] : HostDaemonOptions.ConfigurationArguments(args));
 if (managed)
     HostDaemonRuntime.Configure(builder, foreground);
+// The framework's information-level request logs include query strings.
+builder.Services.PostConfigure<LoggerFilterOptions>(filters =>
+{
+    for (var i = 0; i < filters.Rules.Count; i++)
+    {
+        var rule = filters.Rules[i];
+        filters.Rules[i] = new LoggerFilterRule(rule.ProviderName, rule.CategoryName, rule.LogLevel,
+            (provider, category, level) => AllowHostingDiagnostics(category, level) &&
+                (rule.Filter?.Invoke(provider, category, level) ?? true));
+    }
+    filters.Rules.Insert(0, new LoggerFilterRule(null, null, filters.MinLevel,
+        (_, category, level) => AllowHostingDiagnostics(category, level)));
+});
 
 // The framework startup filter uses DI options. Perga applies explicit options after capturing the socket.
 builder.Services.PostConfigure<ForwardedHeadersOptions>(framework => framework.ForwardedHeaders = ForwardedHeaders.None);
@@ -133,23 +146,22 @@ try
     MapWebAndEndpoints(app, releases);
 
     _ = app.Services.GetRequiredService<IAuthPasswordHasher>();
-    _ = app.Services.GetRequiredService<SystemManagementAuthorization>();
-    var storagePaths = app.Services.GetRequiredService<ResolvedHostStoragePaths>();
-    var onboardingCode = await HostStartupOnboarding.EnsureInteractiveOwnerIfNeededAsync(
-        app.Services.GetRequiredService<IAuthStore>(),
-        storagePaths.DbPath,
-        storagePaths.IsEphemeral,
-        isTestHost,
-        isInteractive: daemon is null && HostStartupOnboarding.IsForegroundInteractiveTerminal(),
-        Console.In,
-        Console.Out,
-        Console.Error);
-    if (onboardingCode != 0)
+    if (!isTestHost && !options.RequireAuth && options.AuthIngressMode == AuthIngressMode.Direct &&
+        LocalAuthStartup.HasNonLoopbackBindUrl(app.Configuration))
     {
-        await app.DisposeAsync();
-        return onboardingCode;
+        await app.Services.GetRequiredService<SqliteTrackStore>().InitializeAsync(default);
+        if (await app.Services.GetRequiredService<IAuthStore>().GetOwnerAsync(default) is null)
+        {
+            app.Services.GetRequiredService<LocalSessionManager>().ClearStaleTokenFile();
+            await Console.Error.WriteLineAsync(
+                "Perga refuses to bind a non-loopback address without authentication. Start with --require-auth or PERGA_AUTH_REQUIRE=true, or run perga auth init-owner.");
+            await app.DisposeAsync();
+            return 1;
+        }
     }
 
+    _ = app.Services.GetRequiredService<SystemManagementAuthorization>();
+    var storagePaths = app.Services.GetRequiredService<ResolvedHostStoragePaths>();
     if (daemon is not null)
     {
         try
@@ -180,6 +192,10 @@ catch (Exception ex) when (!isTestHost && HostStartupOnboarding.FormatStartupErr
     return 1;
 }
 return 0;
+
+static bool AllowHostingDiagnostics(string? category, LogLevel level) =>
+    level >= LogLevel.Warning ||
+    !string.Equals(category, "Microsoft.AspNetCore.Hosting.Diagnostics", StringComparison.OrdinalIgnoreCase);
 
 static void MapWebAndEndpoints(WebApplication app, ReleaseSnapshotManager releases)
 {

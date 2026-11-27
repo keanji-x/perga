@@ -16,7 +16,7 @@ import styles from './navigation.module.css';
 
 export function WorkspaceLevelOne({
   areas, tracksByArea, areaId, onBack, onCreateArea, onSelectArea, onOpenTrack, onOpenSettings, onOpenToday, onOpenMemory,
-  isUnread, readError, readLoading, onRetryRead, accountLabel = 'Account', accountInitial = 'A', onSignOut, shareMode = false, nowMs,
+  isUnread, readError, readLoading, onRetryRead, accountLabel = 'Account', accountInitial = 'A', onSignOut, onSetupAccount, shareMode = false, nowMs,
 }: MobileTracksProps) {
   const shown = visibleAreas(areas);
   const selected = shown.find((candidate) => candidate.id === areaId);
@@ -227,10 +227,10 @@ export function WorkspaceLevelOne({
               <span className={styles.accountAvatar} aria-hidden="true">{accountInitial}</span>
               <span className={styles.accountName}>{accountLabel}</span>
             </div>
-            {onSignOut !== undefined && (
-              <button type="button" className={styles.signOutButton} onClick={onSignOut}>
-                Sign out
-              </button>
+            {onSetupAccount !== undefined ? (
+              <button type="button" className={styles.signOutButton} onClick={onSetupAccount}>Set up password</button>
+            ) : onSignOut !== undefined && (
+              <button type="button" className={styles.signOutButton} onClick={onSignOut}>Sign out</button>
             )}
           </div>
         </footer>

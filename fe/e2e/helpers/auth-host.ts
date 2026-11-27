@@ -170,19 +170,22 @@ export type AuthHost = Readonly<{
   origin: string;
   hostOrigin: string;
   revokeSessions(): Promise<void>;
+  readLaunchToken(): Promise<string>;
 }>;
 
-export async function withAuthHost(build: AuthBuild, proxied: boolean, provide: (host: AuthHost) => Promise<void>): Promise<void> {
+export async function withAuthHost(build: AuthBuild, proxied: boolean, provide: (host: AuthHost) => Promise<void>,
+  firstRun?: 'local' | 'require-auth'): Promise<void> {
   const directory = await mkdtemp(join(tmpdir(), 'perga-auth-host-'));
   let hostOrigin = '';
   let proxy: Awaited<ReturnType<typeof startTlsProxy>> | undefined;
   let child: ChildProcess | undefined;
   try {
     const dbPath = join(directory, 'perga.db');
-    await cli(build, directory, dbPath, ['init-owner', '--username', authOwner.username,
+    if (firstRun === undefined) await cli(build, directory, dbPath, ['init-owner', '--username', authOwner.username,
       '--display-name', authOwner.displayName, '--allow-migrate', '--password-stdin'], `${authOwner.password}\n`);
     if (proxied) proxy = await startTlsProxy(directory, () => hostOrigin);
     child = spawn(build.dotnet, [build.hostDll, '--urls', `http://${loopback}:0`,
+      ...(firstRun === 'require-auth' ? ['--require-auth'] : []),
       '--Perga:DataDir', directory, '--Perga:DbPath', dbPath,
       '--Perga:TemplatesDirectory', join(root, 'templates'), '--Perga:StaticWebRootDirectory', build.web,
       '--Perga:OarBridgeScriptPath', join(directory, 'no-provider-bridge.mjs'),
@@ -193,6 +196,7 @@ export async function withAuthHost(build: AuthBuild, proxied: boolean, provide: 
     hostOrigin = await listening(child);
     await provide({ origin: proxy?.origin ?? hostOrigin, hostOrigin,
       revokeSessions: () => cli(build, directory, dbPath, ['revoke-sessions']),
+      readLaunchToken: () => readFile(join(directory, 'runtime', 'local-launch-token'), 'utf8'),
     });
   } finally {
     try { if (proxy) await proxy.close(); }
@@ -200,5 +204,24 @@ export async function withAuthHost(build: AuthBuild, proxied: boolean, provide: 
       try { if (child) await stop(child); }
       finally { await rm(directory, { recursive: true, force: true }); }
     }
+  }
+}
+
+
+export async function nonLoopbackWithoutAuthExit(build: AuthBuild): Promise<{ code: number | string; stderr: string }> {
+  const directory = await mkdtemp(join(tmpdir(), 'perga-auth-bind-'));
+  try {
+    await run(build.dotnet, [build.hostDll, '--urls', 'http://0.0.0.0:0', '--Perga:DataDir', directory], {
+      cwd: directory, env: hostEnvironment(build), timeout: 15_000,
+    });
+    throw new Error('The non-loopback host accepted startup without an owner.');
+  } catch (error: unknown) {
+    if (typeof error === 'object' && error !== null && 'code' in error && 'stderr' in error &&
+      (typeof error.code === 'number' || typeof error.code === 'string') && typeof error.stderr === 'string') {
+      return { code: error.code, stderr: error.stderr };
+    }
+    throw error;
+  } finally {
+    await rm(directory, { recursive: true, force: true });
   }
 }

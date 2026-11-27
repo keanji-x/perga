@@ -55,6 +55,8 @@ export type AppShellProps = Readonly<{
   /** Settings › Plugins, from the rail's account menu. */
   onOpenPlugins?: (() => void) | undefined;
   onSignOut?: (() => void) | undefined;
+  onSetupAccount?: (() => void) | undefined;
+  onOwnerSetupComplete?: (() => void) | undefined;
 
   /** Pinned by tests so `pinned_at` assertions are stable. */
   nowMs?: number;
@@ -93,7 +95,7 @@ export function useOpenMobileSection(): OpenMobileSection {
 }
 
 export function AppShell({
-  transport, unauthorized, onOpenSettings, onOpenPlugins, onSignOut, nowMs, userLabel, shareScope = null,
+  transport, unauthorized, onOpenSettings, onOpenPlugins, onSignOut, onSetupAccount, onOwnerSetupComplete, nowMs, userLabel, shareScope = null,
 }: AppShellProps) {
   const narrowRail = useCompactViewport();
   const visibleViewport = useVisibleViewport(narrowRail);
@@ -174,6 +176,7 @@ export function AppShell({
             onRequestEditArea: controller.requestEditArea,
             onOpenSettings,
             onSignOut,
+            onSetupAccount,
           }}
           navigation={mobileNavigation}
           onActionsHostRef={setMobileHeaderActionsHost}
@@ -208,6 +211,7 @@ export function AppShell({
           onOpenSettings={onOpenSettings}
           onOpenPlugins={onOpenPlugins}
           onSignOut={onSignOut}
+          onSetupAccount={onSetupAccount}
           userLabel={userLabel}
         />
       )}
@@ -235,7 +239,7 @@ export function AppShell({
           </CreateAreaContext.Provider>
         </div>
         {/* Beside the persistent route stage so settings panes survive tab changes and resizing. */}
-        <SettingsOverlay transport={transport} unauthorized={unauthorized} />
+        <SettingsOverlay transport={transport} unauthorized={unauthorized} onOwnerSetupComplete={onOwnerSetupComplete} />
       </main>
       <AreaEditorDialog editor={controller.areaEditor} />
     </div>

@@ -50,5 +50,11 @@ internal sealed record HostDaemonOptions(string[] HostArgs, bool Foreground, boo
     // The ASP.NET command-line provider takes key/value pairs. Preserve the original
     // standalone switch at the process and state boundary.
     public static string[] ConfigurationArguments(string[] args) =>
-        args.Select(arg => arg == "--require-auth" ? "--Perga:RequireAuth=true" : arg).ToArray();
+        args.Select(arg => arg switch
+        {
+            "--require-auth" => "--Perga:RequireAuth=true",
+            _ when arg.StartsWith("--require-auth=", StringComparison.Ordinal) =>
+                "--Perga:RequireAuth=" + arg["--require-auth=".Length..],
+            _ => arg
+        }).ToArray();
 }

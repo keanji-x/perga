@@ -28,6 +28,7 @@ export type MobileTracksProps = Readonly<{
   accountLabel?: string;
   accountInitial?: string;
   onSignOut?: () => void;
+  onSetupAccount?: () => void;
   shareMode?: boolean;
   nowMs?: number;
 }>;
