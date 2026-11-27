@@ -299,6 +299,20 @@ function copyCanonicalAssetsAndBuildEditorialPages() {
     ['fe/web/public/icons/perga-192.png', 'icon-192.png'],
   ];
 
+  const essaysIndexMarkdown = [
+    '# Essays',
+    '',
+    'Notes from building and dogfooding [Perga](https://github.com/keanji-x/perga) across multi-day, multi-model coding workflows.',
+    '',
+    '## [Why I Rewrote a 966k-Line AI-Built Rust Codebase in C#](./rust-to-csharp.html)',
+    '',
+    'After 966k lines of AI-generated Rust stalled on compile times, worktree disk bloat, and defensive review loops, I rewrote the backend in C# in nine days—and kept only 3,300 lines of Rust.',
+    '',
+    '## [Stop Scrolling Chat Logs: Why I Built a Report-Centric Agent Harness](./why-report-centric.html)',
+    '',
+    'Why the medium between humans and parallel agents has to be bounded, why plain Markdown specs fail on both readability and maintainability, and the three primitives behind Perga reports.',
+  ].join('\n');
+
   const editorialPages = [
     {
       src: 'docs/product/vision.en.md',
@@ -309,8 +323,21 @@ function copyCanonicalAssetsAndBuildEditorialPages() {
       assetPrefix: './',
       navLinks: [
         { href: './', label: '← Home' },
-        { href: './essays/rust-to-csharp.html', label: 'Essays' },
+        { href: './essays/', label: 'Essays' },
         { href: 'https://github.com/keanji-x/perga/blob/main/docs/product/vision.md', label: '中文 ↗', external: true },
+        { href: 'https://github.com/keanji-x/perga', label: 'GitHub ↗', external: true },
+      ],
+    },
+    {
+      markdown: essaysIndexMarkdown,
+      dst: 'essays/index.html',
+      title: 'Essays — Perga',
+      description: 'Engineering notes from building Perga: rewriting 966k lines of AI-built Rust in C#, and why multi-agent work needs a report-centric harness.',
+      canonicalUrl: 'https://keanji-x.github.io/perga/essays/',
+      assetPrefix: '../',
+      navLinks: [
+        { href: '../', label: '← Home' },
+        { href: '../vision.html', label: 'Vision' },
         { href: 'https://github.com/keanji-x/perga', label: 'GitHub ↗', external: true },
       ],
     },
@@ -323,6 +350,21 @@ function copyCanonicalAssetsAndBuildEditorialPages() {
       assetPrefix: '../',
       navLinks: [
         { href: '../', label: '← Home' },
+        { href: './', label: 'Essays' },
+        { href: '../vision.html', label: 'Vision' },
+        { href: 'https://github.com/keanji-x/perga', label: 'GitHub ↗', external: true },
+      ],
+    },
+    {
+      src: 'docs/essays/03-why-report-centric.md',
+      dst: 'essays/why-report-centric.html',
+      title: 'Stop Scrolling Chat Logs: Why I Built a Report-Centric Agent Harness — Perga',
+      description: 'Why the medium between humans and parallel agents has to be bounded, why specs drift, and the three primitives behind Perga reports.',
+      canonicalUrl: 'https://keanji-x.github.io/perga/essays/why-report-centric.html',
+      assetPrefix: '../',
+      navLinks: [
+        { href: '../', label: '← Home' },
+        { href: './', label: 'Essays' },
         { href: '../vision.html', label: 'Vision' },
         { href: 'https://github.com/keanji-x/perga', label: 'GitHub ↗', external: true },
       ],
@@ -341,7 +383,7 @@ function copyCanonicalAssetsAndBuildEditorialPages() {
 
       const markSvg = readFileSync(resolve(repoRoot, 'fe/web/src/ui/brand/perga-mark.svg'), 'utf8');
       for (const page of editorialPages) {
-        const md = readFileSync(resolve(repoRoot, page.src), 'utf8');
+        const md = page.markdown ?? readFileSync(resolve(repoRoot, page.src), 'utf8');
         const dst = resolve(outDir, page.dst);
         mkdirSync(dirname(dst), { recursive: true });
         writeFileSync(dst, buildEditorialPageHtml(md, markSvg, page), 'utf8');

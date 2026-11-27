@@ -4,13 +4,13 @@
 
 [Homepage](https://keanji-x.github.io/perga/) · [Quickstart](#quickstart) · [Built-in Protocols](#built-in-protocols) · [Documentation](#documentation) · [Releases](https://github.com/keanji-x/perga/releases) · [Discord](https://discord.gg/WfBzhQenQb)
 
-Self-contained native packages for **macOS on Apple Silicon (`arm64`)** and **Linux `x64`** — no .NET runtime installation required. Both packages bundle the Host, native Rust terminal bridge, multi-backend agent bridge, and web interface.
+Self-contained packages for **macOS on Apple Silicon (`arm64`)** and **Linux `x64`** — no .NET runtime installation required. Both packages bundle the Host, native Rust terminal bridge, multi-backend agent bridge, and web interface.
 
 Perga moves multi-day and multi-week work — maintaining a repository, driving engineering OKRs, or running ongoing investment research — out of drifting chat sessions. Each goal gets its own isolated **Track**: conversation stays in the side pane while the main view continuously distills a read-only living report backed by kernel-verified facts. Orchestrate parallel workers across the CLIs you already use (**Claude Code, Codex, Antigravity, OpenCode, Kimi, Qwen, Devin, Factory, Grok, CodeBuddy, Qoder**, and more) with lightweight protocols, enforced cross-model review, background external watches, and shared human-AI Markdown memory.
 
-![Perga desktop workspace and mobile PWA Focus home: living report, parallel multi-model flow, PR CI watch, side-pane Lead steering, and mobile triage](docs/assets/hero.png)
+![Perga desktop workspace and mobile PWA Focus home: living report with custom valuation axis, expectation chronicle, side-pane Lead steering, and mobile triage inbox](docs/assets/hero.png)
 
-*Desktop workspace (living report, 4-stage multi-model flow, PR CI watch, and margin `Lead` steering) alongside the mobile PWA `Focus` inbox (`Needs attention`, `Unread updates`, and `Pinned`) synced to the same local workspace.*
+*Desktop workspace (living report with custom widgets, structured data tables, and margin `Lead` steering) alongside the mobile PWA `Focus` inbox (`Needs repair`, unread replies, and running tracks) synced to the same local workspace.*
 
 ## Key Capabilities
 
@@ -41,7 +41,7 @@ Perga moves multi-day and multi-week work — maintaining a repository, driving 
 
 ### Prerequisites
 
-- **No .NET runtime required** — release archives are self-contained native binaries for macOS Apple Silicon (`arm64`) and Linux `x64` (including Windows WSL2).
+- **No .NET runtime required** — release archives are self-contained packages for macOS Apple Silicon (`arm64`) and Linux `x64` (including Windows WSL2).
 - **Node.js 24 or later** for the bundled OAR agent bridge.
 - At least one configured provider CLI you already use, such as `claude`, `codex`, Antigravity (`agy` standalone CLI `>= 1.5.0` via `curl -fsSL https://antigravity.google/cli/install.sh | bash`, not just the IDE app), `opencode`, `kimi`, `qwen`, `devin`, or `grok`.
 
@@ -57,9 +57,9 @@ The installer verifies the archive's SHA-256 checksum, installs to `~/.local/sha
 perga
 ```
 
-Perga starts in the background and opens your browser when ready on macOS and Linux desktops. If the browser doesn't open, use the address printed by `perga` (default `http://127.0.0.1:4041/`).
+Perga starts in the background and opens your browser directly into your local workspace on macOS and Linux desktops — no username or password required on `127.0.0.1` (secured by a local `0600` launch token exchanged for an `HttpOnly` cookie). If the browser doesn't open automatically, run `perga open` or visit the address printed by `perga` (default `http://127.0.0.1:4041/`).
 
-To create your first owner account from the terminal, run `perga --foreground` on the first start for an interactive prompt, or use `perga auth init-owner --username owner --allow-migrate`. Add `--password-stdin` for a script or a headless setup.
+When you want password protection for LAN, Tailscale, or mobile PWA access, set up your local owner account anytime from the bottom-left user menu (**Settings › Account**), start with `perga --require-auth` for the first-run Web setup page, or run `perga auth init-owner --username owner` (add `--password-stdin` for scripts or headless servers).
 
 The web app is installable as a PWA, and the Host starts the bundled native terminal bridge automatically when needed.
 
@@ -177,7 +177,9 @@ bash tools/release.sh v0.1.0 --push   # create and push the annotated tag
 
 ## Documentation
 
-### Product
+### Product & Essays
+- [Why I Rewrote a 966k-Line AI-Built Rust Codebase in C#](docs/essays/01-rust-to-csharp-deleting-ai-slop.md) ([web](https://keanji-x.github.io/perga/essays/rust-to-csharp.html)) — Reversibility, parallel worktree build tax, and three workflow rules for AI-assisted coding
+- [Stop Scrolling Chat Logs: Why I Built a Report-Centric Agent Harness](docs/essays/03-why-report-centric.md) ([web](https://keanji-x.github.io/perga/essays/why-report-centric.html)) — Why the human–AI medium must be bounded, why specs drift, and Perga's three report primitives
 - [Vision and Fundamental Tensions (EN)](docs/product/vision.en.md) ([中文](docs/product/vision.md)) — Core premise, four orthogonal tensions, AI vs. human organizational asymmetries, and long-term vision
 - [Product Design and Prioritized Pain Points](docs/product/design.md) — Concrete `P0`–`P3` pain points, minimal solutions, deliberate trade-offs, deferred scope, and paradigm comparison
 - [Scenario Overview](docs/product/scenarios/README.md) — Progressive complexity across `agents-delivery`, `okr-loop`, and `equity-research`
