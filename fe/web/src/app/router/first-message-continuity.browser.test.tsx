@@ -16,13 +16,14 @@ it.each([{ width: 1280, reduce: false }, { width: 390, reduce: false }, { width:
       .filter(element => element.textContent === FIRST_MESSAGE);
     const fixture = renderFirstMessageFixture({ mobile: width === 390 });
     try {
-      if (width === 390) {
-        await page.getByRole('button', { name: 'Open conversation history', exact: true }).click();
-        await page.getByRole('button', { name: 'New conversation', exact: true }).click();
-      } else await page.getByRole('button', { name: 'New conversation', exact: true }).click();
+      if (width === 390) await page.getByRole('button', { name: /^Switch conversation,/ }).click();
+      await page.getByRole('button', { name: 'New conversation', exact: true }).click();
+      const mobileSettings = page.getByRole('button', { name: /^Session model and mode:/ });
+      if (width === 390) await expect.element(mobileSettings).toBeEnabled();
       await page.getByRole('combobox', { name: 'Message' }).fill(FIRST_MESSAGE);
       await userEvent.keyboard('{Enter}');
       await expect.poll(() => copies().length).toBe(1);
+      if (width === 390) await expect.element(mobileSettings).toBeDisabled();
       fixture.answerCreate();
       await expect.poll(fixture.historyCount).toBeGreaterThan(0);
       await expect.poll(() => copies().length).toBe(1);

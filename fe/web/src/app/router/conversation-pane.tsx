@@ -39,6 +39,7 @@ conversationName,
 isUserConversationTurn,
 type Conversation,
 type ConversationTurn,
+type ModelSelection,
 type PendingQueueEntry,
 type TranscriptEntry
 } from '../../../../core/domain/conversation.ts';
@@ -281,7 +282,7 @@ export function useConversationPane(
   };
   const draftAttachments = usePlannerAttachments(draft ?? {}, changeDraftAttachments);
   const draftImagesSupported = draftCapabilities.data?.conversationInitialInput === true;
-  const draftImagesLocked = creating || draft?.submitted != null;
+  const draftLocked = creating || draft?.submitted != null;
   const draftFocus = useMemo(() => ({ key: draft?.key ?? null, handle: createRef<ComposerFocusHandle>() }), [draft?.key]);
   // Rekey keeps this scope's event channel, but only the actual current attempt
   // may hand focus to its adopted row. Its UI handle stays bound to that key.
@@ -656,54 +657,72 @@ export function useConversationPane(
                 )}
               </ChatFooterNotice>
             )}
-            {/* Initial submit hands words to the held draft, including refusal; only recovery uses the takeover boolean. */}
-            <ConversationComposer commands={conversationCommands({ terminal: onTerminal, openFile: source.openFileCommand, compactViewport: compactComposer, newConversation: allowNewConversation ? startAnother : undefined })} target={{ kind: 'scope', id: sourceScopeId }} layout={compactComposer ? 'mobile' : 'standard'} disabled={creating} sendWaiting={creating} onSend={text => { sendDraft(text); }}
-              focusOnMount={panePresented} focusRequest={composerFocusRequest} focusHandle={draftFocus.handle}
-              mentionTrigger={mentionTrigger}
-              changeText={setNewConversationText}
-              allowEmptyText={draftAttachments.items.length > 0}
-              onFiles={draftImagesSupported && !draftImagesLocked ? draftAttachments.attach : undefined}
-              drawer={<ComposerAttachmentStrip items={draftAttachments.items} error={draftAttachments.error} onRemove={draftAttachments.remove} disabled={draftImagesLocked} />}
-              /* Menu membership and readiness come from the managed backend declarations. */
-              footerActions={(() => {
-                const draftPermissionControl = resolvePermissionControl({
-                  storedMode: draft?.permissionMode,
-                  providerModes: draft === null ? [] : permissionModesForProvider(managed.answers, draft.provider),
-                  metadataLoaded: managed.answers !== undefined,
-                  isDisabled: creating || draft.submitted !== null,
-                });
-                return (
-                  <HStack gap={1} align="center" wrap="wrap" className={footerStyles.group}>
-                    <PlannerAttachButton
+            {(() => {
+              const draftPermissionControl = resolvePermissionControl({
+                storedMode: draft.permissionMode,
+                providerModes: permissionModesForProvider(managed.answers, draft.provider),
+                metadataLoaded: managed.answers !== undefined,
+                isDisabled: draftLocked,
+              });
+              const changeDraftModel = (model: ModelSelection, provider: AgentProvider) => withDraft(draft, current => {
+                if (current.creating || current.submitted !== null) return current;
+                return {
+                  ...current,
+                  model,
+                  provider,
+                  permissionMode: permissionModeAfterProviderChange(current.provider, provider, current.permissionMode),
+                };
+              });
+              const changeDraftPermission = (permissionMode: string) => withDraft(draft, current =>
+                current.creating || current.submitted !== null ? current : { ...current, permissionMode });
+              const modelDisabled = draftLocked || !supportsDraftModel || !managed.supportsAssistantProviders;
+              return (
+                /* Initial submit hands words to the held draft, including refusal; only recovery uses the takeover boolean. */
+                <ConversationComposer commands={conversationCommands({ terminal: onTerminal, openFile: source.openFileCommand, compactViewport: compactComposer, newConversation: allowNewConversation ? startAnother : undefined })} target={{ kind: 'scope', id: sourceScopeId }} layout={mobileSheet ? 'mobile' : 'standard'} disabled={creating} sendWaiting={creating} onSend={text => { sendDraft(text); }}
+                  focusOnMount={panePresented} focusRequest={composerFocusRequest} focusHandle={draftFocus.handle}
+                  mentionTrigger={mentionTrigger}
+                  changeText={setNewConversationText}
+                  allowEmptyText={draftAttachments.items.length > 0}
+                  onFiles={draftImagesSupported && !draftLocked ? draftAttachments.attach : undefined}
+                  drawer={<ComposerAttachmentStrip items={draftAttachments.items} error={draftAttachments.error} onRemove={draftAttachments.remove} disabled={draftLocked} />}
+                  /* Menu membership and readiness come from the managed backend declarations. */
+                  mobileMetaBar={mobileSheet ? (
+                    <MobileConversationMetaBar
+                      sessionKey={draft.key}
+                      groups={managed.groups}
+                      provider={draft.provider}
+                      selection={draft.model}
+                      onChangeModel={changeDraftModel}
+                      modelDisabled={modelDisabled}
+                      appliesNextTurn={false}
+                      permission={draftPermissionControl.visible ? {
+                        mode: draftPermissionControl.mode,
+                        options: draftPermissionControl.options,
+                        onChange: changeDraftPermission,
+                        disabled: draftPermissionControl.isDisabled,
+                      } : undefined}
                       attachments={draftAttachments}
-                      available={draftImagesSupported}
-                      disabled={draftImagesLocked}
+                      attachmentsAvailable={draftImagesSupported}
+                      attachDisabled={draftLocked}
                     />
-                    <ModelPill groups={managed.groups} provider={draft.provider} selection={draft.model}
-                      effortControl={compactComposer ? 'in-menu' : 'separate'}
-                      onChange={(model, provider) => withDraft(draft, current => {
-                        if (current.creating || current.submitted !== null) return current;
-                        return {
-                          ...current,
-                          model,
-                          provider,
-                          permissionMode: permissionModeAfterProviderChange(current.provider, provider, current.permissionMode),
-                        };
-                      })}
-                      isDisabled={creating || draft.submitted !== null || !supportsDraftModel || !managed.supportsAssistantProviders} />
-                    {draftPermissionControl.visible && (
-                      <PermissionModePill
-                        mode={draftPermissionControl.mode}
-                        options={draftPermissionControl.options}
-                        onChange={(permissionMode) => withDraft(draft, current =>
-                          current.creating || current.submitted !== null ? current : { ...current, permissionMode })}
-                        isDisabled={draftPermissionControl.isDisabled}
-                      />
-                    )}
-
-                  </HStack>
-                );
-              })()} />
+                  ) : undefined}
+                  footerActions={mobileSheet ? undefined : (
+                    <HStack gap={1} align="center" wrap="wrap" className={footerStyles.group}>
+                      <PlannerAttachButton attachments={draftAttachments} available={draftImagesSupported} disabled={draftLocked} />
+                      <ModelPill groups={managed.groups} provider={draft.provider} selection={draft.model}
+                        effortControl="separate" onChange={changeDraftModel} isDisabled={modelDisabled} />
+                      {draftPermissionControl.visible && (
+                        <PermissionModePill
+                          mode={draftPermissionControl.mode}
+                          options={draftPermissionControl.options}
+                          onChange={changeDraftPermission}
+                          isDisabled={draftPermissionControl.isDisabled}
+                        />
+                      )}
+                    </HStack>
+                  )} />
+              );
+            })()}
           </>
         ) : open === null ? undefined : (
           <>

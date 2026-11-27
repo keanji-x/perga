@@ -32,7 +32,9 @@ it('closes switcher before opening a new conversation and opens Settings from Wo
   await page.getByRole('textbox', { name: 'Chat message', exact: true }).findElement();
   await page.getByRole('button', { name: /^Switch conversation,/ }).click();
   await page.getByRole('button', { name: 'New conversation', exact: true }).click();
-  await expect.element(page.getByRole('dialog', { name: 'Untitled', exact: true })).toBeVisible();
+  const draft = await page.getByRole('dialog', { name: 'Untitled', exact: true }).findElement();
+  expect(draft.querySelector('[data-nc-mobile-composer-meta]')).toBeVisible();
+  expect(draft.querySelector('summary[aria-label="Conversation options"]')).toBeNull();
   await expect.poll(() => document.activeElement).toBe(page.getByRole('combobox', { name: 'Message', exact: true }).element());
   expect(document.querySelector('dialog[open][aria-label="Switch conversation"]')).toBeNull();
   await page.getByRole('button', { name: 'Close conversation', exact: true }).click();
@@ -40,6 +42,33 @@ it('closes switcher before opening a new conversation and opens Settings from Wo
   await page.getByRole('button', { name: 'Settings', exact: true }).click();
   await expect.element(page.getByRole('heading', { name: 'Settings', exact: true })).toBeVisible();
   expect(requests.filter((request) => request.method !== 'GET')).toHaveLength(0);
+});
+
+it.each([[390, 844], [320, 640]])('keeps long switcher rows inside a %i×%i viewport', async (width, height) => {
+  await page.viewport(width, height);
+  const track = fixtureTrack('project', { title: 'Project evidence', leadSessionId: 'lead' });
+  const longTitle = 'Long conversation title ' + 'W'.repeat(80);
+  renderDailyFixture({ initial: '/track/project', reply: request => request.path === '/api/v1/tracks/project'
+    ? ok(fixtureSnapshot(track, [fixtureSession('lead', 'project', { isLead: true }),
+      fixtureSession('long-chat', 'project', { title: longTitle })])) : undefined });
+  await page.getByRole('button', { name: /^Switch conversation,/ }).click();
+  const switcher = page.getByRole('dialog', { name: 'Switch conversation', exact: true });
+  const panel = await switcher.findElement();
+  const close = await switcher.getByRole('button', { name: 'Close switcher', exact: true }).findElement();
+  const title = await switcher.getByText(longTitle, { exact: true }).findElement();
+  await expect.poll(() => panel.getAnimations().every(animation => animation.playState !== 'running')).toBe(true);
+  const rows = panel.querySelectorAll('li');
+  expect(rows).toHaveLength(2);
+  for (const element of [panel, close, title, ...rows, ...panel.querySelectorAll('li button')]) {
+    const { left, right } = element.getBoundingClientRect();
+    expect(left).toBeGreaterThanOrEqual(0);
+    expect(right).toBeLessThanOrEqual(width);
+  }
+  expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(width);
+  expect(getComputedStyle(title).textOverflow).toBe('ellipsis');
+  expect(title.scrollWidth).toBeGreaterThan(title.clientWidth);
+  await switcher.getByRole('button', { name: 'Close switcher', exact: true }).click();
+  await expect.poll(() => switcher.query()).toBeNull();
 });
 
 it('reads only current Track conversations and excludes sibling and other workspace histories', async () => {

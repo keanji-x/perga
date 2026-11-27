@@ -1,4 +1,21 @@
 @layer features {
+  .sheet,
+  .header,
+  .body,
+  .section,
+  .groupCard,
+  .groupItem,
+  .rowButton {
+    min-inline-size: 0;
+    max-inline-size: 100%;
+  }
+
+  .header,
+  .body {
+    padding-left: calc(var(--space-4) + env(safe-area-inset-left));
+    padding-right: calc(var(--space-4) + env(safe-area-inset-right));
+  }
+
   .sheet {
     inline-size: 100%;
     max-block-size: 100%;
@@ -28,7 +45,7 @@
     align-items: center;
     justify-content: space-between;
     gap: var(--space-2);
-    padding: var(--space-1) var(--space-4) var(--space-3);
+    padding-block: var(--space-1) var(--space-3);
     flex-shrink: 0;
   }
 
@@ -73,7 +90,7 @@
   .body {
     overflow-y: auto;
     overscroll-behavior-y: contain;
-    padding: 0 var(--space-4) calc(var(--space-5) + env(safe-area-inset-bottom));
+    padding-block-end: calc(var(--space-5) + env(safe-area-inset-bottom));
     display: flex;
     flex-direction: column;
     gap: var(--space-3);

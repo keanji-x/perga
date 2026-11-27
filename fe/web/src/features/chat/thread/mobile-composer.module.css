@@ -30,7 +30,8 @@
     --nc-mobile-input-row: 1;
     display: grid;
     position: relative;
-    grid-template-columns: minmax(0, 1fr) var(--rail-w-collapsed);
+    --nc-mobile-send-slot-w: var(--rail-w-collapsed);
+    grid-template-columns: minmax(0, 1fr) var(--nc-mobile-send-slot-w);
     align-items: center;
     gap: var(--space-1);
     padding: var(--space-1);
@@ -45,11 +46,15 @@
 
   .vendorComposerWithRole > div:has(.input) {
     --role-slot-w: clamp(4.125rem, 21vw, 4.75rem);
-    grid-template-columns: var(--role-slot-w) minmax(0, 1fr) var(--rail-w-collapsed);
+    grid-template-columns: var(--role-slot-w) minmax(0, 1fr) var(--nc-mobile-send-slot-w);
   }
 
   .vendorComposer > div:has([data-nc-edit-bar]) {
     --nc-mobile-input-row: 2;
+  }
+
+  .vendorComposer > div:has(.input):has([data-nc-queue-send]) {
+    --nc-mobile-send-slot-w: max-content;
   }
 
   .vendorComposer:has(.options) > div:has(.input) {
@@ -91,14 +96,31 @@
     justify-content: flex-end;
   }
 
-  .vendorComposer > div:has(.input) > div:last-child > div:last-child button {
+  .queueSend,
+  .vendorComposer > div:has(.input) > div:last-child > div:last-child > button:last-child {
     inline-size: calc(var(--control-h-lg) + var(--space-1) + var(--space-half));
     block-size: calc(var(--control-h-lg) + var(--space-1) + var(--space-half));
     box-sizing: border-box;
     border-radius: var(--radius-pill);
   }
 
-  .vendorComposer > div:has(.input) > div:last-child > div:last-child button:is(:disabled, [aria-disabled='true']) {
+  .queueSend {
+    display: grid;
+    place-items: center;
+    flex: none;
+    padding: 0;
+    border: 0;
+    background: var(--surface-chip);
+    color: var(--text);
+    cursor: pointer;
+  }
+
+  .queueSend:disabled {
+    color: var(--text-3);
+    cursor: default;
+  }
+
+  .vendorComposer > div:has(.input) > div:last-child > div:last-child > button:last-child:is(:disabled, [aria-disabled='true']) {
     opacity: 1 !important;
     background-color: var(--surface-chip) !important;
     color: var(--text-3) !important;

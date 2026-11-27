@@ -582,18 +582,26 @@ export function ChatComposer({
     setSendCount((count) => count + 1);
   };
 
-  /* `Send image`: `ChatSendButton` takes its availability from `canSend`, false on an empty draft, and an image-only message is an empty draft. Shown only while the vendor's own button is unavailable. */
   const commandError = commandFailure?.identity !== feedbackIdentity ? null : <p role="alert">{commandFailure.message}</p>;
-  const sendDoor = allowEmptyText && draft.trim() === '' && (!stopShown || canQueueWhileRunning) && !sendWaiting && editing === undefined ? (
+  const emptyText = draft.trim() === '';
+  const imageOnly = allowEmptyText && emptyText;
+  const mobile = layout === 'mobile';
+  const useMobileSend = mobile && !stopShown;
+  const canQueue = stopShown && canQueueWhileRunning && !sendDisabled;
+  const showImageAction = imageOnly && (mobile ? canQueue : !stopShown || canQueueWhileRunning);
+  const showQueueMessage = canQueue && !emptyText;
+  const sendDoorLabel = imageOnly ? 'Send image' : 'Queue message';
+  const sendDoor = !sendWaiting && editing === undefined && (showImageAction || showQueueMessage) ? (
     <button
       type="button"
-      className={styles.queueSend}
-      data-nc-send-attachment=""
+      className={mobile ? mobileStyles.queueSend : styles.queueSend}
+      aria-label={mobile ? sendDoorLabel : undefined}
+      title={mobile ? sendDoorLabel : undefined}
+      data-nc-queue-send={mobile ? '' : undefined}
+      data-nc-send-attachment={imageOnly ? '' : undefined}
       disabled={disabled || sendDisabled}
-      onClick={() => { submit(); }}
-    >Send image</button>
-  ) : canQueueWhileRunning && stopShown && !sendDisabled && draft.trim() !== '' && !sendWaiting && editing === undefined ? (
-    <button type="button" className={styles.queueSend} disabled={disabled} onClick={submit}>Queue message</button>
+      onClick={submit}
+    >{mobile ? <Icon name="arrow-up" /> : sendDoorLabel}</button>
   ) : undefined;
 
   return (
@@ -715,17 +723,22 @@ export function ChatComposer({
               debounceMs={0}
             />
           )}
-          /* Send's availability is Astryx's own (`canSend`). In 0.7 Astryx keeps disabled Send focusable with `aria-disabled="true"`; the focus effect above parks focus on the composer box and returns typing to the field once re-enabled. */
-          /* Keep the native Send/Stop control mounted. Its public icon slot gives
+          /* Mobile Send includes image-only drafts, which Astryx's text-only canSend would disable.
+             Keep the native Send/Stop control mounted. Its public icon slot gives
              immediate decorative feedback while the composer group exposes aria-busy. */
           sendButton={sendDisabled
             ? <Button label="Send" variant="primary" isIconOnly icon={sendIcon} className={styles.sendOwn} isDisabled />
-            : editing === undefined ? <ChatSendButton className={stopShown ? undefined : styles.sendFill} sendIcon={
-            <span className={styles.sendGlyph} data-nc-waiting={sendWaiting && !stopShown} aria-hidden="true">
-              <span className={styles.sendArrow}>{layout === 'mobile' ? <Icon name="arrow-up" /> : sendIcon}</span>
-              <span className={styles.sendWait}><LoadingIndicator active={sendWaiting && !stopShown} /></span>
-            </span>
-          } />
+            : editing === undefined ? <ChatSendButton
+              className={stopShown ? undefined : styles.sendFill}
+              isDisabled={useMobileSend ? disabled || sendWaiting || (emptyText && !allowEmptyText) : undefined}
+              onSend={useMobileSend ? submit : undefined}
+              sendIcon={
+                <span className={styles.sendGlyph} data-nc-waiting={sendWaiting && !stopShown} aria-hidden="true">
+                  <span className={styles.sendArrow}>{layout === 'mobile' ? <Icon name="arrow-up" /> : sendIcon}</span>
+                  <span className={styles.sendWait}><LoadingIndicator active={sendWaiting && !stopShown} /></span>
+                </span>
+              }
+            />
             : <Button label={sendWaiting ? 'Sending…' : editing.submitLabel ?? 'Replace message'} variant="primary" isIconOnly icon={sendIcon} className={styles.sendOwn}
               isLoading={sendWaiting} isDisabled={disabled || editing.canSubmit === false || (draft.trim() === '' && !allowEmptyText)}
               onClick={() => { submit(); }} />}
