@@ -1,17 +1,45 @@
 import { withFontRoleProbe } from '../../../../tools/styles/font-role-fixture.ts';
 import { cleanup, render } from '@testing-library/react';
-import { page } from 'vitest/browser';
+import { commands, page } from 'vitest/browser';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import '../../styles/entry.css';
 
 import { MobileHeader } from './public.tsx';
 
+declare module 'vitest/browser' {
+  interface BrowserCommands { setHorizontalSafeArea(left: number, right: number): Promise<void> }
+}
+
 afterEach(() => { cleanup(); document.body.replaceChildren(); });
 
 const settlePaint = () => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
 
 describe('MobileHeader scroll surface', () => {
+  it('clears asymmetric landscape safe areas and keeps the glyph and title centered vertically', async () => {
+    await page.viewport(844, 390);
+    render(<MobileHeader title="Report" backLabel="workspace" onBack={() => undefined}
+      actions={<button type="button">More</button>} />);
+    const back = page.getByRole('button', { name: 'Back to workspace' }).element();
+    const more = page.getByRole('button', { name: 'More' }).element();
+    const title = page.getByRole('heading', { name: 'Report' }).element();
+    const initialLeft = back.getBoundingClientRect().left;
+    const initialRight = more.getBoundingClientRect().right;
+    const leftInset = 47;
+    const rightInset = 23;
+
+    await commands.setHorizontalSafeArea(leftInset, rightInset);
+    try {
+      expect(back.getBoundingClientRect().left - initialLeft).toBeCloseTo(leftInset, 0);
+      expect(initialRight - more.getBoundingClientRect().right).toBeCloseTo(rightInset, 0);
+      const glyphBox = back.querySelector('svg')!.getBoundingClientRect();
+      const titleBox = title.getBoundingClientRect();
+      expect(Math.abs((glyphBox.top + glyphBox.height / 2) - (titleBox.top + titleBox.height / 2))).toBeLessThanOrEqual(1);
+    } finally {
+      await commands.setHorizontalSafeArea(0, 0);
+    }
+  });
+
   it('keeps one flat title bar with the shared type scale while content scrolls beneath it', async () => {
     await page.viewport(390, 844);
     render(

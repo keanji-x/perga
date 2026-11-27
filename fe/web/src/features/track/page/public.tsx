@@ -184,14 +184,17 @@ export function TrackPage({ fillReading = false, articleMasthead = !fillReading,
     // responsive positioning changes geometry without removing the focused input.
     const place = () => {
       const box = mobileHeaderTitleHost.getBoundingClientRect();
-      Object.assign(slot.style, { position: 'fixed', top: `${box.top}px`, left: `${box.left}px`, width: `${box.width}px` });
+      Object.assign(slot.style, {
+        position: 'fixed', top: `${box.top}px`, left: `${box.left}px`,
+        width: `${box.width}px`, height: `${box.height}px`,
+      });
     };
     place();
     const observer = new ResizeObserver(place);
     observer.observe(mobileHeaderTitleHost);
     return () => {
       observer.disconnect();
-      Object.assign(slot.style, { position: '', top: '', left: '', width: '' });
+      Object.assign(slot.style, { position: '', top: '', left: '', width: '', height: '' });
     };
   }, [mobileHeaderTitleHost, titleInHeader]);
   useLayoutEffect(() => {

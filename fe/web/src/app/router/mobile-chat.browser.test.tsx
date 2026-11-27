@@ -6,7 +6,7 @@ import { useLayoutEffect, useRef } from 'react';
 import { ConversationSurface } from './mobile-conversation-surface.tsx';
 import { act, cleanup, render, screen } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
-import { page, userEvent } from 'vitest/browser';
+import { commands, page, userEvent } from 'vitest/browser';
 import type { ApiTransportResponse } from '../../../../core/api/types.ts';
 import { useOpenMobileSection } from '../shell/public.tsx';
 import { renderDailyFixture } from './daily-planner-fixture.tsx';
@@ -74,6 +74,50 @@ it.each([320, 390])('aligns the full-width bottom dock with fixed role slot and 
   await expect.element(page.getByRole('textbox', { name: 'Chat message', exact: true })).toBeVisible();
   expect(document.activeElement?.hasAttribute('data-nc-chat-dock')).toBe(true);
   expect(requests.filter((request) => request.method !== 'GET')).toHaveLength(0);
+});
+
+it('keeps the Track Report dock and Chat Sheet controls inside landscape safe areas', async () => {
+  const width = 844;
+  const leftInset = 47;
+  const rightInset = 23;
+  await page.viewport(width, 390);
+  const safeBounds = (element: Element) => {
+    const bounds = element.getBoundingClientRect();
+    expect(bounds.left, element.getAttribute('aria-label') ?? undefined).toBeGreaterThanOrEqual(leftInset);
+    expect(bounds.right, element.getAttribute('aria-label') ?? undefined).toBeLessThanOrEqual(width - rightInset);
+    return bounds;
+  };
+  try {
+    await commands.setHorizontalSafeArea(leftInset, rightInset);
+    renderDailyFixture({ initial: '/track/daily' });
+    const dock = page.getByRole('form', { name: 'Quick chat' });
+    const entry = dock.getByRole('textbox', { name: 'Chat message' });
+    const dockBounds = safeBounds(await dock.findElement());
+    safeBounds(await entry.findElement());
+    safeBounds(await dock.getByRole('button', { name: /^Switch conversation,/ }).findElement());
+    safeBounds(await dock.getByRole('button', { name: 'Send chat message' }).findElement());
+
+    await entry.click();
+    const sheet = page.getByRole('dialog', { name: 'Daily Planner conversation' });
+    safeBounds(await sheet.getByRole('button', { name: 'Expand conversation' }).findElement());
+    safeBounds(await sheet.getByRole('button', { name: 'Close conversation' }).findElement());
+    safeBounds(sheet.element().querySelector('[data-nc-drawer-scroll]')!);
+    safeBounds(await sheet.getByRole('button', { name: /^Switch conversation,/ }).findElement());
+    safeBounds(await sheet.getByRole('button', { name: 'Send', exact: true }).findElement());
+    const message = await sheet.getByRole('combobox', { name: 'Message', exact: true }).findElement();
+    const composerRow = message.closest('[class*="vendorComposer"]')!.firstElementChild!;
+    const openBounds = safeBounds(composerRow);
+    expect(openBounds.left).toBeCloseTo(dockBounds.left, 0);
+    expect(openBounds.right).toBeCloseTo(dockBounds.right, 0);
+
+    const footer = message.closest('[data-nc-sheet-footer]')!;
+    const panel = sheet.element().querySelector('[data-nc-sheet-panel]')!;
+    expect(panel.getBoundingClientRect()).toMatchObject({ left: 0, right: width });
+    expect(footer.getBoundingClientRect()).toMatchObject({ left: 0, right: width });
+    expect(getComputedStyle(footer).backgroundColor).toBe(getComputedStyle(panel).backgroundColor);
+  } finally {
+    await commands.setHorizontalSafeArea(0, 0);
+  }
 });
 
 it('keeps draft words across closing and sends the same Planner before reopening its reply history', async () => {

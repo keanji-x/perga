@@ -28,6 +28,15 @@
     letter-spacing: var(--type-ui-tracking);
   }
 
+  @media (width < 60rem) and (prefers-color-scheme: dark) {
+    :root:not([data-theme]) { color-scheme: dark; }
+
+    :root:not([data-theme]) body {
+      background-color: #1b2127;
+      color: CanvasText;
+    }
+  }
+
   /* Weight is a hierarchy channel; UA defaults wire heading weight to
      element name, which is why every heading looked identical once the
      components set `font: inherit`. Roles set weight explicitly. */

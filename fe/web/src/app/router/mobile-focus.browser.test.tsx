@@ -1,7 +1,7 @@
 import '../../styles/entry.css';
 import { cleanup } from '@testing-library/react';
 import { afterEach, describe, expect, it } from 'vitest';
-import { page, userEvent } from 'vitest/browser';
+import { commands, page, userEvent } from 'vitest/browser';
 
 import type { ApiRequest, ApiTransportResponse } from '../../../../core/api/types.ts';
 import type { ReadReceipt } from '../../../../core/domain/read-receipts.ts';
@@ -264,6 +264,11 @@ describe('MobileFocusHome', () => {
 
     const feedScroll = document.querySelector<HTMLElement>('[data-nc-focus-feed]');
     expect(feedScroll).not.toBeNull();
+    const menuGlyph = page.getByRole('button', { name: 'Open workspace', exact: true }).element().querySelector('svg')!.getBoundingClientRect();
+    const title = page.getByRole('heading', { name: 'Focus', exact: true }).element().getBoundingClientRect();
+    const contentLeft = feedScroll!.getBoundingClientRect().left + parseFloat(getComputedStyle(feedScroll!).paddingInlineStart);
+    expect(Math.abs((menuGlyph.top + menuGlyph.height / 2) - (title.top + title.height / 2))).toBeLessThanOrEqual(1);
+    expect(Math.abs(menuGlyph.left - contentLeft)).toBeLessThanOrEqual(1);
     expect(feedScroll!.scrollHeight).toBeGreaterThan(feedScroll!.clientHeight);
     feedScroll!.scrollTop = feedScroll!.scrollHeight;
     await expect.element(page.getByRole('button', { name: /Overflow track 12/ })).toBeInViewport();
@@ -281,6 +286,32 @@ describe('MobileFocusHome', () => {
     }
 
     expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(width);
+  });
+
+  it('keeps the Focus header, filters, and feed inside landscape safe areas', async () => {
+    const width = 844;
+    const leftInset = 47;
+    const rightInset = 23;
+    await page.viewport(width, 390);
+    try {
+      await commands.setHorizontalSafeArea(leftInset, rightInset);
+      renderFocusFixture();
+      const menu = await page.getByRole('button', { name: 'Open workspace', exact: true }).findElement();
+      const filters = page.getByRole('navigation', { name: 'Focus filters' });
+      const focus = await filters.getByRole('button', { name: /^Focus\b/ }).findElement();
+      const card = await page.getByRole('button', { name: /Mobile layout polish/ }).findElement();
+      const create = await page.getByRole('button', { name: 'New track', exact: true }).findElement();
+
+      const glyph = menu.querySelector('svg')!.getBoundingClientRect();
+      const feedCard = card.getBoundingClientRect();
+      for (const [name, box] of Object.entries({ glyph, filter: focus.getBoundingClientRect(), feedCard, create: create.getBoundingClientRect() })) {
+        expect(box.left, name).toBeGreaterThanOrEqual(leftInset);
+        expect(box.right, name).toBeLessThanOrEqual(width - rightInset);
+      }
+      expect(Math.abs(glyph.left - feedCard.left)).toBeLessThanOrEqual(1);
+    } finally {
+      await commands.setHorizontalSafeArea(0, 0);
+    }
   });
 
   it('searches quiet & closed tracks from Focus, handles IME-safe Escape, preserves query via Show all matches, and navigates', async () => {

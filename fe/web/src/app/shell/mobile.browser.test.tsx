@@ -194,6 +194,26 @@ describe('Track mobile presentation', () => {
     await settlePaint();
     await page.screenshot({ path: '../../../../test-results/mobile-conversations.png' });
   });
+
+  it('keeps MobileListPage items inside landscape safe areas', async () => {
+    const width = 844;
+    const leftInset = 47;
+    const rightInset = 23;
+    await page.viewport(width, 390);
+    try {
+      await commands.setHorizontalSafeArea(leftInset, rightInset);
+      setup('/track/w1?panel=outline');
+      for (const name of [/^Mobile workspace direction/, /^Why this shape/]) {
+        const item = await page.getByRole('button', { name }).findElement();
+        const { left, right } = item.getBoundingClientRect();
+        expect(left, name.source).toBeGreaterThanOrEqual(leftInset);
+        expect(right, name.source).toBeLessThanOrEqual(width - rightInset);
+      }
+    } finally {
+      await commands.setHorizontalSafeArea(0, 0);
+    }
+  });
+
   it('keeps mobile header actions separate from the desktop Track menu across viewport changes', async () => {
     await page.viewport(390, 844);
     const router = setup('/track/w1');
@@ -310,6 +330,29 @@ describe('Track mobile presentation', () => {
     expect(page.getByRole('textbox', { name: 'HTTP proxy', exact: true }).query()).toBeNull();
     expect(page.getByRole('heading', { name: 'Network', exact: true }).query()).toBeNull();
     await page.screenshot({ path: '../../../../test-results/mobile-settings-index.png' });
+  });
+
+  it('keeps the Settings index categories inside landscape safe areas', async () => {
+    const width = 844;
+    const leftInset = 47;
+    const rightInset = 23;
+    await page.viewport(width, 390);
+    try {
+      await commands.setHorizontalSafeArea(leftInset, rightInset);
+      setup('/settings');
+      const index = page.getByRole('navigation', { name: 'Settings categories' });
+      const indexBounds = (await index.findElement()).getBoundingClientRect();
+      expect(indexBounds.left).toBeGreaterThanOrEqual(leftInset);
+      expect(indexBounds.right).toBeLessThanOrEqual(width - rightInset);
+      for (const name of ['Appearance', 'Planners', 'About']) {
+        const category = await index.getByRole('button', { name, exact: true }).findElement();
+        const { left, right } = category.getBoundingClientRect();
+        expect(left, name).toBeGreaterThanOrEqual(leftInset);
+        expect(right, name).toBeLessThanOrEqual(width - rightInset);
+      }
+    } finally {
+      await commands.setHorizontalSafeArea(0, 0);
+    }
   });
 
   it.each([

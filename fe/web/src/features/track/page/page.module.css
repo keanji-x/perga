@@ -385,13 +385,13 @@
       --document-start: 0px;
       gap: var(--space-3);
       padding-block-end: calc(env(safe-area-inset-bottom) + var(--space-5));
-      padding-inline: var(--space-4);
+      padding-left: calc(env(safe-area-inset-left) + var(--space-4));
+      padding-right: calc(env(safe-area-inset-right) + var(--space-4));
     }
 
-    /* MobileHeader replaces PageHeader here: its top margin, 44px row and the
-       compact page gap are the visible content edge for a cold `?card=` open. */
+    /* The compact header and page gap form the content edge for a cold `?card=` open. */
     .pageBoard > .workspace {
-      inset-block-start: calc(env(safe-area-inset-top) + var(--rail-w-collapsed) + 6px * 2 + var(--space-3));
+      inset-block-start: calc(env(safe-area-inset-top) + var(--header-primary-h) + var(--space-3));
     }
 
     .page > :first-child {
@@ -414,10 +414,12 @@
 
     .workHeaderInShell .titleSlot,
     .articleMastheadInShell .titleSlot {
-      display: block;
+      display: flex;
+      align-items: center;
+      justify-content: center;
       pointer-events: none;
       z-index: var(--z-overlay);
-      min-block-size: var(--control-h-touch);
+      min-block-size: var(--rail-w-collapsed);
     }
 
     .workHeaderInShell .titleSlot :is(input, button),
@@ -474,7 +476,8 @@
 
     .mobileTrackHeader {
       display: block;
-      margin-inline: calc(var(--space-4) * -1);
+      margin-left: calc(-1 * (env(safe-area-inset-left) + var(--space-4)));
+      margin-right: calc(-1 * (env(safe-area-inset-right) + var(--space-4)));
     }
 
     .mobileFileChatAction {
@@ -613,7 +616,8 @@
     .mobileChatInput { flex: 1; min-inline-size: 0; }
     .mobileReportChatDock {
       position: fixed;
-      inset-inline: var(--space-4) var(--space-4);
+      left: calc(env(safe-area-inset-left) + var(--space-4));
+      right: calc(env(safe-area-inset-right) + var(--space-4));
       inset-block-end: calc(var(--mobile-keyboard-inset, 0px) + env(safe-area-inset-bottom) + var(--space-4));
       z-index: var(--z-sticky);
       display: flex;
@@ -675,7 +679,7 @@
       font-weight: var(--weight-medium);
       line-height: 1;
       position: fixed;
-      inset-inline-end: 20px;
+      inset-inline-end: calc(env(safe-area-inset-right) + var(--space-5));
       inset-block-end: calc(env(safe-area-inset-bottom) + 20px);
       z-index: var(--z-sticky);
       display: inline-flex;
@@ -690,6 +694,10 @@
       color: var(--text-on-accent);
       box-shadow: var(--shadow-float);
       cursor: pointer;
+    }
+
+    .mobileReportChatFab:dir(rtl) {
+      inset-inline-end: calc(env(safe-area-inset-left) + var(--space-5));
     }
 
     .mobileReportChatFab svg {

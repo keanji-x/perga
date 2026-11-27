@@ -74,6 +74,12 @@
     background: var(--hairline-strong);
   }
 
+  .content,
+  .footer {
+    padding-left: env(safe-area-inset-left);
+    padding-right: env(safe-area-inset-right);
+  }
+
   .content {
     block-size: calc(100% - 48px);
     overflow: hidden;
@@ -83,6 +89,7 @@
     position: fixed;
     inset-inline: 0;
     z-index: var(--z-raised);
+    background-color: var(--paper);
     pointer-events: none;
   }
 
