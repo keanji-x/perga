@@ -304,7 +304,16 @@ describe('architecture/no-create-context-outside-allowlist', () => {
 });
 
 describe('architecture allowlists', () => {
-  it.each(['router/app-history', 'shell/mobile/workspace-routes', 'router/new-track-drafts', 'providers/ui-preferences', 'providers/connection-status', 'auth/current-user'])('permits only the exact %s context path', async (ownerPath) => {
+  it.each([
+    ['app/router/app-history', 'app/router/app-history-other'],
+    ['app/shell/public', 'app/shell/mobile/workspace-routes'],
+    ['app/router/new-track-drafts', 'app/router/new-track-drafts-other'],
+    ['app/providers/ui-preferences', 'app/providers/ui-preferences-other'],
+    ['app/providers/connection-status', 'app/providers/connection-status-other'],
+    ['app/auth/current-user', 'app/auth/current-user-other'],
+    ['app/router/track-view-state', 'app/router/track-view-state-other'],
+    ['systems/github-links/public', 'systems/github-links/other'],
+  ])('permits context in %s and rejects %s', async (ownerPath, otherPath) => {
     const eslint = new ESLint({
       cwd: root,
       overrideConfigFile: true,
@@ -318,18 +327,10 @@ describe('architecture allowlists', () => {
       }],
     });
     const source = 'import { createContext } from "react"; export const context = createContext(null);';
-    const [owner] = await eslint.lintText(source, { filePath: resolve(root, `web/src/app/${ownerPath}.tsx`) });
-    const [sibling] = await eslint.lintText(source, { filePath: resolve(root, `web/src/app/${ownerPath}-other.tsx`) });
+    const [owner] = await eslint.lintText(source, { filePath: resolve(root, `web/src/${ownerPath}.tsx`) });
+    const [sibling] = await eslint.lintText(source, { filePath: resolve(root, `web/src/${otherPath}.tsx`) });
     expect(owner.messages).toEqual([]);
     expect(sibling.messages.map((message) => message.ruleId)).toEqual(['architecture/no-create-context-outside-allowlist']);
-    const [viewOwner] = await eslint.lintText(source, { filePath: resolve(root, 'web/src/app/router/track-view-state.tsx') });
-    const [viewSibling] = await eslint.lintText(source, { filePath: resolve(root, 'web/src/app/router/track-view-state-other.tsx') });
-    expect(viewOwner.messages).toEqual([]);
-    expect(viewSibling.messages.map((message) => message.ruleId)).toEqual(['architecture/no-create-context-outside-allowlist']);
-    const [githubOwner] = await eslint.lintText(source, { filePath: resolve(root, 'web/src/systems/github-links/public.tsx') });
-    const [githubSibling] = await eslint.lintText(source, { filePath: resolve(root, 'web/src/systems/github-links/other.tsx') });
-    expect(githubOwner.messages).toEqual([]);
-    expect(githubSibling.messages.map((message) => message.ruleId)).toEqual(['architecture/no-create-context-outside-allowlist']);
   });
 
   it('requires a substantive reason beside every exception', () => {

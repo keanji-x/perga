@@ -13,11 +13,10 @@ export const createContextExceptions = Object.freeze([
   Object.freeze({ path: 'web/src/app/providers/read-receipts.tsx', reason: 'The app-scoped provider hands the shell and route outlet the app transport for the kernel-owned read receipts (#2596); it keeps no browser storage.' }),
   Object.freeze({ path: 'web/src/app/providers/ui-preferences.tsx', reason: 'The app-scoped provider injects browser-local display preferences into the shell and route outlet without persisting conversation contents.' }),
   Object.freeze({ path: 'web/src/app/router/app-history.tsx', reason: 'One mounted router history observer shares browser entry labels and mobile scroll state across the shell and route outlet.' }),
-  Object.freeze({ path: 'web/src/app/shell/mobile/workspace-routes.tsx', reason: 'The mobile route outlet receives the shell’s current workspace reads and mutation handlers without creating a second shell controller.' }),
   Object.freeze({ path: 'web/src/app/router/track-view-state.tsx', reason: 'The router-lifetime provider remembers per-Track view state without keeping inactive resource hosts alive or persisting user data.' }),
   Object.freeze({ path: 'web/src/app/router/new-track-drafts.tsx', reason: 'The shell-lifetime Track draft provider retains per-Area text, exact request identity and pending leases across route navigation without persisted user data.' }),
   Object.freeze({ path: 'web/src/app/conversations/public.tsx', reason: 'The visit-scoped conversation registry provider must sit above the route outlet so navigation cannot discard remembered conversations.' }),
-  Object.freeze({ path: 'web/src/app/shell/public.tsx', reason: 'The shell exposes its mobile header slots, Area editor trigger and conversation drawer resize control to the route outlet.' }),
+  Object.freeze({ path: 'web/src/app/shell/public.tsx', reason: 'The shell exposes its workspace capabilities, mobile header slots, Area editor trigger and conversation drawer resize control to the route outlet.' }),
   Object.freeze({ path: 'web/src/app/theme/public.tsx', reason: 'App theme provider owns the document dataset mirror.' }),
   Object.freeze({ path: 'web/src/ui/dialog/public.tsx', reason: 'Issue #997 permits context in the primitive directory while consumers remain in ui.' }),
 ]);

@@ -8,7 +8,7 @@ import {
   Outlet, RouterProvider, createMemoryHistory, createRootRoute, createRoute, createRouter,
 } from '@tanstack/react-router';
 import { AppHistoryProvider } from './app-history.tsx';
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -52,7 +52,9 @@ function Probe() {
   );
 }
 
-function setup(initialEntries: readonly string[]) {
+function setup(initialEntries: readonly string[], compact = false) {
+  const media = window.matchMedia('');
+  vi.spyOn(window, 'matchMedia').mockImplementation((query) => ({ ...media, matches: compact && query.includes('width'), media: query }));
   const rootRoute = createRootRoute({ component: () => <AppHistoryProvider><Outlet /></AppHistoryProvider> });
   const todayRoute = createRoute({
     getParentRoute: () => rootRoute,
@@ -79,7 +81,7 @@ const probe = (name: string, value: string) => screen.getByText(`${name}:${value
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
 describe('opening the mobile panel', () => {
-  it('pushes one entry carrying the marker', async () => {
+  it('pushes one entry for the panel', async () => {
     const router = setup(['/', '/track/w1']);
     await screen.findByText('open cards');
     expect(router.history.length).toBe(2);
@@ -88,10 +90,9 @@ describe('opening the mobile panel', () => {
     await waitFor(() => { probe('panel', 'cards'); });
     expect(href(router)).toBe('/track/w1?panel=cards');
     expect(router.history.length).toBe(3);
-    expect(router.history.location.state.ncPanelPushed).toBe(true);
   });
 
-  it('replaces when swapping panels, and keeps the marker', async () => {
+  it('replaces when swapping panels', async () => {
     const router = setup(['/', '/track/w1']);
     await userEvent.click(await screen.findByText('open cards'));
     await waitFor(() => { probe('panel', 'cards'); });
@@ -100,7 +101,6 @@ describe('opening the mobile panel', () => {
     await waitFor(() => { probe('panel', 'tasks'); });
     // One entry for the whole visit to the panel layer, not one per panel.
     expect(router.history.length).toBe(3);
-    expect(router.history.location.state.ncPanelPushed).toBe(true);
   });
 
   it('ignores an illegal value and lets the route validator drop foreign ones', async () => {
@@ -162,11 +162,20 @@ describe('closing the mobile panel', () => {
     expect(router.history.length).toBe(1);
     expect(router.state.location.pathname).toBe('/track/w1');
   });
+
+  it('replaces when the previous entry is also a panel on the same track', async () => {
+    const router = setup(['/track/w1?panel=cards'], true);
+    await screen.findByText('panel:cards');
+    await act(() => router.navigate({ to: '/track/w1', search: { panel: 'tasks' } }));
+    await userEvent.click(screen.getByText('close panel'));
+    await waitFor(() => { expect(href(router)).toBe('/track/w1'); });
+    expect(router.history.location.state.__TSR_index).toBe(1);
+  });
 });
 
 describe('file history', () => {
-  it('pushes distinct files and returns through each file to the Report', async () => {
-    const router = setup(['/', '/track/w1']);
+  it.each([false, true])('pushes distinct files and returns through each file to the Report (compact=%s)', async (compact) => {
+    const router = setup(['/', '/track/w1'], compact);
     await userEvent.click(await screen.findByText('open file a'));
     await waitFor(() => { probe('file', '/tmp/a.md'); });
     expect(router.history.length).toBe(3);
@@ -189,6 +198,16 @@ describe('file history', () => {
     await waitFor(() => { probe('file', 'none'); });
     router.history.back();
     await waitFor(() => { expect(router.state.location.pathname).toBe('/'); });
+  });
+
+  it('replaces when the previous entry is the same file at a different line on mobile', async () => {
+    const router = setup(['/track/w1?file=README.md&line=1'], true);
+    await screen.findByText('file:README.md');
+    await act(() => router.navigate({ to: '/track/w1', search: { file: 'README.md', line: 2 } }));
+    probe('back', 'Report');
+    await userEvent.click(screen.getByText('close file'));
+    await waitFor(() => { expect(href(router)).toBe('/track/w1'); });
+    expect(router.history.location.state.__TSR_index).toBe(1);
   });
 
   it('replaces same-file line jumps and keeps the canonical predecessor label', async () => {
@@ -294,16 +313,14 @@ describe('useGoSameTrack', () => {
 
 });
 
-it('transfers the Report back entry across a pushed mobile panel and file', async () => {
-  const router = setup(['/', '/track/w1']);
+it('keeps the Report back entry across mobile panel and file switches', async () => {
+  const router = setup(['/', '/track/w1'], true);
   await userEvent.click(await screen.findByText('open tasks'));
   await waitFor(() => { probe('panel', 'tasks'); });
-  expect(router.history.location.state.ncPanelPushed).toBe(true);
 
   await userEvent.click(screen.getByText('open file b'));
   await waitFor(() => { probe('file', 'docs/b.md'); });
   expect(router.history.length).toBe(3);
-  expect(router.history.location.state.ncFilePushed).toBe(true);
   // Switching back to a panel must keep the same underlying Report entry.
   await userEvent.click(screen.getByText('open tasks'));
   await waitFor(() => { probe('panel', 'tasks'); });
@@ -323,11 +340,8 @@ it.each(['file-close', 'file-history', 'panel-close'] as const)('transfers the f
   await waitFor(() => { probe('back', '/tmp/a.md'); });
   await userEvent.click(screen.getByText('open tasks'));
   await waitFor(() => { probe('panel', 'tasks'); });
-  expect(router.history.location.state.ncPanelPushed).toBe(true);
-  expect(router.history.location.state.ncFileBackPath).toBe('/tmp/a.md');
   await userEvent.click(screen.getByText('open cards'));
   await waitFor(() => { probe('panel', 'cards'); });
-  expect(router.history.location.state.ncFileBackPath).toBe('/tmp/a.md');
   if (mode === 'panel-close') {
     await userEvent.click(screen.getByText('close panel'));
   } else {

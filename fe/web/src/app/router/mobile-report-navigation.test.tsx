@@ -13,6 +13,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ApiTransportPort, ApiTransportResponse } from '../../../../core/api/types.ts';
 import { createUnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
 import { ThemeProvider } from '../theme/public.tsx';
+import { renderDailyFixture } from './daily-planner-fixture.tsx';
 import { createAppRouter } from './public.tsx';
 import { bootTestCardRuntime } from './test-card-runtime.ts';
 
@@ -192,6 +193,56 @@ describe('the mobile report panel is the URL (#1191 §2.4)', () => {
     await userEvent.click(await within(panel as HTMLElement).findByText('Waiting', { exact: true }));
     await userEvent.click(await within(panel as HTMLElement).findByRole('button', { name: /ship-it/ }));
     await waitFor(() => { expect(href(router)).toBe('/track/w1#b-task'); });
+  });
+});
+
+describe('mobile Track surface Back', () => {
+  it.each(['/?day=2026-10-04', '/?view=today'])('returns from a daily report file to %s', async (initial) => {
+    const { router } = renderDailyFixture({
+      initial,
+      reportBody: '# Daily report\n\n[Read report file](docs/example.txt#L3)',
+      reply: (request) => request.path === '/api/v1/tracks/daily/files?path=docs%2Fexample.txt'
+        ? ok({ relativePath: 'docs/example.txt', isDirectory: false, content: 'First\nSecond\nThird', truncated: false })
+        : undefined,
+    });
+    await userEvent.click(await screen.findByRole('button', { name: 'Read report file' }));
+    await waitFor(() => { expect(router.state.location.href).toBe('/track/daily?file=docs%2Fexample.txt&line=3'); });
+    expect(router.history.location.state.__TSR_index).toBe(1);
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Back to Today' }));
+    await waitFor(() => { expect(router.state.location.href).toBe(initial); });
+    expect(router.history.location.state.__TSR_index).toBe(0);
+  });
+
+  it('closes an unrelated Track file on its own Report after arriving from Today', async () => {
+    const { router } = renderDailyFixture({ initial: '/?day=2026-10-04' });
+    await screen.findByRole('heading', { name: '今日计划' });
+    await act(() => router.navigate({ to: '/track/project', search: { file: 'docs/example.txt' } }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Back to Report' }));
+    await waitFor(() => { expect(router.state.location.href).toBe('/track/project'); });
+    expect(router.history.location.state.__TSR_index).toBe(1);
+  });
+
+  it.each(['panel=tasks', 'file=src%2Fa.ts', 'card=card-term'])('closes a saved %s resumed from Focus on the same Track', async (search) => {
+    const router = setup(`/track/w1?${search}`);
+    await screen.findByRole('button', { name: 'Back to Report' });
+    await act(() => router.navigate({ to: '/' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'All' }));
+    await userEvent.click(await screen.findByRole('button', { name: /^Responsive mobile UI\b/ }));
+    await waitFor(() => { expect(href(router)).toBe(`/track/w1?${search}`); });
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Back to Report' }));
+    await waitFor(() => { expect(href(router)).toBe('/track/w1'); });
+    expect(router.history.location.state.__TSR_index).toBe(2);
+  });
+
+  it('pops a card pushed from its own Report', async () => {
+    const router = setup('/track/w1');
+    await screen.findByRole('button', { name: 'Open area Product' });
+    await act(() => router.navigate({ to: '/track/w1', search: { card: 'card-term' } }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Back to Report' }));
+    await waitFor(() => { expect(href(router)).toBe('/track/w1'); });
+    expect(router.history.location.state.__TSR_index).toBe(0);
   });
 });
 

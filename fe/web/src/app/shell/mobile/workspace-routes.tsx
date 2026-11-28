@@ -1,14 +1,14 @@
-import { createContext, useContext, useEffect, type ReactNode } from 'react';
+import { useEffect } from 'react';
 import { OperationFeedback } from '../../../ui/operation-feedback/public.tsx';
 import { useCompactViewport } from '../../../ui/viewport/public.ts';
 import { useAppHistory, useHistoryEntryIndex, useHistoryReturnFocus, useMobileHistoryView } from '../../router/app-history.tsx';
 import { useMobileBack } from '../../router/mobile-back.ts';
-import { routeParamFromPath, useGo, useRouteParam } from '../../router/navigation.ts';
+import { routeParamFromPath, useGo } from '../../router/navigation.ts';
 import type { ShellController } from '../use-shell-controller.ts';
 import { AreaLevelTwo } from './area-level-two.tsx';
 import { WorkspaceLevelOne } from './workspace-level-one.tsx';
 
-type WorkspaceRoutes = Readonly<{
+export type WorkspaceRoutes = Readonly<{
   controller: ShellController;
   onOpenSettings: () => void;
   onSignOut?: () => void;
@@ -16,24 +16,10 @@ type WorkspaceRoutes = Readonly<{
   userLabel?: string;
   nowMs?: number;
 }>;
-const RoutesContext = createContext<WorkspaceRoutes | null>(null);
-
-export function MobileWorkspaceRoutesProvider({ children, ...routes }: WorkspaceRoutes & { children: ReactNode }) {
-  return <RoutesContext.Provider value={routes}>{children}</RoutesContext.Provider>;
-}
-
-export function WorkspaceRoute() { return <MobileWorkspaceRoute />; }
-
-export function AreaRoute() {
-  const areaId = useRouteParam('/area/');
-  return <MobileWorkspaceRoute areaId={areaId} />;
-}
-
-function MobileWorkspaceRoute({ areaId }: { areaId?: string }) {
+export function MobileWorkspaceRoute({ routes, areaId }: { routes: WorkspaceRoutes | null; areaId?: string }) {
   const compact = useCompactViewport();
   const historyIndex = useHistoryEntryIndex();
   const go = useGo();
-  const routes = useContext(RoutesContext);
   useEffect(() => {
     if (!compact) go({ name: 'today' }, { replace: true });
   }, [compact, go]);

@@ -13,10 +13,8 @@ import { formatFileLine, parseFileLine, isFilePath, type FileLineLocation } from
 
 export type { MobilePanel,TrackSearch } from './track-search.ts';
 
-/** Desktop file history retains its existing file and panel transition markers. */
 declare module '@tanstack/history' {
   interface HistoryState {
-    ncPanelPushed?: boolean;
     /** A plain Track selection resumes its saved viewport; explicit targets reveal themselves. */
     ncResumeTrackView?: boolean;
     /** Explicit report-anchor activation, independent of file/panel navigation. */
@@ -29,7 +27,6 @@ declare module '@tanstack/history' {
   }
 }
 
-export const PANEL_PUSHED_STATE_KEY = 'ncPanelPushed';
 export const FILE_PUSHED_STATE_KEY = 'ncFilePushed';
 export const PLANNER_OPEN_STATE_KEY = 'ncOpenPlanner';
 
@@ -412,6 +409,18 @@ export type TrackSearchPatch = Readonly<{
   panel?: MobilePanel | undefined;
 }>;
 
+export function isSameTrackEntry(
+  entry: Readonly<{ pathname: string; searchStr?: string; trackId?: string }> | null,
+  expectedTrackId: string,
+  alias?: TrackRouteAlias,
+): boolean {
+  return entry !== null && (routeParamFromPath(entry.pathname, '/track/') === expectedTrackId
+    || (alias?.trackId === expectedTrackId && trimPathRight(entry.pathname) === trimPathRight(alias.path))
+    // A bare root can record Today on desktop and resolve to Focus on mobile.
+    || (entry.trackId === expectedTrackId
+      && !isMobileFocusHomeLocation({ pathname: entry.pathname, searchStr: entry.searchStr ?? '' })));
+}
+
 /**
  * The search `useGoSameTrack` would navigate to, or `null` when `location` is
  * not on `expectedTrackId`. Rebuilt field by field, never `{ ...prev, ...patch }`.
@@ -422,8 +431,7 @@ export function sameTrackSearch(
   patch: TrackSearchPatch,
   alias?: TrackRouteAlias,
 ): TrackSearch | null {
-  if (routeParamFromPath(location.pathname, '/track/') !== expectedTrackId &&
-    !(alias?.trackId === expectedTrackId && trimPathRight(location.pathname) === trimPathRight(alias.path))) return null;
+  if (!isSameTrackEntry(location, expectedTrackId, alias)) return null;
   const current = trackSearchFromLocation(location);
   return buildTrackSearch({
     card: Object.hasOwn(patch, 'card') ? patch.card : current.card,
@@ -467,11 +475,6 @@ export function useGoSameTrack(alias?: TrackRouteAlias): GoSameTrack {
   }, [go, location, navigate, alias]);
 }
 
-export function hasPanelPushedMarker(state: unknown): boolean {
-  if (typeof state !== 'object' || state === null) return false;
-  return (state as Record<string, unknown>)[PANEL_PUSHED_STATE_KEY] === true;
-}
-
 export function hasFilePushedMarker(state: unknown): boolean {
   if (typeof state !== 'object' || state === null) return false;
   return (state as Record<string, unknown>)[FILE_PUSHED_STATE_KEY] === true;
@@ -491,13 +494,23 @@ export type TrackFileNavigation = Readonly<{
 }>;
 
 /** The label follows the same history guard as closeFile. */
-export function useRouteFileBackPath(): string | null {
+export function useRouteFileBackPath(expectedTrackId?: string, alias?: TrackRouteAlias): string | null {
   const history = useRouter().history as RouterHistory;
   const compact = useCompactViewport();
   const { previousEntry } = useAppHistory();
-  const desktopPath = useRouterState({ select: (state) => hasFilePushedMarker(state.location.state)
-    && history.canGoBack() ? readFileBackPath(state.location.state) ?? null : null });
-  return compact ? (previousEntry === null ? null : filePathFromLocation(previousEntry)) : desktopPath;
+  return useRouterState({ select: ({ location }) => {
+    if (!compact) {
+      return hasFilePushedMarker(location.state) && history.canGoBack()
+        ? readFileBackPath(location.state) ?? null : null;
+    }
+    if (previousEntry === null) return null;
+    const sameTrack = expectedTrackId !== undefined
+      ? isSameTrackEntry(previousEntry, expectedTrackId, alias)
+      : trimPathRight(previousEntry.pathname) === trimPathRight(location.pathname);
+    if (!sameTrack) return null;
+    const previousFile = filePathFromLocation(previousEntry);
+    return previousFile !== filePathFromLocation(location) ? previousFile : null;
+  } });
 }
 
 /** Distinct files push; same-file jumps and surface switches replace. */
@@ -508,7 +521,7 @@ export function useTrackFileNavigation(alias?: TrackRouteAlias): TrackFileNaviga
   const go = useGo(alias);
 
   const compact = useCompactViewport();
-  const { pop } = useAppBack(alias);
+  const { pop, previousEntry } = useAppBack(alias);
 
   const openFile = useCallback((expectedTrackId: string, path: string, options?: FileOpenOptions) => {
     const location = router.parseLocation(history.location);
@@ -528,14 +541,11 @@ export function useTrackFileNavigation(alias?: TrackRouteAlias): TrackFileNaviga
     const switchingPanel = panelFromLocation(location) !== null;
     const leavingCard = cardIdFromLocation(location) !== null;
     const replace = sameFile || switchingPanel || leavingCard;
-    const pushed = !replace || (!leavingCard && (
-      (sameFile && hasFilePushedMarker(location.state)) || (switchingPanel && hasPanelPushedMarker(location.state))
-    ));
-    const backPath = sameFile
+    const preservesFileHistory = (sameFile || switchingPanel) && hasFilePushedMarker(location.state);
+    const pushed = !replace || (!leavingCard && preservesFileHistory);
+    const backPath = sameFile || preservesFileHistory
       ? readFileBackPath(location.state)
-      : switchingPanel
-        ? (hasPanelPushedMarker(location.state) ? readFileBackPath(location.state) : undefined)
-        : (!leavingCard && currentFile !== null ? (options?.fromPath ?? currentFile) : undefined);
+      : (!switchingPanel && !leavingCard && currentFile !== null ? (options?.fromPath ?? currentFile) : undefined);
     void navigate({
       to: trackPath(expectedTrackId, alias),
       search,
@@ -543,7 +553,6 @@ export function useTrackFileNavigation(alias?: TrackRouteAlias): TrackFileNaviga
       replace,
       state: (previous) => ({
         ...previous,
-        ncPanelPushed: false,
         ncFilePushed: pushed,
         ncFileBackPath: backPath,
         ncFileSilent: silent,
@@ -556,7 +565,8 @@ export function useTrackFileNavigation(alias?: TrackRouteAlias): TrackFileNaviga
 
   const closeFile = useCallback((expectedTrackId: string) => {
     const location = router.parseLocation(history.location);
-    if (compact && pop()) return;
+    if (compact && previousEntry !== null && isSameTrackEntry(previousEntry, expectedTrackId, alias)
+      && filePathFromLocation(previousEntry) !== filePathFromLocation(location) && pop()) return;
     if (!compact && hasFilePushedMarker(location.state) && history.canGoBack()) {
       history.back();
       return;
@@ -572,7 +582,7 @@ export function useTrackFileNavigation(alias?: TrackRouteAlias): TrackFileNaviga
       hash: true,
       replace: true,
     });
-  }, [compact, go, history, navigate, pop, router, alias]);
+  }, [compact, go, history, navigate, pop, previousEntry, router, alias]);
 
   return { openFile, closeFile };
 }
@@ -582,9 +592,9 @@ export type TrackPanelNavigation = Readonly<{
   closePanel: (expectedTrackId: string) => void;
 }>;
 
-/** Panel-to-panel switches replace the open panel. Closing follows the app's history floor. */
+/** Panel-to-panel switches replace the open panel. Closing can pop to an earlier surface on the same track. */
 export function useTrackPanelNavigation(alias?: TrackRouteAlias): TrackPanelNavigation {
-  const { pop } = useAppBack(alias);
+  const { pop, previousEntry } = useAppBack(alias);
   const navigate = useNavigate();
   const go = useGo(alias);
   const location = useRouterState({ select: (state) => state.location });
@@ -607,15 +617,18 @@ export function useTrackPanelNavigation(alias?: TrackRouteAlias): TrackPanelNavi
       search,
       hash: true,
       replace: switching || switchingFile,
+      // Preserve the file return entry through a panel replacement so a later
+      // file open can still use it if the viewport widens.
       state: switching ? true : {
-        ncPanelPushed: !switchingFile || hasFilePushedMarker(location.state),
+        ncFilePushed: !switchingFile || hasFilePushedMarker(location.state),
         ncFileBackPath: backPath,
       },
     });
   }, [go, location, navigate, alias]);
 
   const closePanel = useCallback((expectedTrackId: string) => {
-    if (pop()) return;
+    if (previousEntry !== null && isSameTrackEntry(previousEntry, expectedTrackId, alias)
+      && panelFromLocation(previousEntry) === null && pop()) return;
     const search = sameTrackSearch(location, expectedTrackId, { panel: undefined }, alias);
     if (search === null) {
       go({ name: 'track', trackId: expectedTrackId }, { replace: true });
@@ -627,7 +640,7 @@ export function useTrackPanelNavigation(alias?: TrackRouteAlias): TrackPanelNavi
       hash: true,
       replace: true,
     });
-  }, [go, location, navigate, pop, alias]);
+  }, [go, location, navigate, pop, previousEntry, alias]);
 
   return { openPanel, closePanel };
 }

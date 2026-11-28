@@ -24,11 +24,10 @@ createRecentFileHistory,type RecentFileHistory,
 } from '../providers/recent-files.ts';
 import { createUiPreferences,UiPreferencesProvider,type UiPreferences } from '../providers/ui-preferences.tsx';
 import { prefetchAreaList } from '../providers/workspace-queries.ts';
-import { AppShell } from '../shell/public.tsx';
+import { AppShell, AreaRoute, WorkspaceRoute } from '../shell/public.tsx';
 import { useCompactViewport } from '../../ui/viewport/public.ts';
 import { DailyTodayRoute } from './daily-planner.tsx';
 import { MemoryRoute } from './memory-route.tsx';
-import { AreaRoute, WorkspaceRoute } from '../shell/mobile/workspace-routes.tsx';
 import { AppHistoryProvider } from './app-history.tsx';
 import { MobileFocusRoute } from './mobile-focus-route.tsx';
 import {

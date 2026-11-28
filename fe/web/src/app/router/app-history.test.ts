@@ -46,6 +46,19 @@ describe('App history', () => {
     expect(stack.snapshot()).toMatchObject({ previousEntry: { pathname: '/workspace', searchStr: '', hash: '' }, canGoBack: true });
   });
 
+  it('keeps Track ownership for a visit and clears it when its URL is replaced', () => {
+    const { history, stack } = setup(['/?day=2026-10-04']);
+    stack.rememberTrack(0, 'daily');
+    history.replace('/?day=2026-10-04');
+    history.push('/track/daily?file=example.txt');
+    expect(stack.snapshot().previousEntry?.trackId).toBe('daily');
+
+    history.back();
+    history.replace('/?day=2026-10-03');
+    history.push('/track/daily?file=example.txt');
+    expect(stack.snapshot().previousEntry).toEqual({ pathname: '/', searchStr: '?day=2026-10-03', hash: '' });
+  });
+
   it('skips adjacent Reports with the same address after a panel is replaced', () => {
     const { history, stack } = setup(['/area/work']);
     history.push('/track/one');

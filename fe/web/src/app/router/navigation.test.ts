@@ -8,7 +8,7 @@ import { useAppBack,useGo } from './navigation.ts';
 
 import {
 cardIdFromLocation,cardIdFromSearchString,filePathFromLocation,filePathFromSearchString,
-hasFilePushedMarker,hasPanelPushedMarker,hasPlannerOpenMarker,
+hasFilePushedMarker,hasPlannerOpenMarker,isSameTrackEntry,
 panelFromLocation,panelFromSearchString,pathFor,
 renderedMobilePanel,sameTrackSearch,validateTrackSearch,
 } from './navigation.ts';
@@ -171,14 +171,36 @@ describe('sameTrackSearch', () => {
   });
 });
 
-describe('hasPanelPushedMarker', () => {
-  it('accepts only the exact marker', () => {
-    expect(hasPanelPushedMarker({ ncPanelPushed: true })).toBe(true);
-    expect(hasPanelPushedMarker({ ncPanelPushed: false })).toBe(false);
-    expect(hasPanelPushedMarker({ ncPanelPushed: 'true' })).toBe(false);
-    expect(hasPanelPushedMarker({})).toBe(false);
-    expect(hasPanelPushedMarker(null)).toBe(false);
-    expect(hasPanelPushedMarker(undefined)).toBe(false);
+describe('isSameTrackEntry', () => {
+  it('identifies a Track from its decoded route parameter', () => {
+    expect(isSameTrackEntry({ pathname: '/track/track%20a/' }, 'track a')).toBe(true);
+    expect(isSameTrackEntry({ pathname: '/track/b' }, 'track a')).toBe(false);
+    expect(isSameTrackEntry(null, 'track a')).toBe(false);
+  });
+
+  it.each(['/memory', '/area/product/memory'])('matches only the supplied Memory alias for %s', (path) => {
+    const alias = { path, trackId: 'mem' };
+    const entry = { pathname: `${path}/`, searchStr: '?panel=tasks' };
+    expect(isSameTrackEntry(entry, 'mem', alias)).toBe(true);
+    expect(isSameTrackEntry(entry, 'other', alias)).toBe(false);
+    expect(isSameTrackEntry({ pathname: '/track/mem' }, 'mem', alias)).toBe(true);
+    expect(sameTrackSearch(entry, 'mem', { panel: undefined }, alias)).toEqual({});
+  });
+
+  it.each(['', '?day=2026-10-04', '?view=today'])('does not infer Track ownership from a root URL alone (%s)', (searchStr) => {
+    const root = { pathname: '/', searchStr };
+    expect(isSameTrackEntry(root, 'daily')).toBe(false);
+    expect(sameTrackSearch(root, 'daily', {})).toBeNull();
+  });
+
+  it.each(['?day=2026-10-04', '?view=today'])('matches Today only to its recorded Track (%s)', (searchStr) => {
+    const today = { pathname: '/', searchStr, trackId: 'daily' };
+    expect(isSameTrackEntry(today, 'daily')).toBe(true);
+    expect(isSameTrackEntry(today, 'project')).toBe(false);
+  });
+
+  it('excludes mobile Focus even when desktop Today recorded its Track at the root', () => {
+    expect(isSameTrackEntry({ pathname: '/', trackId: 'daily' }, 'daily')).toBe(false);
   });
 });
 

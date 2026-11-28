@@ -3,7 +3,7 @@ import { createContext, useCallback, useContext, useLayoutEffect, useRef, useSyn
 import { findReturnFocusTarget, type ReturnFocusKey } from '../../ui/return-focus/public.ts';
 import { useState } from '../../ui/state/public.ts';
 
-export type AppEntry = Readonly<{ pathname: string; searchStr: string; hash: string }>;
+export type AppEntry = Readonly<{ pathname: string; searchStr: string; hash: string; trackId?: string }>;
 type ObservedEntry = { location: AppEntry; scrollTop: number; view?: unknown; returnFocus?: ReturnFocusKey };
 type HistoryAction = Parameters<Parameters<RouterHistory['subscribe']>[0]>[0]['action']['type'];
 type Snapshot = Readonly<{
@@ -62,6 +62,12 @@ export function createAppHistory(history: RouterHistory, readEntry: (location: R
       return () => { listeners.delete(listener); };
     },
     snapshot: () => snapshot,
+    rememberTrack: (index: number, trackId: string) => {
+      const entry = entries.get(index);
+      if (entry !== undefined && entry.location.trackId !== trackId) {
+        entry.location = { ...entry.location, trackId };
+      }
+    },
     stepsBackOutOf: (predicate: (entry: AppEntry) => boolean) => {
       if (!snapshot.canGoBack) return 0;
       for (let index = current; index >= floor; index--) {
@@ -112,6 +118,15 @@ export function useHistoryEntryIndex() {
   return useRouterState({ select: (state) =>
     (state.isLoading ? state.resolvedLocation ?? state.location : state.location).state.__TSR_index,
   });
+}
+
+export function useHistoryTrack(trackId: string) {
+  const stack = useContext(AppHistoryContext);
+  const index = useHistoryEntryIndex();
+  const href = useRouterState({ select: (state) =>
+    (state.isLoading ? state.resolvedLocation ?? state.location : state.location).href,
+  });
+  useLayoutEffect(() => { stack?.rememberTrack(index, trackId); }, [href, index, stack, trackId]);
 }
 
 export function useHistoryReturnFocus(ready: boolean) {
