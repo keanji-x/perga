@@ -429,3 +429,59 @@ it.each([false, true])('shares Progress and Workbench press and disclosure motio
     }
   } finally { await commands.emulateReducedMotion(false); }
 });
+
+it('omits Mark all read when no callback is supplied', async () => {
+  await page.viewport(1400, 900);
+  renderPage({ onStartConversation: vi.fn() });
+  expect(page.getByRole('button', { name: 'Mark all read', exact: true }).query()).toBeNull();
+});
+
+it('shows Mark all read without hover, muted and aligned beside New conversation', async () => {
+  await page.viewport(1400, 900);
+  const markRead = vi.fn();
+  renderPage({ onStartConversation: vi.fn(), onMarkAllConversationsRead: markRead });
+  await userEvent.hover(document.body);
+  const button = page.getByRole('button', { name: 'Mark all read', exact: true });
+  await expect.element(button).toBeVisible();
+  const control = button.element() as HTMLButtonElement;
+  expect(control.parentElement!.checkVisibility({ checkOpacity: true })).toBe(true);
+  const svg = control.querySelector('svg')!;
+  const probe = document.createElement('span');
+  probe.style.color = 'var(--text-3)'; control.append(probe);
+  expect(getComputedStyle(svg).color).toBe(getComputedStyle(probe).color);
+  const plus = page.getByRole('button', { name: 'New conversation', exact: true }).element();
+  const rect = control.getBoundingClientRect(); const plusRect = plus.getBoundingClientRect();
+  expect(rect.width).toBe(20); expect(rect.height).toBe(20);
+  expect(rect.top).toBeCloseTo(plusRect.top, 2);
+  expect(rect.right).toBeLessThan(plusRect.left);
+  expect(control.parentElement!.parentElement).toBe(plus.parentElement!.parentElement);
+  await userEvent.hover(control);
+  probe.style.color = 'var(--text)';
+  expect(getComputedStyle(svg).color).toBe(getComputedStyle(probe).color);
+  await expect.element(page.getByRole('tooltip', { name: 'Mark all read', exact: true })).toBeVisible();
+  await userEvent.hover(document.body);
+  plus.focus();
+  await userEvent.keyboard('{Shift>}{Tab}{/Shift}');
+  expect(document.activeElement).toBe(control);
+  expect(control.matches(':focus-visible')).toBe(true);
+  expect(getComputedStyle(svg).color).toBe(getComputedStyle(probe).color);
+  await button.click(); expect(markRead).toHaveBeenCalledOnce();
+  probe.remove();
+});
+
+it.each([false, true])('shows the mobile Conversations read action only with a callback (%s)', async available => {
+  await page.viewport(390, 844);
+  const markRead = vi.fn();
+  renderPage({ panel: 'conversations', onMarkAllConversationsRead: available ? markRead : undefined });
+  const header = document.querySelector('[data-nc-mobile-panel] [data-nc-mobile-header]')!;
+  expect(header.textContent).toContain('Conversations');
+  const button = header.querySelector<HTMLButtonElement>('button[aria-label="Mark all read"]');
+  if (available) {
+    expect(button!.checkVisibility({ checkOpacity: true })).toBe(true);
+    expect(getComputedStyle(button!)).toMatchObject({
+      borderTopWidth: '0px', backgroundColor: 'rgba(0, 0, 0, 0)', boxShadow: 'none',
+    });
+    await userEvent.click(button!);
+    expect(markRead).toHaveBeenCalledOnce();
+  } else expect(button).toBeNull();
+});

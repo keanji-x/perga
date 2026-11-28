@@ -37,7 +37,7 @@ export function ContextItem({ icon, label, metadata, trailing, buttonProps, menu
 
 /** Shared group title, disclosure, spacing and optional host action.
  * A content callback lets the owner admit or retain content from the current open state. */
-export function ContextGroup({ title, children, collapsible = false, open, onOpenChange, count, action, secondaryAction, actionVisibility = 'intent' }: Readonly<{
+export function ContextGroup({ title, children, collapsible = false, open, onOpenChange, count, action, secondaryAction, secondaryActionVisibility = 'intent', actionVisibility = 'intent' }: Readonly<{
   title: string;
   children: GroupContent;
   /** Controls mode preserves a region heading, including when header actions are absent. */
@@ -47,13 +47,14 @@ export function ContextGroup({ title, children, collapsible = false, open, onOpe
   count?: number;
   action?: ReactNode;
   secondaryAction?: ReactNode;
+  secondaryActionVisibility?: 'intent' | 'always';
   actionVisibility?: 'intent' | 'always';
 }>) {
   const heading = <ListText as="h2" tone="secondary" emphasis="medium" className={styles.title}>
     {title}{count === undefined ? null : ` · ${count}`}
   </ListText>;
   const actions = <span className={styles.actionRail}>
-    {secondaryAction === undefined ? null : <span className={styles.action}>{secondaryAction}</span>}
+    {secondaryAction === undefined ? null : <span className={`${styles.action} ${secondaryActionVisibility === 'always' ? styles.alwaysAction : ''}`}>{secondaryAction}</span>}
     {action === undefined ? null : <span className={`${styles.action} ${actionVisibility === 'always' ? styles.alwaysAction : ''}`}>{action}</span>}
   </span>;
   if (collapsible) return <GroupDisclosure title={title} heading={heading} actions={actions} open={open} onOpenChange={onOpenChange}>{children}</GroupDisclosure>;
@@ -102,8 +103,8 @@ export function ContextFrame({ children, action }: { children: ReactNode; action
 }
 
 /** Same system action box as row menus and disclosure slots. */
-export function ContextAction({ label, icon, onClick }: { label: string; icon: IconName; onClick: () => void }) {
-  return <Button label={label} icon={<Icon name={icon} size="sm" />} isIconOnly variant="ghost" size="sm"
+export function ContextAction({ label, tooltip, icon, onClick }: { label: string; tooltip?: string; icon: IconName; onClick: () => void }) {
+  return <Button label={label} tooltip={tooltip} icon={<Icon name={icon} size="sm" />} isIconOnly variant="ghost" size="sm"
     className={styles.trigger} onClick={onClick} />;
 }
 

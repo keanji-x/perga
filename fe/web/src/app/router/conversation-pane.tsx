@@ -807,6 +807,11 @@ export function useConversationPane(
   });
   const unreadIds = useMemo(() => new Set(rows.filter(row => receipts.isUnread('conversation', row.id,
     row.lastTurnCompletedAt ?? null)).map(row => row.id)), [rows, receipts]);
+  const markAllRead = useCommittedCallback(sourceScopeId, () => {
+    for (const row of rows) {
+      if (unreadIds.has(row.id)) receipts.markRead('conversation', row.id, row.lastTurnCompletedAt ?? 0);
+    }
+  });
   const listProps = useMemo(() => ({
     conversations: store.conversations, cards: source.cards, unreadIds, activeId: existingId,
     showTrack: options?.showTrack ?? true, onOpen: openConversation, onArchive: options?.onArchive,
@@ -844,6 +849,7 @@ export function useConversationPane(
     close: closeDrawer,
     mobileList,
     contextList,
+    markAllRead: unreadIds.size === 0 ? undefined : markAllRead,
     openConversation,
     startConversation: start,
     drawer: renderDrawer(),

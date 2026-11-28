@@ -12,6 +12,7 @@ import { TrackTitle } from '../title/public.tsx';
 // The `/track/$trackId` surface. Presentational: every mutation and navigation leaves through a callback,
 // and there is no `<a href>` anywhere on this page.
 
+import { IconButton } from '@astryxdesign/core/IconButton';
 import { Button as AstryxButton } from '@astryxdesign/core/Button';
 import { DropdownMenu as AstryxDropdownMenu } from '@astryxdesign/core/DropdownMenu';
 import { MoreMenu as AstryxMoreMenu } from '@astryxdesign/core/MoreMenu';
@@ -90,6 +91,7 @@ export type TrackPageProps = Readonly<{
   mobilePanelObscured: boolean;
   /** Starts Chat from the desktop header or the mobile Report action. */
   onStartConversation?: () => void;
+  onMarkAllConversationsRead?: () => void;
   shareLinks?: ReactNode;
   onShareTrack?: (origin: DialogOrigin) => void;
   /** The Cards module head's `+`, composed by `app/router`. */
@@ -165,7 +167,7 @@ function rowModule(view: TrackPageView, key: RowModuleView['key']): RowModuleVie
 
 export function TrackPage({ fillReading = false, articleMasthead = !fillReading, showWorkspaceIsolation = true, mobileReportIntro, mobileChatComposer,
   panelHeader, panelContent, progressDisclosure, track, cards, existingCardIds, tasks, openableCards, outlineItems = [], report, conversationList, conversationContextList,
-  shareLinks, onShareTrack, onStartConversation, conversationOpen = false, mobilePanelObscured, unread = false, onReply,
+  shareLinks, onShareTrack, onStartConversation, onMarkAllConversationsRead, conversationOpen = false, mobilePanelObscured, unread = false, onReply,
   cardsAction, recentFiles, onOpenCard, onDeleteCard, onSetWorkbench, onOpenTask, onOpenOutline, board, onCloseBoard, fileViewer,
   panel = null, onOpenPanel, onClosePanel,
   mobileBackLabel = 'Workspace', onMobileBack, mobileHeaderActionsHost = null, mobileHeaderTitleHost, mobileAreaName, onOpenMobileArea, mobileReportTitleOnScroll = false, mobileTitleReadView,
@@ -650,6 +652,9 @@ export function TrackPage({ fillReading = false, articleMasthead = !fillReading,
             ) : mobilePanelKind === 'conversations' ? (
               <MobileListPage
                 title="Conversations"
+                actions={onMarkAllConversationsRead === undefined ? undefined : <IconButton
+                  label="Mark all read" tooltip="Mark all read" icon={<Icon name="check-all" />}
+                  variant="ghost" size="lg" onClick={onMarkAllConversationsRead} />}
                 backLabel="Report"
                 onBack={closeMobilePanel}
               >
@@ -671,6 +676,9 @@ export function TrackPage({ fillReading = false, articleMasthead = !fillReading,
             <ContextFrame>
               {!compactViewport && panelHeader !== undefined && <div className={inventoryStyles.panelContext}>{panelHeader}</div>}
               {hasDesktopConversations && <ContextGroup title="Conversations"
+                secondaryActionVisibility="always"
+                secondaryAction={onMarkAllConversationsRead === undefined ? undefined : <ContextAction
+                  label="Mark all read" tooltip="Mark all read" icon="check-all" onClick={onMarkAllConversationsRead} />}
                 actionVisibility="always" action={onStartConversation === undefined ? undefined : <ContextAction
                   label="New conversation" icon="plus" onClick={onStartConversation} />}>
                 {desktopConversations}

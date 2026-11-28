@@ -597,6 +597,7 @@ export function TrackRouteBody({
         {reportRegion}</>}
       </>}
       mobileChatComposer={chat.dock}
+      onMarkAllConversationsRead={!centerActive || rows.length > 1 ? chat.markAllRead : undefined}
       conversationContextList={!centerActive || rows.length > 1 ? chat.contextList : undefined}
       conversationList={!centerActive || rows.length > 1 ? chat.mobileList : undefined}
       onStartConversation={!centerActive || rows.length > 1 ? chat.startConversation : undefined}

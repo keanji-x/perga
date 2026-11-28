@@ -1,5 +1,5 @@
 import type { ComponentType } from 'react';
-import { Archive, Forward, Copy, Check, ChartColumn, Search, Star, ArrowLeft, ArrowUp, Bell, BookOpen, Bot, CalendarDays, ChevronDown, ChevronLeft, ChevronRight, Circle, CircleCheck, CircleStop, CircleX, Clock3, Ellipsis, File, Folder, FolderOpen, Info, Link2, ListChecks, Maximize, Menu, MessageSquare, Minimize, Monitor, Moon, NotebookPen, Palette, PanelLeft, PanelRight, Paperclip, Pin, Plus, RefreshCw, RotateCcw, Shield, SlidersHorizontal, SquareTerminal, Settings, Sun, Wrench, Trash2, X, Icon as LucideIcon, type LucideProps } from 'lucide-react';
+import { Archive, Forward, Copy, Check, CheckCheck, ChartColumn, Search, Star, ArrowLeft, ArrowUp, Bell, BookOpen, Bot, CalendarDays, ChevronDown, ChevronLeft, ChevronRight, Circle, CircleCheck, CircleStop, CircleX, Clock3, Ellipsis, File, Folder, FolderOpen, Info, Link2, ListChecks, Maximize, Menu, MessageSquare, Minimize, Monitor, Moon, NotebookPen, Palette, PanelLeft, PanelRight, Paperclip, Pin, Plus, RefreshCw, RotateCcw, Shield, SlidersHorizontal, SquareTerminal, Settings, Sun, Wrench, Trash2, X, Icon as LucideIcon, type LucideProps } from 'lucide-react';
 import { PROVIDER_GLYPHS, type GlyphNode } from './provider-glyphs.ts';
 import styles from './icon.module.css';
 
@@ -32,6 +32,7 @@ const glyphs = Object.freeze({
   'calendar': (props: LucideProps) => <CalendarDays {...props} />,
   'share': (props: LucideProps) => <Forward {...props} />,
   'copy': (props: LucideProps) => <Copy {...props} />,
+  'check-all': (props: LucideProps) => <CheckCheck {...props} />,
   'check': (props: LucideProps) => <Check {...props} />,
   'link': (props: LucideProps) => <Link2 {...props} />,
   'agent': (props: LucideProps) => <Bot {...props} />,
