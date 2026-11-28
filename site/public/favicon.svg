@@ -1,9 +1,11 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Perga">
-  <rect x="2" y="2" width="508" height="508" rx="116" fill="#EFECE3" stroke="#D8D2C5" stroke-width="4" />
-  <svg x="48" y="48" width="416" height="416" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 384 384" role="img" aria-labelledby="title description">
-  <title id="title">Perga mark</title>
-  <desc id="description">A classical twin-columned Roman gateway with continuous double cornice evoking the ancient city of Perga.</desc>
-  <g fill="#1A1D24">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 384 384" role="img" aria-label="Perga">
+  <style>
+    g { fill: #1A1D24; }
+    @media (prefers-color-scheme: dark) {
+      g { fill: #f3f2ee; }
+    }
+  </style>
+  <g>
     <path d="M50 54 H334 V70 H50 Z" />
     <path d="M58 80 H326 V100 H58 Z" />
     <path d="M62 110 H114 V122 H62 Z M270 110 H322 V122 H270 Z" />
@@ -14,5 +16,4 @@
     <path d="M62 266 H112 V308 H62 Z M272 266 H322 V308 H272 Z" />
     <path d="M52 318 H120 V330 H52 Z M264 318 H332 V330 H264 Z" />
   </g>
-</svg>
 </svg>

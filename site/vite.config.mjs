@@ -361,7 +361,7 @@ function copyCanonicalAssetsAndBuildEditorialPages() {
     ['src/Perga.Kernel/Templates/Memory/widgets/entries.html', 'widgets/entries.html'],
     ['docs/assets/hero.png', 'assets/hero.png'],
     ['fe/web/src/ui/brand/perga-app.svg', 'favicon.svg'],
-    ['fe/web/public/icons/perga-192.png', 'icon-192.png'],
+    ['fe/web/public/icons/perga-maskable-192.png', 'icon-192.png'],
   ];
 
   const essays = [
