@@ -115,9 +115,14 @@ export function playTrajectory<Value>(
 
 export function playSpring(
   elements: readonly (HTMLElement | SVGElement)[], from: number, to: number, velocity: number,
-  paint: (value: number) => Keyframe, options?: SpringOptions,
+  paint: (value: number) => Keyframe, options?: SpringOptions & Readonly<{ minimumDuration?: number }>,
 ): SpringPlayback {
-  return playTrajectory(elements, { ...springTrajectory(from, to, velocity, options), scaleVelocity: (value, rate) => value * rate }, paint);
+  const trajectory = springTrajectory(from, to, velocity, options);
+  return playTrajectory(elements, {
+    duration: Math.max(trajectory.duration, options?.minimumDuration ?? 0),
+    sample: time => trajectory.sample(Math.min(time, trajectory.duration)),
+    scaleVelocity: (value, rate) => value * rate,
+  }, paint);
 }
 
 export function playPointSpring(

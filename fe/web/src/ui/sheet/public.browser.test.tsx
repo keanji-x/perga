@@ -432,6 +432,58 @@ it('holds the returning footer on handle acquisition without pointer movement', 
   expect(footer.style.transform).toBe('');
 });
 
+it.each([
+  { position: 1, velocity: 800 }, { position: 0, velocity: 800 }, { position: 0, velocity: 0 },
+])('returns a held footer smoothly after releasing the panel at $position px and $velocity px/s', async ({ position, velocity }) => {
+  const { panel, handle, footer, settle, update } = await mount();
+  await settle();
+  const rest = footer.getBoundingClientRect().top;
+  update({ open: false });
+  const [exit, footerExit] = await pausePair(panel, footer);
+  exit.currentTime = footerExit.currentTime = 60;
+  update({ open: true });
+  const [entry, footerEntry] = await pausePair(panel, footer);
+  entry.currentTime = footerEntry.currentTime = 80;
+  const held = footer.getBoundingClientRect().top;
+  expect(held - rest).toBeGreaterThan(20);
+
+  const controller = vi.mocked(motion.createSheetMotion).mock.results.at(-1)!.value as ReturnType<typeof motion.createSheetMotion>;
+  const hold = vi.spyOn(controller, 'hold');
+  // A zero pointer origin lets the fractional held position cancel exactly.
+  handle.addEventListener('pointerdown', event => {
+    if (velocity === 0) entry.currentTime = Number(entry.effect!.getComputedTiming().duration);
+    Object.defineProperty(event, 'clientY', { value: 0 });
+  }, { once: true });
+  const { time, id } = await acquire(handle);
+  try {
+    const grabbed = hold.mock.results.at(-1)!.value as spring.SpringSample;
+    const y = position - grabbed.value;
+    if (velocity !== 0) {
+      event(handle, 'pointermove', y - 8, time + 200, id);
+      event(handle, 'pointermove', y, time + 210, id);
+    }
+    event(handle, 'pointerup', y, time + 211, id);
+    const release = vi.mocked(spring.playSpring).mock.lastCall!;
+    expect(release[1]).toBe(position);
+    expect(release[3]).toBeCloseTo(velocity, 1);
+    const [panelReturn, footerReturn] = await pausePair(panel, footer);
+    panelReturn.currentTime = footerReturn.currentTime = 0;
+    expect(Math.abs(footer.getBoundingClientRect().top - held)).toBeLessThan(1);
+    let previous = held;
+    for (const phase of [20, 60, 120]) {
+      panelReturn.currentTime = footerReturn.currentTime = phase;
+      const top = footer.getBoundingClientRect().top;
+      expect(top).toBeGreaterThan(rest);
+      expect(top).toBeLessThan(previous);
+      previous = top;
+    }
+    panelReturn.play(); footerReturn.play();
+  } finally { await releaseMouse(); }
+  await settle();
+  expect(footer.getBoundingClientRect().top).toBe(rest);
+  expect(footer.style.transform).toBe('');
+});
+
 it('keeps the active exit and retained frame when the keyboard dismisses', async () => {
   const { panel, dialog, footer, frame, settle, update } = await mount({ frame: { heightPx: 480, bottomInsetPx: 300 } });
   await settle();
