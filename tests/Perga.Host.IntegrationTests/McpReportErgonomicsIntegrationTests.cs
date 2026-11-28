@@ -13,6 +13,65 @@ namespace Perga.Host.IntegrationTests;
 
 public sealed class McpReportErgonomicsIntegrationTests
 {
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task TrackSetReturnsUsableReportAnchorOnlyForFreshOrEmptyReports(bool seedReport)
+    {
+        await using var cluster = new PergaHostTestCluster();
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        var (trackId, leadId) = await cluster.CreateTrackAsync();
+        var kernel = cluster.Services.GetRequiredService<IPergaKernel>();
+        var token = (await kernel.OpenMcpCallerAsync(leadId, deadline.Token)).Token;
+        const string source = """
+            export default { id: 'seed-outline', title: 'Seed outline',
+              report: { initialMarkdown: '# Overview\n\nStarter content.' } };
+            """;
+
+        var preview = await Call(KernelMcpToolNames.TrackSet, new { source, dryRun = true });
+        Assert.False(preview.TryGetProperty("reportAnchor", out _));
+        Assert.False(preview.TryGetProperty("reportSections", out _));
+
+        var bound = await Call(KernelMcpToolNames.TrackSet, new { source, seedReport });
+        var anchor = bound.GetProperty("reportAnchor");
+        Assert.Equal(seedReport ? 1 : 0, anchor.GetProperty("docRev").GetInt32());
+        Assert.True(anchor.GetProperty("wholeDocumentRead").GetBoolean());
+        if (seedReport)
+        {
+            Assert.Equal("Overview", Assert.Single(bound.GetProperty("reportSections").EnumerateArray()).GetString());
+            Assert.Equal(1, Assert.Single(anchor.GetProperty("knownBlockRevs").EnumerateObject()).Value.GetInt32());
+        }
+        else
+        {
+            Assert.False(bound.TryGetProperty("reportSections", out _));
+            Assert.Empty(anchor.GetProperty("knownBlockRevs").EnumerateObject());
+        }
+
+        var committed = await Call(KernelMcpToolNames.ReportCommit, new
+        {
+            anchor,
+            ops = new[] { new { op = "replace_section", sectionH1 = "Overview", markdown = "Lead's findings." } }
+        });
+        Assert.Equal(seedReport ? 2 : 1, committed.GetProperty("docRev").GetInt32());
+
+        var rebound = await Call(KernelMcpToolNames.TrackSet, new
+        {
+            source = """export default { id: 'replacement', title: 'Replacement' };"""
+        });
+        Assert.False(rebound.TryGetProperty("reportAnchor", out _));
+        Assert.False(rebound.TryGetProperty("reportSections", out _));
+        Assert.Contains("Lead's findings.", (await kernel.ReadReportAsync(trackId, ct: deadline.Token)).RenderedMarkdown);
+
+        async Task<JsonElement> Call(string tool, object args)
+        {
+            var (result, error) = await McpKernelAndVcsIntegrationTests.CallToolAsync(
+                cluster, "/mcp/kernel", token, tool, args, deadline.Token);
+            Assert.False(error, result);
+            using var document = JsonDocument.Parse(result);
+            return document.RootElement.Clone();
+        }
+    }
+
     [Fact]
     public async Task HistoricalCheckpointsStayReadableAcrossUnrelatedReportEdits()
     {

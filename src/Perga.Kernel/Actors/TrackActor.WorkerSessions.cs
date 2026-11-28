@@ -117,42 +117,63 @@ public sealed partial class TrackActor
         var report = _reports.Document;
         var reportMd = _reportEngine.RenderMarkdown(report, withMarkers: true);
         var templateDataSection = BuildActiveTemplateDataSectionCore();
-        const string unboundGovernanceNote =
-            "Use session_list/create/read/update/send/withdraw/control/respond to manage child conversations. Use session_create for collaborators and reuse requestKey for retries. Declare formal tasks in Flow and have Workers submit task_done with an outcome. Use provider_list to discover available providers, models, reasoning efforts, and permission modes. Only control your direct children; the Lead can also manage other sessions. Never stop, reset or archive yourself. Answer delegated asks and approvals with session_respond; the human can always take over.";
         if (session.IsLead)
         {
-            if (_memoryBinding is null && report.Blocks.Count == 0 && string.IsNullOrWhiteSpace(reportMd))
-                reportMd = BuildEmptyReportPrompt(report.DocRev);
+            if (_memoryBinding is not null)
+            {
+                return $"""
+                        You are the Lead Session for Perga Track `{TrackId}` (title: `{_track.Title}`).
 
-            var templateScoping = _policy is null
-                ? " When no template is active yet, once you understand the scope of substantive work—before doing deep work or writing the Report—check `template_list` (and `template_read` for any plausible match), resolve task-specific `inputs`, preview with `track_set(..., dryRun: true)` when helpful, and apply a fitting template up front so its Report layout and `data` seed cleanly."
-                : string.Empty;
+                        ## Workspace & Collaboration Model
+                        - **Report** — live read-only projection of this Track's Memory entries.
+                        - **Conversation** — the working thread for discussion, clarification, and coordination.
+                        - **Orchestration** — use `session_create` for lightweight helpers, or Flow (`flow_commit`; Host file: `{_flowFileStore.GetFlowFilePath(TrackId)}`, `flowRev`: {_track.FlowRev}) for formal tasks, schedules, or child Tracks.
+
+                        ## Boundaries
+                        - Never stop, reset, or archive yourself.
+                        - Follow each tool's schema for exact parameters and receipts.
+
+                        ## Current Report
+                        {reportMd}{templateDataSection}
+                        """;
+            }
+
+            if (TemplateReport.IsBlank(report))
+            {
+                var anchor = JsonSerializer.Serialize(_reports.CreateReadAnchor(), JsonHelpers.SerializerOptions);
+                reportMd = _policy is null
+                    ? $"The Report is empty. Commit directly with ReadAnchor `{anchor}` (no `report_read` needed), or apply a fitting template with `track_set` first and use its `reportAnchor`."
+                    : $"The Report is empty. Commit directly with ReadAnchor `{anchor}` (no `report_read` needed).";
+            }
+
+            var templateGuidance = _policy is null
+                ? "\n- **Structured or recurring work**: Templates are optional and composable (widgets, structured `data`, starter Flow, worker routing). If the task fits a repeatable workflow (e.g., structured engineering delivery, ongoing tracking, or periodic checks), check `template_list` before writing the first Report, resolve any task-specific inputs (`template_read` if needed), and apply a fit with `track_set`; skip templates for ad-hoc work."
+                : "\n- **Active template**: Keep structured facts in `data` (`data_patch`) and narrative in the Report without duplicating widget content. You may adjust or cancel seeded Flow nodes as needed.";
+
             return $"""
                     You are the Lead Session for Perga Track `{TrackId}` (title: `{_track.Title}`).{BuildTrackOriginNote()}
 
-                    ## Track Model
-                    You own four durable surfaces on this Track:
-                    - **Title**: keep it concise and accurate once the goal is clear (`track_rename`).
-                    - **Report**: the Track's living document (`report_read` / `report_commit`)—where plans, research, decisions, and current progress live. Use **Conversation** as the working thread for quick answers, clarifying questions, coordination, and brief summaries of Report updates, not as the sole home for lasting deliverables.
-                    - **Templates & Data**: Templates are optional and implicit (`template_list` / `template_read`, apply or preview via `track_set` with a `templateId` or `.perga.js source`, `inputs`, and `dryRun`, detach with `clear`, update inputs with `template_update_inputs`). A template composes four layers—Report widgets, schema-validated `data` (`data_patch`), starter Flow nodes, and worker routing—and is composable rather than all-or-nothing (you own any Flow or schedule nodes a template seeds and may edit or cancel them).{templateScoping} Keep structured facts in `data` and narrative in the Report without duplicating widget content. After `track_set`, read the seeded Report (`report_read`) and inspect `template_read(templateId: "__current__", format: "files")` when you need the template's `data` schema.
-                    - **Flow**: declarative task, watch, Track spawn, and schedule orchestration governed by `flow.json`.
+                    ## Workspace & Collaboration Model
+                    The user sees two surfaces side by side:
+                    - **Report** — the living deliverable where goals, plans, research, decisions, and current progress stay up to date.
+                    - **Conversation** — the working thread for discussion, clarification, coordination, and concise summaries pointing to the Report.
 
-                    ## Track Flow Orchestration
-                    - The Host manages `{_flowFileStore.GetFlowFilePath(TrackId)}` (current `flowRev`: {_track.FlowRev}).
-                    - Use `when` (`after` / `cron` / `at`) and `do` (`run` / `wake` / `watch` / `track`) to declare nodes. A `track` action creates an independent Track and settles when its initial Lead prompt is durable. If you can access the Host file, edit it and use `flow_commit(dryRun: true)` before `flow_commit()`.
-                    - From SSH or when the Host file is unavailable, call `flow_read(format: "spec")` for the current spec and revision, then pass the edited JSON text as `content` and the read revision as `expectedFlowRev` to `flow_commit`. Validate the same arguments with `dryRun: true` first.
-                    - To stop an active or recurring node, set `"canceled": true` and commit.
-                    - Background GC archives terminal one-shot nodes with no remaining dependents and preserves uncommitted drafts.
+                    ## How to Work
+                    - **Quick Q&A or unclear direction**: Reply concisely in Conversation and leave the Report unchanged.
+                    - **Substantive work (plans, analyses, decisions, implementation, progress)**: Work **Report-first**. Write or update the Report (`report_commit`) before ending the turn, give the Track a clear title (`track_rename`) if it is still untitled, and keep your Conversation reply brief with a pointer to the Report—do not bury lasting deliverables only in chat.{templateGuidance}
+                    - **Parallel work, independent review, gates, or schedules**: Use a child session (`session_create`) for lightweight collaboration, or declare formal multi-step tasks, reviews, watches, schedules, and independent child Tracks in Flow (`flow_commit`; Host file: `{_flowFileStore.GetFlowFilePath(TrackId)}`, `flowRev`: {_track.FlowRev}).
 
-                    ## Session & Worker Governance
-                    - You are the single authority over Track template binding (`track_set`) and orchestration.
-                    - {unboundGovernanceNote}
+                    ## Boundaries
+                    - You are the single authority over template binding and Flow orchestration on this Track; never stop, reset, or archive yourself.
+                    - Follow each tool's schema for exact parameters and receipts.
 
                     ## Current Report
                     {reportMd}{templateDataSection}
                     """;
         }
 
+        const string unboundGovernanceNote =
+            "Use session_list/create/read/update/send/withdraw/control/respond to manage child conversations. Use session_create for collaborators and reuse requestKey for retries. Declare formal tasks in Flow and have Workers submit task_done with an outcome. Use provider_list to discover available providers, models, reasoning efforts, and permission modes. Only control your direct children; the Lead can also manage other sessions. Never stop, reset or archive yourself. Answer delegated asks and approvals with session_respond; the human can always take over.";
         var boundTask = _taskCoordinator.TryGetActiveOwningTaskCore(session.Id);
         var role = boundTask is not null
             ? $"Contract Subagent (BoundTaskId={boundTask.Id})"
@@ -162,19 +183,6 @@ public sealed partial class TrackActor
             ? unboundGovernanceNote + " If blocked by missing permissions or sandbox restrictions (such as EPERM, blocked local ports/network, or denied actions), do not loop or silently skip checks: report the exact permission gap in your reply so your parent/Lead can adjust permissionMode via session_update (takes effect on the next turn) or run the restricted step; only call user_ask when pausing for explicit human/parent input (it does not auto-wake an idle parent)."
             : "Use session_list/read to observe conversations. Submit your task with task_done (optional outcome: ok|attention|blocked, summary) or task_fail; bound Workers cannot spawn or control sessions. If blocked by missing permissions or sandbox restrictions (such as EPERM, blocked local ports/network, or denied actions), do not loop or silently skip required checks: call task_fail (which settles the task) with the exact permission gap so Flow wake rules or the Lead can re-dispatch with higher permissionMode or run the restricted check via Host do.gate (note: borrowed sessions with notifyParent=\"none\" or Flows with explicit join wakes may not auto-wake an idle Lead on settlement), or end the turn without calling task_done/task_fail only when an active operator/Lead is observing via session_read to adjust permissionMode via session_update (ending a turn without settling does not auto-wake an idle Lead); call user_ask only when waiting for explicit human/parent input (it does not auto-wake an idle parent).";
         return $"You are operating in Perga Track '{_track.Title}' ({TrackId}) as {role}.\n\n{sessionNote}\n\n## Current Report\n{reportMd}{templateDataSection}";
-    }
-
-    private static string BuildEmptyReportPrompt(int docRev)
-    {
-        var anchor = JsonSerializer.Serialize(
-            new ReadAnchor(docRev, new Dictionary<string, int>(), WholeDocumentRead: true), JsonHelpers.SerializerOptions);
-        return $"""
-                The Report is empty. Use this ReadAnchor to call `report_commit` directly without calling `report_read` first: `{anchor}`. If you apply a template with `track_set` first, call `report_read` to get the seeded Report's anchor.
-
-                The user sees the Report alongside your reply. On the first turn:
-                - If you establish a clear goal, plan, analysis, or deliverable, commit an initial structured Report with `report_commit` before ending the turn. Use `track_rename` if the title is still untitled or a placeholder. Keep your reply concise and point to the Report.
-                - If you're answering a quick one-off question or asking for clarification before starting work, you can leave the Report empty for now. Briefly say you'll fill it in once the direction is confirmed.
-                """;
     }
 
     private string BuildEpochSeedSystemPrompt(

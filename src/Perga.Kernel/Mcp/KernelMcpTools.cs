@@ -262,7 +262,7 @@ public static class KernelMcpCatalog
                 Schema("""{"type":"object","properties":{"templateId":{"type":"string"},"format":{"enum":["summary","files","full"]},"file":{"type":"string","description":"One package-relative file to return with format files."}}}"""), readOnlyLocal),
             new(KernelMcpToolNames.TemplateUpdateInputs, "Merge inputs into the active template. Stored business data can be changed with data_patch (Track Lead only).",
                 Schema("""{"type":"object","required":["inputs"],"properties":{"inputs":{"type":"object"}}}"""), localIdempotentWrite),
-            new(KernelMcpToolNames.TrackSet, "Apply a templateId, local template package path, or JSON/.perga.js source with inputs. Use dryRun to preview or clear to detach while keeping the report (Track Lead only).",
+            new(KernelMcpToolNames.TrackSet, "Apply a templateId, local template package path, or JSON/.perga.js source with inputs. Seeding an empty Report returns reportAnchor ready for report_commit. Use dryRun to preview or clear to detach while keeping the report (Track Lead only).",
                 Schema("""{"type":"object","properties":{"templateId":{"type":"string","minLength":1},"source":{"type":"string","minLength":1},"path":{"type":"string","minLength":1,"description":"Package directory or template file inside the local Track workspace. Selecting a subdirectory's template.perga.js or template.perga.json packs its parent directory. Workspace-root and custom-named template files load standalone."},"inputs":{"type":"object"},"dryRun":{"type":"boolean"},"clear":{"type":"boolean"},"resetData":{"type":"boolean","description":"Initialize fresh template data, or clear stored data when used with clear: true."},"seedReport":{"type":"boolean","description":"Seed an empty report. Defaults to true when the report is empty and the template provides initial Markdown."}}}"""), localWrite),
             new(KernelMcpToolNames.TrackClose, "Close the current track and cancel active tasks (governance only).",
                 Schema("""{"type":"object","properties":{}}"""), localDestructive),
@@ -722,6 +722,10 @@ public static class KernelMcpDispatcher
                     args.TryGetProperty("seedReport", out var seedReport) ? seedReport.GetBoolean() : null, authorization).ConfigureAwait(false);
                 var response = JsonSerializer.SerializeToNode(result.Track, JsonHelpers.SerializerOptions)!.AsObject();
                 if (result.DryRun) response.Remove("workspaceSpec");
+                if (result.ReportAnchor is { } anchor)
+                    response["reportAnchor"] = JsonSerializer.SerializeToNode(anchor, JsonHelpers.SerializerOptions);
+                if (result.ReportSections is { } sections)
+                    response["reportSections"] = JsonSerializer.SerializeToNode(sections, JsonHelpers.SerializerOptions);
                 response["dryRun"] = result.DryRun;
                 response["warnings"] = JsonSerializer.SerializeToNode(result.Warnings);
                 response["plan"] = JsonSerializer.SerializeToNode(result.Plan, JsonHelpers.SerializerOptions);

@@ -163,7 +163,9 @@ public sealed record WorkerCompletionOrigin(string Token, string RuntimeBindingI
     internal string? AuthorizedPolicyGeneration { get; init; }
 }
 
-public sealed record TemplateSetResult(TrackDto Track, IReadOnlyList<string> Warnings, bool DryRun, TemplateSetPlanDto Plan);
+public sealed record TemplateSetResult(
+    TrackDto Track, IReadOnlyList<string> Warnings, bool DryRun, TemplateSetPlanDto Plan,
+    ReadAnchor? ReportAnchor = null, IReadOnlyList<string>? ReportSections = null);
 
 public sealed record TemplateSetPlanDto(
     TemplateFlowDiffDto FlowDiff, string DataAction, string ReportAction, IReadOnlyList<string> PluginsAdded);

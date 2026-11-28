@@ -4,7 +4,7 @@ import { views } from "./views.js";
 export default defineTemplate({
   id: "okr-loop",
   title: "长期 OKR 优化闭环",
-  description: "跟踪关键结果，在每日指标采集后核对进度和异常。",
+  description: "持续跟踪有量化指标的工程 OKR，定期采集 CI 数据并核对关键结果、进度和异常。",
   inputs: {
     optimizeProvider: { type: "string", optional: true, label: "改进执行提供方" },
     optimizeModel: { type: "string", optional: true, label: "改进执行模型" },

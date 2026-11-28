@@ -9,51 +9,56 @@ namespace Perga.Kernel.Tests;
 public sealed class TemplateEntryOptimizationTests
 {
     [Fact]
-    public async Task LeadSystemPrompt_DescribesTrackModelUpfrontTemplateScopingAndPreservesFlowAndGovernanceContracts()
+    public async Task LeadSystemPrompt_UsesSceneDrivenReportFirstModelWithoutPerTurnReportState()
     {
         await using var ctx = new KernelTestContext(policyVm: new global::Perga.PolicyVm.PolicyVm());
+        ctx.Kernel.Templates.RegisterTemplate("""
+            export default {
+              id: 'research', title: 'Research', description: 'Compare sources and document findings.',
+              inputs: { topic: { type: 'string', default: 'Example' } }
+            };
+            """);
         var (_, snap) = await ctx.CreateDefaultTrackAsync();
         await ctx.SendAndWaitForTurnAsync(snap.Track.LeadSessionId!, new SendSessionMessageRequest("帮我做小米投研", "lead-prompt-check"));
 
-        var leadPrompt = Assert.Single(ctx.AgentRuntime.OpenedSessions).LaunchSpec.SystemPrompt;
+        var session = Assert.Single(ctx.AgentRuntime.OpenedSessions);
+        var leadPrompt = session.LaunchSpec.SystemPrompt;
 
-        // Track Model + upfront template scoping
-        Assert.Contains("## Track Model", leadPrompt, StringComparison.Ordinal);
-        Assert.Contains("**Title**", leadPrompt, StringComparison.Ordinal);
-        Assert.Contains("**Report**", leadPrompt, StringComparison.Ordinal);
-        Assert.Contains("Templates are optional and implicit", leadPrompt, StringComparison.Ordinal);
-        Assert.Contains("When no template is active yet", leadPrompt, StringComparison.Ordinal);
-        Assert.Contains("dryRun", leadPrompt, StringComparison.Ordinal);
-        Assert.Contains("inputs", leadPrompt, StringComparison.Ordinal);
-        Assert.Contains("before doing deep work or writing the Report", leadPrompt, StringComparison.Ordinal);
-        Assert.Contains("composable rather than all-or-nothing", leadPrompt, StringComparison.Ordinal);
-        Assert.Contains("format: \"files\"", leadPrompt, StringComparison.Ordinal);
-
-        // Preserved Flow orchestration contract
-        Assert.Contains("## Track Flow Orchestration", leadPrompt, StringComparison.Ordinal);
-        Assert.Contains("flow_commit(dryRun: true)", leadPrompt, StringComparison.Ordinal);
-        Assert.Contains("flow_read(format: \"spec\")", leadPrompt, StringComparison.Ordinal);
-        Assert.Contains("\"canceled\": true", leadPrompt, StringComparison.Ordinal);
-
-        // Preserved Session & Worker governance contract
-        Assert.Contains("session_create", leadPrompt, StringComparison.Ordinal);
-        Assert.Contains("requestKey", leadPrompt, StringComparison.Ordinal);
-        Assert.Contains("task_done", leadPrompt, StringComparison.Ordinal);
-        Assert.Contains("provider_list", leadPrompt, StringComparison.Ordinal);
-        Assert.Contains("session_respond", leadPrompt, StringComparison.Ordinal);
+        Assert.Contains("## Workspace & Collaboration Model", leadPrompt, StringComparison.Ordinal);
+        Assert.Contains("## How to Work", leadPrompt, StringComparison.Ordinal);
+        Assert.Contains("Work **Report-first**", leadPrompt, StringComparison.Ordinal);
+        Assert.Contains("`report_commit`", leadPrompt, StringComparison.Ordinal);
+        Assert.Contains("`track_rename`", leadPrompt, StringComparison.Ordinal);
+        Assert.Contains("check `template_list` before writing the first Report", leadPrompt, StringComparison.Ordinal);
+        Assert.Contains("resolve any task-specific inputs (`template_read` if needed)", leadPrompt, StringComparison.Ordinal);
+        Assert.Contains("`session_create`", leadPrompt, StringComparison.Ordinal);
+        Assert.Contains("`flow_commit`", leadPrompt, StringComparison.Ordinal);
+        Assert.Contains("## Boundaries", leadPrompt, StringComparison.Ordinal);
 
         Assert.Contains("## Current Report\nThe Report is empty.", leadPrompt, StringComparison.Ordinal);
         Assert.Contains("""{"docRev":0,"knownBlockRevs":{},"wholeDocumentRead":true}""", leadPrompt, StringComparison.Ordinal);
-        Assert.Contains("Use this ReadAnchor to call `report_commit` directly without calling `report_read` first", leadPrompt, StringComparison.Ordinal);
-        Assert.Contains("If you apply a template with `track_set` first, call `report_read` to get the seeded Report's anchor", leadPrompt, StringComparison.Ordinal);
-        Assert.Contains("The user sees the Report alongside your reply", leadPrompt, StringComparison.Ordinal);
-        Assert.Contains("clear goal, plan, analysis, or deliverable", leadPrompt, StringComparison.Ordinal);
-        Assert.Contains("commit an initial structured Report with `report_commit` before ending the turn", leadPrompt, StringComparison.Ordinal);
-        Assert.Contains("Use `track_rename` if the title is still untitled or a placeholder", leadPrompt, StringComparison.Ordinal);
-        Assert.Contains("keep your reply concise and point to the Report", leadPrompt, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("quick one-off question or asking for clarification", leadPrompt, StringComparison.Ordinal);
-        Assert.Contains("you can leave the Report empty for now", leadPrompt, StringComparison.Ordinal);
-        Assert.Contains("Briefly say you'll fill it in once the direction is confirmed", leadPrompt, StringComparison.Ordinal);
+        Assert.Contains("apply a fitting template with `track_set` first and use its `reportAnchor`", leadPrompt, StringComparison.Ordinal);
+
+        // Keeps static System Prompt concise and leaves per-turn user prompts clean.
+        Assert.DoesNotContain("## Installed Templates", leadPrompt, StringComparison.Ordinal);
+        Assert.Equal("帮我做小米投研", Assert.Single(session.RecordedInputs).Prompt);
+    }
+
+    [Fact]
+    public async Task LeadSystemPrompt_SwitchesTemplateGuidanceWhenTemplateIsActive()
+    {
+        await using var ctx = new KernelTestContext(policyVm: new global::Perga.PolicyVm.PolicyVm());
+        ctx.Kernel.Templates.RegisterTemplate("""
+            export default { id: 'delivery', title: 'Delivery', description: 'Deliver changes cleanly.' };
+            """);
+        var (_, snap) = await ctx.CreateDefaultTrackAsync(templateId: "delivery");
+        await ctx.SendAndWaitForTurnAsync(snap.Track.LeadSessionId!, new("Review the scope", "lead-bound-template"));
+
+        var leadPrompt = Assert.Single(ctx.AgentRuntime.OpenedSessions).LaunchSpec.SystemPrompt;
+        Assert.Contains("**Active template**", leadPrompt, StringComparison.Ordinal);
+        Assert.DoesNotContain("check `template_list`", leadPrompt, StringComparison.Ordinal);
+        Assert.DoesNotContain("apply a fitting template with `track_set` first", leadPrompt, StringComparison.Ordinal);
+        Assert.Contains("""{"docRev":0,"knownBlockRevs":{},"wholeDocumentRead":true}""", leadPrompt, StringComparison.Ordinal);
     }
 
     [Theory]
@@ -114,7 +119,7 @@ public sealed class TemplateEntryOptimizationTests
     }
 
     [Fact]
-    public async Task MemoryLeadSystemPrompt_OmitsEmptyReportWriteGuidance()
+    public async Task MemoryLeadSystemPrompt_OmitsReportFirstWriteAndTemplateGuidance()
     {
         await using var ctx = new KernelTestContext();
         var (area, snap) = await ctx.CreateDefaultTrackAsync();
@@ -125,9 +130,12 @@ public sealed class TemplateEntryOptimizationTests
 
         var prompt = Assert.Single(ctx.AgentRuntime.OpenedSessions).LaunchSpec.SystemPrompt;
         Assert.Contains("This Track's report projects live Memory entries", prompt, StringComparison.Ordinal);
+        Assert.Contains("live read-only projection", prompt, StringComparison.Ordinal);
         Assert.DoesNotContain("The Report is empty.", prompt, StringComparison.Ordinal);
-        Assert.DoesNotContain("commit an initial structured Report", prompt, StringComparison.Ordinal);
-        Assert.DoesNotContain("Use `track_rename` if the title", prompt, StringComparison.Ordinal);
+        Assert.DoesNotContain("Report-first", prompt, StringComparison.Ordinal);
+        Assert.DoesNotContain("`report_commit`", prompt, StringComparison.Ordinal);
+        Assert.DoesNotContain("`track_rename`", prompt, StringComparison.Ordinal);
+        Assert.DoesNotContain("`template_list`", prompt, StringComparison.Ordinal);
     }
 
     [Fact]

@@ -5,6 +5,19 @@ namespace Perga.Kernel;
 
 internal static class ReportBlockSelection
 {
+    internal static IReadOnlyList<string> CollectOrderedSections(IReadOnlyList<ReportBlock> blocks)
+    {
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        var sections = new List<string>();
+        foreach (var block in blocks)
+        {
+            if (!string.IsNullOrWhiteSpace(block.SectionH1) && seen.Add(block.SectionH1))
+                sections.Add(block.SectionH1);
+        }
+
+        return sections;
+    }
+
     internal static IReadOnlyList<ReportBlock> FilterBlocks(
         IReadOnlyList<ReportBlock> blocks, string? sectionH1, IReadOnlySet<string>? blockIds)
     {

@@ -27,6 +27,9 @@ public sealed partial class TrackActor
 
         public ReportDocument Document => _report;
         public void Hydrate(ReportDocument document) => _report = document;
+        public ReadAnchor CreateReadAnchor() => new(_report.DocRev,
+            _report.Blocks.ToDictionary(block => block.Id, block => block.Rev, StringComparer.Ordinal),
+            WholeDocumentRead: true);
 
         private sealed record ReportPolicyInputs(
             string EditorRole, string PrevMarkdown, string NextMarkdown, PolicySessionContext Session);
@@ -42,16 +45,13 @@ public sealed partial class TrackActor
                 }
 
                 var rendered = actor._reportEngine.RenderMarkdown(_report, withMarkers: true);
-                var knownRevs = _report.Blocks.ToDictionary(b => b.Id, b => b.Rev, StringComparer.Ordinal);
-                var anchor = new ReadAnchor(_report.DocRev, knownRevs, WholeDocumentRead: true);
-
                 return new ReportReadResult(
                     DocRev: _report.DocRev,
                     Summary: _report.Summary,
                     RenderedMarkdown: rendered,
                     Blocks: _report.Blocks,
                     Tasks: actor._taskCoordinator.Snapshot().Select(actor.ProjectFlowTaskCore).ToArray(),
-                    Anchor: anchor,
+                    Anchor: CreateReadAnchor(),
                     Diagnostics: ReportWidgetValidator.Diagnose(_report, actor._policy, actor._policyVm, actor._track.TemplateInputs),
                     DataRev: actor._policy is not null || actor._track.DataRev > 0 ? actor._track.DataRev : null);
             }, ct);
@@ -199,14 +199,13 @@ public sealed partial class TrackActor
             await actor._eventHub.PublishSyncedAfterStoreWriteAsync(actor._store, reportEvt, committedCt).ConfigureAwait(false);
 
             var rendered = actor._reportEngine.RenderMarkdown(_report, withMarkers: true);
-            var knownRevs = _report.Blocks.ToDictionary(b => b.Id, b => b.Rev, StringComparer.Ordinal);
             return new ReportReadResult(
                 DocRev: _report.DocRev,
                 Summary: _report.Summary,
                 RenderedMarkdown: rendered,
                 Blocks: _report.Blocks,
                 Tasks: actor._taskCoordinator.Snapshot().Select(actor.ProjectFlowTaskCore).ToArray(),
-                Anchor: new ReadAnchor(_report.DocRev, knownRevs, WholeDocumentRead: true),
+                Anchor: CreateReadAnchor(),
                 Diagnostics: diagnostics,
                 Changes: commitResult.Changes);
         }
