@@ -65,7 +65,7 @@ export function ToolCallGroup({ calls, entry, ui, onExpandedChange, onDetailOpen
       ? [...root.querySelectorAll<HTMLElement>('[role="progressbar"]')] : [];
     setStatusHosts(previous => previous.length === hosts.length && previous.every((host, index) => host === hosts[index])
       ? previous : hosts);
-  }, [calls, live, showMotion, ui.expanded]);
+  }, [calls, live, ui.expanded]);
   /* True while this component is pressing rows itself, so the watcher below
      does not mistake its own presses for the reader's. */
   const replaying = useRef(false);
