@@ -11,6 +11,7 @@ import { EmptyState } from '../../../ui/empty-state/public.tsx';
 import { ErrorBox } from '../../../ui/error-box/public.tsx';
 import { Icon } from '../../../ui/icon/public.tsx';
 import { LoadingStatus } from '../../../ui/loading-status/public.tsx';
+import { returnFocusProps } from '../../../ui/return-focus/public.ts';
 import { useState } from '../../../ui/state/public.ts';
 import type { DialogOrigin } from '../../../ui/dialog/public.tsx';
 import { MobileHeader } from '../../../ui/mobile-header/public.tsx';
@@ -23,7 +24,7 @@ export function WorkspaceLevelOne({
   isUnread, readError, readLoading, onRetryRead, accountLabel = 'Account', onSignOut, onSetupAccount, nowMs,
 }: WorkspaceListProps & Readonly<{
   onCreateArea: (origin: DialogOrigin) => void;
-  onSelectArea: (areaId: string, trigger: HTMLButtonElement) => void;
+  onSelectArea: (areaId: string) => void;
   onOpenSettings: () => void;
   onOpenToday: () => void;
   onOpenMemory: () => void;
@@ -87,8 +88,8 @@ export function WorkspaceLevelOne({
                       type="button"
                       className={styles.rowButton}
                       aria-label={area.name}
-                      data-nc-return-focus={`workspace-area:${area.id}`}
-                      onClick={(event) => onSelectArea(area.id, event.currentTarget)}
+                      {...returnFocusProps(`workspace-area:${area.id}`)}
+                      onClick={() => onSelectArea(area.id)}
                     >
                       <span className={styles.rowIcon} aria-hidden="true">
                         <Icon name="folder" />

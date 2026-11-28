@@ -8,6 +8,7 @@ import {
   isClosed, trackActivityState, trackDisplayTitle, trackRecentAt, type Track, type TrackPreviewKind,
 } from '../../../../core/domain/track.ts';
 import { Icon } from '../../ui/icon/public.tsx';
+import { returnFocusProps } from '../../ui/return-focus/public.ts';
 import styles from './focus-home.module.css';
 
 function highlightMatch(text: string, query: string): ReactNode {
@@ -80,7 +81,7 @@ export function MobileTrackFeedRow({
   unread: boolean;
   formatters: RelativeTimeFormatters;
   onOpenTrack: (trackId: string) => void;
-  onOpenArea?: (areaId: string, trigger: HTMLButtonElement) => void;
+  onOpenArea?: (areaId: string, trackId: string) => void;
   timestampMs?: number;
   current?: boolean;
   surface?: 'edge' | 'card';
@@ -152,10 +153,10 @@ export function MobileTrackFeedRow({
           {timeLabel}
           {hasAreaAction ? (
             <button type="button" className={styles.feedAreaButton} aria-label={`Open area ${areaName}`}
-              data-nc-return-focus={`focus-area:${track.id}`}
+              {...returnFocusProps(`focus-area:${track.id}`)}
               onClick={(event) => {
                 event.currentTarget.focus({ preventScroll: true });
-                onOpenArea(track.areaId, event.currentTarget);
+                onOpenArea(track.areaId, track.id);
               }}>
               <span className={styles.feedAreaLabel}>{area}<Icon name="chevron-right" size="sm" /></span>
             </button>

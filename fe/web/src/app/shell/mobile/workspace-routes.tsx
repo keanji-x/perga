@@ -26,7 +26,7 @@ export function WorkspaceRoute() { return <MobileWorkspaceRoute />; }
 
 export function AreaRoute() {
   const areaId = useRouteParam('/area/');
-  return <MobileWorkspaceRoute key={areaId} areaId={areaId} />;
+  return <MobileWorkspaceRoute areaId={areaId} />;
 }
 
 function MobileWorkspaceRoute({ areaId }: { areaId?: string }) {
@@ -38,7 +38,7 @@ function MobileWorkspaceRoute({ areaId }: { areaId?: string }) {
     if (!compact) go({ name: 'today' }, { replace: true });
   }, [compact, go]);
   if (!compact || routes === null) return null;
-  return <WorkspacePage key={historyIndex} historyIndex={historyIndex} {...routes} areaId={areaId} />;
+  return <WorkspacePage key={`${areaId ?? 'workspace'}:${historyIndex}`} historyIndex={historyIndex} {...routes} areaId={areaId} />;
 }
 
 function WorkspacePage({ controller, areaId, historyIndex, onOpenSettings, onSignOut, onSetupAccount, userLabel, nowMs }: WorkspaceRoutes & {
@@ -60,8 +60,8 @@ function WorkspacePage({ controller, areaId, historyIndex, onOpenSettings, onSig
     {areaId === undefined
       ? <WorkspaceLevelOne {...props} accountLabel={userLabel} onOpenSettings={onOpenSettings}
           onSignOut={onSignOut} onSetupAccount={onSetupAccount}
-          onSelectArea={(id, trigger) => {
-            rememberReturnFocus(trigger);
+          onSelectArea={(id) => {
+            rememberReturnFocus(`workspace-area:${id}`);
             go({ name: 'area', areaId: id });
           }}
           onCreateArea={controller.requestCreateArea}

@@ -1,9 +1,10 @@
 import { useRouter, useRouterState, type RouterHistory } from '@tanstack/react-router';
 import { createContext, useCallback, useContext, useLayoutEffect, useRef, useSyncExternalStore, type ReactNode } from 'react';
+import { findReturnFocusTarget, type ReturnFocusKey } from '../../ui/return-focus/public.ts';
 import { useState } from '../../ui/state/public.ts';
 
 export type AppEntry = Readonly<{ pathname: string; searchStr: string; hash: string }>;
-type ObservedEntry = { location: AppEntry; scrollTop: number; view?: unknown; returnFocus?: string };
+type ObservedEntry = { location: AppEntry; scrollTop: number; view?: unknown; returnFocus?: ReturnFocusKey };
 type HistoryAction = Parameters<Parameters<RouterHistory['subscribe']>[0]>[0]['action']['type'];
 type Snapshot = Readonly<{
   canGoBack: boolean;
@@ -71,7 +72,7 @@ export function createAppHistory(history: RouterHistory, readEntry: (location: R
       return 0;
     },
     returnFocus: (index: number) => index === current ? entries.get(index)?.returnFocus : undefined,
-    rememberReturnFocus: (key: string) => {
+    rememberReturnFocus: (key: ReturnFocusKey) => {
       const entry = entries.get(current);
       if (entry !== undefined) entry.returnFocus = key;
     },
@@ -120,8 +121,7 @@ export function useHistoryReturnFocus(ready: boolean) {
     if (!ready || lastAction !== 'BACK' || document.activeElement !== document.body) return;
     const key = stack?.returnFocus(index);
     if (key === undefined) return;
-    const target = Array.from(document.querySelectorAll<HTMLButtonElement>('[data-nc-return-focus]'))
-      .find((button) => button.dataset.ncReturnFocus === key);
+    const target = findReturnFocusTarget(key);
     if (target?.isConnected && target.closest('[inert]') === null
       && target.getClientRects().length > 0 && getComputedStyle(target).visibility === 'visible') {
       target.focus({ preventScroll: true });
@@ -130,10 +130,7 @@ export function useHistoryReturnFocus(ready: boolean) {
 
   useLayoutEffect(restoreReturnFocus, [restoreReturnFocus]);
 
-  const rememberReturnFocus = (trigger: HTMLButtonElement) => {
-    const key = trigger.dataset.ncReturnFocus;
-    if (key !== undefined) stack?.rememberReturnFocus(key);
-  };
+  const rememberReturnFocus = (key: ReturnFocusKey) => stack?.rememberReturnFocus(key);
   return { rememberReturnFocus, restoreReturnFocus };
 }
 

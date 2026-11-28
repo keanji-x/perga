@@ -103,7 +103,7 @@ it('returns from a second Track through Area to the original Track', async () =>
   await expect.poll(() => router.state.location.pathname).toBe('/track/second');
   await back('Project').click();
   await back('Report').click();
-  await expect.element(button('Open area Project')).toBeVisible();
+  await expect.element(button('Open area Project')).toHaveFocus();
   expect(router.state.location.pathname).toBe(track);
 });
 

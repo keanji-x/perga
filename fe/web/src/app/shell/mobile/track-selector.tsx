@@ -3,12 +3,13 @@ import { TrackTitle } from '../../../features/track/title/public.tsx';
 import { trackDisplayTitle, type Track } from '../../../../../core/domain/track.ts';
 import { Icon } from '../../../ui/icon/public.tsx';
 import type { EditableTitleProps } from '../../../ui/editable-title/public.tsx';
+import { returnFocusProps } from '../../../ui/return-focus/public.ts';
 import styles from './area-selector.module.css';
 
 /** The title opens the existing workspace page; title editing stays with its owner. */
 export function TrackSelector({ track, onOpenTracks, onVisible, controls }: Readonly<{
   track: Track;
-  onOpenTracks: (trigger: HTMLButtonElement) => void;
+  onOpenTracks: () => void;
   onVisible?: () => void;
   controls: Parameters<NonNullable<EditableTitleProps['readView']>>[0];
 }>) {
@@ -17,10 +18,10 @@ export function TrackSelector({ track, onOpenTracks, onVisible, controls }: Read
 
   return <div className={styles.trackIdentity}>
     <button type="button" ref={controls.titleRef} className={styles.trackButton} data-nc-page-title={visible ? '' : undefined}
-      data-nc-return-focus="report-title"
+      {...returnFocusProps('report-title')}
       aria-label={`Switch track, ${trackDisplayTitle(track.title)}`} onClick={(event) => {
         event.currentTarget.focus({ preventScroll: true });
-        onOpenTracks(event.currentTarget);
+        onOpenTracks();
       }}
       onKeyDown={(event) => { if (event.key === 'F2') { event.preventDefault(); controls.beginEditing(); } }}>
       <span className={styles.trackLabel}><TrackTitle track={track} /></span><Icon name="chevron-down" size="sm" />
