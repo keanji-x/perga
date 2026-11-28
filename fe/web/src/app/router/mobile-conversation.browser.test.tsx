@@ -157,6 +157,7 @@ it.each(['focus and keyboard', 'trusted pointer'] as const)('revokes retained na
   const editor = await page.getByRole('textbox', { name: 'Message', exact: true }).findElement() as HTMLElement;
   const footer = editor.closest<HTMLElement>('[data-nc-sheet-footer]')!;
   const dialog = editor.closest('dialog')!;
+  const panel = dialog.querySelector<HTMLElement>('[data-nc-sheet-panel]')!;
   await page.elementLocator(editor).fill('Retained draft');
   const submit = page.getByRole('button', { name: 'Send', exact: true }).element() as HTMLElement;
   await expect.poll(() => dialog.getAnimations({ subtree: true }).every(animation => animation.playState !== 'running')).toBe(true);
@@ -166,6 +167,12 @@ it.each(['focus and keyboard', 'trusted pointer'] as const)('revokes retained na
   document.addEventListener('pointerdown', observe, true);
   try {
     view.rerender(surface(false));
+    // Hold both surfaces at close commit while the driver sends real input.
+    const [exit] = panel.getAnimations();
+    const [footerExit] = footer.getAnimations();
+    exit.pause(); footerExit.pause();
+    await Promise.all([exit.ready, footerExit.ready]);
+    exit.currentTime = footerExit.currentTime = 0;
     expect(dialog.open).toBe(true);
     expect(editor.isConnected).toBe(true);
     if (interaction === 'focus and keyboard') {
@@ -183,6 +190,7 @@ it.each(['focus and keyboard', 'trusted pointer'] as const)('revokes retained na
     expect(editor.isConnected).toBe(true);
     expect(footer.inert).toBe(true);
     expect(footer.getAttribute('aria-hidden')).toBe('true');
+    exit.finish();
     await expect.poll(() => dialog.open).toBe(false);
   } finally { document.removeEventListener('pointerdown', observe, true); }
 });
