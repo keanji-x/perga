@@ -53,6 +53,7 @@ jobs:
           test -s site/dist/essays/index.html
           test -s site/dist/essays/rust-to-csharp.html
           test -s site/dist/essays/why-report-centric.html
+          test -s site/dist/feed.xml
           test -s site/dist/assets/hero.png
           test -s site/dist/favicon.svg
           test -s site/dist/icon-192.png

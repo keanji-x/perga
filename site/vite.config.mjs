@@ -166,6 +166,7 @@ function buildEditorialPageHtml(markdown, markSvg, {
   <link rel="icon" type="image/svg+xml" href="${assetPrefix}favicon.svg?v=3" />
   <link rel="icon" type="image/png" sizes="192x192" href="${assetPrefix}icon-192.png" />
   <link rel="apple-touch-icon" href="${assetPrefix}icon-192.png" />
+  <link rel="alternate" type="application/rss+xml" title="Perga Essays" href="https://keanji-x.github.io/perga/feed.xml" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;0,6..72,600;1,6..72,400&display=swap" rel="stylesheet" />
@@ -319,6 +320,41 @@ function buildEditorialPageHtml(markdown, markSvg, {
 `;
 }
 
+const SITE_BASE_URL = 'https://keanji-x.github.io/perga';
+
+function buildRssFeedXml(essays) {
+  const sorted = [...essays].sort((a, b) => Date.parse(b.pubDate) - Date.parse(a.pubDate));
+  const lastBuildDate = sorted[0]?.pubDate ?? new Date().toUTCString();
+  const itemsXml = sorted
+    .map((essay) => {
+      const link = `${SITE_BASE_URL}/essays/${essay.slug}`;
+      return [
+        '    <item>',
+        `      <title>${escapeHtml(essay.heading)}</title>`,
+        `      <link>${escapeHtml(link)}</link>`,
+        `      <guid isPermaLink="true">${escapeHtml(link)}</guid>`,
+        `      <pubDate>${escapeHtml(essay.pubDate)}</pubDate>`,
+        `      <description>${escapeHtml(essay.summary)}</description>`,
+        '    </item>',
+      ].join('\n');
+    })
+    .join('\n');
+
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom">
+  <channel>
+    <title>Perga Essays</title>
+    <link>${SITE_BASE_URL}/essays/</link>
+    <description>Engineering notes from building and dogfooding Perga across multi-day, multi-model coding workflows.</description>
+    <language>en</language>
+    <lastBuildDate>${escapeHtml(lastBuildDate)}</lastBuildDate>
+    <atom:link href="${SITE_BASE_URL}/feed.xml" rel="self" type="application/rss+xml" />
+${itemsXml}
+  </channel>
+</rss>
+`;
+}
+
 function copyCanonicalAssetsAndBuildEditorialPages() {
   const assetCopies = [
     ['templates/equity-research/widgets/range-axis.html', 'widgets/range-axis.html'],
@@ -328,18 +364,35 @@ function copyCanonicalAssetsAndBuildEditorialPages() {
     ['fe/web/public/icons/perga-192.png', 'icon-192.png'],
   ];
 
+  const essays = [
+    {
+      src: 'docs/essays/01-rust-to-csharp-deleting-ai-slop.md',
+      slug: 'rust-to-csharp.html',
+      heading: 'Why I Rewrote a 966k-Line AI-Built Rust Codebase in C#',
+      summary: 'After 966k lines of AI-generated Rust stalled on compile times, worktree disk bloat, and defensive review loops, I rewrote the backend in C# in nine days—and kept only 3,300 lines of Rust.',
+      metaDescription: 'After 966k lines of AI-generated Rust stalled on compile times, worktree disk bloat, and defensive review loops, I rewrote the backend in C#.',
+      pubDate: 'Wed, 25 Nov 2026 12:00:00 GMT',
+    },
+    {
+      src: 'docs/essays/03-why-report-centric.md',
+      slug: 'why-report-centric.html',
+      heading: 'Stop Scrolling Chat Logs: Why I Built a Report-Centric Agent Harness',
+      summary: 'Why the medium between humans and parallel agents has to be bounded, why plain Markdown specs fail on both readability and maintainability, and the three primitives behind Perga reports.',
+      metaDescription: 'Why the medium between humans and parallel agents has to be bounded, why specs drift, and the three primitives behind Perga reports.',
+      pubDate: 'Fri, 27 Nov 2026 15:50:00 GMT',
+    },
+  ];
+
   const essaysIndexMarkdown = [
     '# Essays',
     '',
-    'Notes from building and dogfooding [Perga](https://github.com/keanji-x/perga) across multi-day, multi-model coding workflows.',
-    '',
-    '## [Why I Rewrote a 966k-Line AI-Built Rust Codebase in C#](./rust-to-csharp.html)',
-    '',
-    'After 966k lines of AI-generated Rust stalled on compile times, worktree disk bloat, and defensive review loops, I rewrote the backend in C# in nine days—and kept only 3,300 lines of Rust.',
-    '',
-    '## [Stop Scrolling Chat Logs: Why I Built a Report-Centric Agent Harness](./why-report-centric.html)',
-    '',
-    'Why the medium between humans and parallel agents has to be bounded, why plain Markdown specs fail on both readability and maintainability, and the three primitives behind Perga reports.',
+    'Notes from building and dogfooding [Perga](https://github.com/keanji-x/perga) across multi-day, multi-model coding workflows. Subscribe via [RSS](../feed.xml).',
+    ...essays.flatMap((essay) => [
+      '',
+      `## [${essay.heading}](./${essay.slug})`,
+      '',
+      essay.summary,
+    ]),
   ].join('\n');
 
   const editorialPages = [
@@ -348,7 +401,7 @@ function copyCanonicalAssetsAndBuildEditorialPages() {
       dst: 'vision.html',
       title: 'Vision — Perga',
       description: 'Perga Vision and Fundamental Tensions: organizing multiple AIs for long-horizon work.',
-      canonicalUrl: 'https://keanji-x.github.io/perga/vision.html',
+      canonicalUrl: `${SITE_BASE_URL}/vision.html`,
       assetPrefix: './',
       navLinks: [
         { href: './', label: '← Home' },
@@ -362,42 +415,30 @@ function copyCanonicalAssetsAndBuildEditorialPages() {
       dst: 'essays/index.html',
       title: 'Essays — Perga',
       description: 'Engineering notes from building Perga: rewriting 966k lines of AI-built Rust in C#, and why multi-agent work needs a report-centric harness.',
-      canonicalUrl: 'https://keanji-x.github.io/perga/essays/',
+      canonicalUrl: `${SITE_BASE_URL}/essays/`,
       assetPrefix: '../',
       navLinks: [
         { href: '../', label: '← Home' },
         { href: '../vision.html', label: 'Vision' },
+        { href: '../feed.xml', label: 'RSS' },
         { href: 'https://github.com/keanji-x/perga', label: 'GitHub ↗', external: true },
       ],
     },
-    {
-      src: 'docs/essays/01-rust-to-csharp-deleting-ai-slop.md',
-      dst: 'essays/rust-to-csharp.html',
-      title: 'Why I Rewrote a 966k-Line AI-Built Rust Codebase in C# — Perga',
-      description: 'After 966k lines of AI-generated Rust stalled on compile times, worktree disk bloat, and defensive review loops, I rewrote the backend in C#.',
-      canonicalUrl: 'https://keanji-x.github.io/perga/essays/rust-to-csharp.html',
-      assetPrefix: '../',
-      navLinks: [
-        { href: '../', label: '← Home' },
-        { href: './', label: 'Essays' },
-        { href: '../vision.html', label: 'Vision' },
-        { href: 'https://github.com/keanji-x/perga', label: 'GitHub ↗', external: true },
-      ],
-    },
-    {
-      src: 'docs/essays/03-why-report-centric.md',
-      dst: 'essays/why-report-centric.html',
-      title: 'Stop Scrolling Chat Logs: Why I Built a Report-Centric Agent Harness — Perga',
-      description: 'Why the medium between humans and parallel agents has to be bounded, why specs drift, and the three primitives behind Perga reports.',
-      canonicalUrl: 'https://keanji-x.github.io/perga/essays/why-report-centric.html',
+    ...essays.map((essay) => ({
+      src: essay.src,
+      dst: `essays/${essay.slug}`,
+      title: `${essay.heading} — Perga`,
+      description: essay.metaDescription,
+      canonicalUrl: `${SITE_BASE_URL}/essays/${essay.slug}`,
       assetPrefix: '../',
       navLinks: [
         { href: '../', label: '← Home' },
         { href: './', label: 'Essays' },
         { href: '../vision.html', label: 'Vision' },
+        { href: '../feed.xml', label: 'RSS' },
         { href: 'https://github.com/keanji-x/perga', label: 'GitHub ↗', external: true },
       ],
-    },
+    })),
   ];
 
   return {
@@ -417,6 +458,8 @@ function copyCanonicalAssetsAndBuildEditorialPages() {
         mkdirSync(dirname(dst), { recursive: true });
         writeFileSync(dst, buildEditorialPageHtml(md, markSvg, page), 'utf8');
       }
+
+      writeFileSync(resolve(outDir, 'feed.xml'), buildRssFeedXml(essays), 'utf8');
     },
   };
 }
