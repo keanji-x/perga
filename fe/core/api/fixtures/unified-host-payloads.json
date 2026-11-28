@@ -168,7 +168,12 @@
     "pendingInteractions": null,
     "runtimeStatus": null,
     "runtimeTasks": null,
-    "turns": null
+    "turns": null,
+    "mcpHealth": null
+  },
+  "mcpHealth": {
+    "failed": { "status": "failed", "error": "MCP server returned HTTP 502." },
+    "unconnected": { "status": "unconnected", "error": null }
   },
   "summary": {
     "session": {

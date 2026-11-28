@@ -19,6 +19,8 @@ public sealed record McpSessionRegistration(
     McpSessionPrincipal Principal,
     IReadOnlyDictionary<string, McpServerConfig> McpServers);
 
+public sealed record KernelMcpHandshake(string TrackId, string SessionId, string? RuntimeBindingId);
+
 public interface IMcpSessionBridge
 {
     McpSessionRegistration RegisterSession(
@@ -37,6 +39,9 @@ public interface IMcpSessionBridge
 
     McpSessionPrincipal? ResolveToken(string token);
     string? GetTokenForSession(string sessionId);
+    void RecordKernelMcpHandshake(McpSessionPrincipal principal) { }
+    bool HasKernelMcpHandshake(string sessionId, string? runtimeBindingId = null) => false;
+    event Action<KernelMcpHandshake>? KernelMcpHandshakeRecorded { add { } remove { } }
     void UpdateLeadStatus(string trackId, string? newLeadSessionId);
     void UpdateTrackPlugins(string trackId, IReadOnlyList<string> enabledPlugins);
     void RevokeSession(string sessionId, string? runtimeBindingId = null);
@@ -48,6 +53,7 @@ public sealed class InMemoryMcpSessionBridge : IMcpSessionBridge
     private readonly string _baseUri;
     private readonly ConcurrentDictionary<string, McpSessionPrincipal> _byToken = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, string> _tokenBySession = new(StringComparer.Ordinal);
+    private readonly HashSet<string> _kernelHandshakes = new(StringComparer.Ordinal);
     private readonly object _gate = new();
 
     public InMemoryMcpSessionBridge(string baseUri = "http://127.0.0.1:5000")
@@ -75,6 +81,7 @@ public sealed class InMemoryMcpSessionBridge : IMcpSessionBridge
             if (_tokenBySession.TryRemove(sessionId, out var oldToken))
             {
                 _byToken.TryRemove(oldToken, out _);
+                _kernelHandshakes.Remove(oldToken);
             }
 
             var token = $"pg_{Guid.NewGuid():N}";
@@ -110,6 +117,25 @@ public sealed class InMemoryMcpSessionBridge : IMcpSessionBridge
 
     public string? GetTokenForSession(string sessionId) =>
         _tokenBySession.TryGetValue(sessionId, out var token) ? token : null;
+
+    public event Action<KernelMcpHandshake>? KernelMcpHandshakeRecorded;
+
+    public void RecordKernelMcpHandshake(McpSessionPrincipal principal)
+    {
+        lock (_gate)
+        {
+            if (!_tokenBySession.TryGetValue(principal.SessionId, out var token) || token != principal.Token ||
+                !_kernelHandshakes.Add(token)) return;
+        }
+        KernelMcpHandshakeRecorded?.Invoke(new(principal.TrackId, principal.SessionId, principal.RuntimeBindingId));
+    }
+
+    public bool HasKernelMcpHandshake(string sessionId, string? runtimeBindingId = null)
+    {
+        lock (_gate)
+            return _tokenBySession.TryGetValue(sessionId, out var token) && _kernelHandshakes.Contains(token) &&
+                (runtimeBindingId is null || _byToken[token].RuntimeBindingId == runtimeBindingId);
+    }
 
     public void UpdateLeadStatus(string trackId, string? newLeadSessionId)
     {
@@ -152,6 +178,7 @@ public sealed class InMemoryMcpSessionBridge : IMcpSessionBridge
                 runtimeBindingId is not null && _byToken[token].RuntimeBindingId != runtimeBindingId) return;
             _tokenBySession.TryRemove(sessionId, out _);
             _byToken.TryRemove(token, out _);
+            _kernelHandshakes.Remove(token);
         }
     }
 
@@ -165,6 +192,7 @@ public sealed class InMemoryMcpSessionBridge : IMcpSessionBridge
                 {
                     _byToken.TryRemove(kvp.Key, out _);
                     _tokenBySession.TryRemove(kvp.Value.SessionId, out _);
+                    _kernelHandshakes.Remove(kvp.Key);
                 }
             }
         }

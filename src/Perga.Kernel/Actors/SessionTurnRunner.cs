@@ -347,6 +347,8 @@ public sealed partial class TrackActor
                     break;
 
                 case UnifiedAgentEvent.TurnCompleted tc:
+                    if (active.AgentSession.ExpectsKernelMcpHandshake)
+                        await actor.ObserveTurnMcpExecutionAsync(active).ConfigureAwait(false);
                     outcome.Conclusive = true;
                     outcome.FinalUsage = tc.Usage;
                     outcome.FinalUsageRevision = tc.ContextUsageRevision;

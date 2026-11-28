@@ -15,6 +15,7 @@ import { codexRuntime } from "@botiverse/oar/runtimes/codex";
 import { opencodeRuntime } from "@botiverse/oar/runtimes/opencode";
 import { scriptedRuntime } from "@botiverse/oar/testing";
 import { OarBridgeServer, type BridgeTransport } from "../src/bridge.ts";
+import { withLoopbackNoProxy } from "../src/bridge-helpers.ts";
 import { prepareMcpServers } from "../src/mcp-proxy.ts";
 import { preparePromptImages } from "../src/prompt-images.ts";
 
@@ -37,6 +38,164 @@ class MemoryTransport implements BridgeTransport {
       .map((m) => m.params as Record<string, unknown>);
   }
 }
+
+test("withLoopbackNoProxy adds both bypass variables without changing the proxy settings", () => {
+  const env = { HTTP_PROXY: "http://proxy.invalid", ALL_PROXY: "socks5://proxy.invalid", NO_PROXY: "", no_proxy: "" };
+  const bypass = "localhost,127.0.0.1,::1";
+  assert.deepEqual(withLoopbackNoProxy(env, [{ name: "perga", type: "http", url: "http://127.0.0.1/mcp/kernel" }], {}),
+    { ...env, NO_PROXY: bypass, no_proxy: bypass });
+});
+
+test("withLoopbackNoProxy preserves the independent effective entries for IPv6 MCP", () => {
+  const env = { NO_PROXY: "internal.test, LOCALHOST,Internal.Test" };
+  assert.deepEqual(withLoopbackNoProxy(env, [{ name: "perga", type: "http", url: "http://[::1]:5000/mcp/kernel" }],
+    { NO_PROXY: "overridden.test", no_proxy: ".example.test,localhost" }), {
+    NO_PROXY: "internal.test,LOCALHOST,127.0.0.1,::1",
+    no_proxy: ".example.test,localhost,127.0.0.1,::1",
+  });
+});
+
+test("withLoopbackNoProxy applies bare wildcard rules to each alias", () => {
+  const servers = [{ name: "perga", type: "http", url: "http://localhost/mcp/kernel" }] as const;
+  const wildcardWithLoopback = "*,localhost,127.0.0.1,::1";
+  assert.deepEqual(withLoopbackNoProxy({ NO_PROXY: "*", no_proxy: "" }, servers, {}),
+    { NO_PROXY: wildcardWithLoopback, no_proxy: "*" });
+  assert.deepEqual(withLoopbackNoProxy({ NO_PROXY: null, no_proxy: "*" }, servers, {}),
+    { NO_PROXY: wildcardWithLoopback, no_proxy: "*" });
+  assert.deepEqual(withLoopbackNoProxy({ NO_PROXY: "*", no_proxy: "internal.test" }, servers, {}),
+    { NO_PROXY: wildcardWithLoopback, no_proxy: "internal.test,localhost,127.0.0.1,::1" });
+  assert.deepEqual(withLoopbackNoProxy({ NO_PROXY: "internal.test", no_proxy: "*" }, servers, {}),
+    { NO_PROXY: "internal.test,localhost,127.0.0.1,::1", no_proxy: "*" });
+});
+
+test("withLoopbackNoProxy treats a wildcard surrounded by spaces as a list entry", () => {
+  const servers = [{ name: "perga", type: "http", url: "http://localhost/mcp/kernel" }] as const;
+  const wildcardWithLoopback = "*,localhost,127.0.0.1,::1";
+  assert.deepEqual(withLoopbackNoProxy({ NO_PROXY: " * ", no_proxy: "" }, servers, {}),
+    { NO_PROXY: wildcardWithLoopback, no_proxy: null });
+  assert.deepEqual(withLoopbackNoProxy({ no_proxy: " * " }, servers, {}),
+    { no_proxy: wildcardWithLoopback });
+});
+
+test("withLoopbackNoProxy removes blank aliases and preserves absent and deleted aliases", () => {
+  const servers = [{ name: "perga", type: "http", url: "http://127.0.0.1/mcp/kernel" }] as const;
+  const bypass = "localhost,127.0.0.1,::1";
+  for (const [key, other] of [["NO_PROXY", "no_proxy"], ["no_proxy", "NO_PROXY"]] as const) {
+    assert.deepEqual(withLoopbackNoProxy(undefined, servers, { [key]: "internal.test" }), { [key]: `internal.test,${bypass}` });
+    for (const empty of ["", " ", null]) {
+      const overlay = { [other]: empty };
+      const inherited = { [key]: "internal.test", [other]: "overridden.test" };
+      assert.deepEqual(withLoopbackNoProxy(overlay, servers, inherited),
+        { [key]: `internal.test,${bypass}`, [other]: null });
+    }
+  }
+});
+
+test("withLoopbackNoProxy fills both aliases when neither has a value", () => {
+  const servers = [{ name: "perga", type: "http", url: "http://127.0.0.1/mcp/kernel" }] as const;
+  const bypass = "localhost,127.0.0.1,::1";
+  const emptyEnvs: Array<Record<string, string | null> | undefined> = [
+    undefined,
+    { NO_PROXY: null, no_proxy: null },
+    { NO_PROXY: "", no_proxy: null },
+    { no_proxy: "" },
+  ];
+  for (const env of emptyEnvs) {
+    assert.deepEqual(withLoopbackNoProxy(env, servers, {}), { NO_PROXY: bypass, no_proxy: bypass });
+  }
+});
+
+test("OarBridgeServer removes blank and explicitly deleted proxy aliases from the Codex child environment", {
+  skip: process.platform === "win32" && "Windows treats environment variable names as case-insensitive",
+}, async (t) => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "perga-oar-no-proxy-"));
+  const stubPath = path.join(tmpDir, "codex-stub.sh");
+  const capturedPath = path.join(tmpDir, "proxy-env.txt");
+  const originalUpper = process.env.NO_PROXY;
+  const originalLower = process.env.no_proxy;
+  t.after(() => {
+    if (originalUpper === undefined) delete process.env.NO_PROXY;
+    else process.env.NO_PROXY = originalUpper;
+    if (originalLower === undefined) delete process.env.no_proxy;
+    else process.env.no_proxy = originalLower;
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  fs.writeFileSync(stubPath, '#!/bin/sh\nprintf \'%s\\n\' "${NO_PROXY-unset}" "${no_proxy-unset}" > proxy-env.txt\nexit 1\n', { mode: 0o755 });
+  const controlledCodex = {
+    ...codexRuntime,
+    listModels: undefined,
+    installation: async () => ({
+      kind: "available" as const,
+      via: "executable" as const,
+      command: stubPath,
+      version: "0.171.0",
+    }),
+  };
+  const cases = [
+    {
+      name: "empty uppercase alias inherited from the parent",
+      inheritedUpper: "",
+      inheritedLower: "lower.example",
+      env: {},
+      expected: ["unset", "lower.example,localhost,127.0.0.1,::1"],
+    },
+    {
+      name: "whitespace lowercase alias from the session",
+      inheritedUpper: "upper.example",
+      inheritedLower: "overridden.invalid",
+      env: { no_proxy: " " },
+      expected: ["upper.example,localhost,127.0.0.1,::1", "unset"],
+    },
+    {
+      name: "uppercase alias explicitly deleted by the session",
+      inheritedUpper: "overridden.invalid",
+      inheritedLower: "internal.test",
+      env: { NO_PROXY: null },
+      expected: ["unset", "internal.test,localhost,127.0.0.1,::1"],
+    },
+    {
+      name: "lowercase wildcard with the uppercase alias deleted by the session",
+      inheritedUpper: "overridden.invalid",
+      inheritedLower: "*",
+      env: { NO_PROXY: null },
+      expected: ["*,localhost,127.0.0.1,::1", "*"],
+    },
+  ];
+  for (const { name, inheritedUpper, inheritedLower, env, expected } of cases) {
+    await t.test(name, async () => {
+      process.env.NO_PROXY = inheritedUpper;
+      process.env.no_proxy = inheritedLower;
+      const transport = new MemoryTransport();
+      const bridge = new OarBridgeServer(transport, async () => controlledCodex);
+      try {
+        await bridge.handleMessage({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "session/open",
+          params: {
+            runtime: "codex",
+            cwd: tmpDir,
+            env,
+            mcpServers: [{ name: "perga", type: "http", url: "http://127.0.0.1/mcp/kernel" }],
+          },
+        });
+        assert.ok(transport.responseFor(1).error, "Stub exits after capturing the child environment");
+        assert.equal(fs.readFileSync(capturedPath, "utf8"), `${expected.join("\n")}\n`);
+      } finally {
+        await bridge.dispose();
+        fs.rmSync(capturedPath, { force: true });
+      }
+    });
+  }
+});
+
+test("withLoopbackNoProxy leaves the environment alone without a loopback HTTP server", () => {
+  const env = { NO_PROXY: "internal.test" };
+  assert.equal(withLoopbackNoProxy(env, [], {}), env);
+  assert.equal(withLoopbackNoProxy(env, [{ name: "perga", type: "http", url: "https://example.test/localhost" },
+    { name: "local", command: "localhost" }], {}), env);
+});
 
 test("prepareMcpServers uses unguessable route tokens, rejects predictable paths, and injects upstream headers", async () => {
   let receivedAuth: string | undefined;

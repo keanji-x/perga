@@ -1,6 +1,7 @@
 import { terminalPanelItem } from '../domain/panel-item.js';
 import { workspaceForTrack } from '../domain/track.js';
 import { describe,expect,it } from 'vitest';
+import { z } from 'zod';
 import { agentProvidersOperation,managedProvidersOperation } from '../domain/agent-providers.js';
 import { sessionContextUsage } from '../domain/session-context-usage.js';
 import { trackTemplatesOperation } from '../domain/track.js';
@@ -476,7 +477,7 @@ describe('Perga /api/v1 protocol contracts', () => {
         { id: 5, sessionId: 'ses_lead', turnId: 'turn_1', kind: 'assistant_text', payload: { v: 1, text: 'Report inspected.' }, createdAtMs: 1300 },
       ],
       activeTurn: null,
-      state: 'idle', readonlyReason: null, canReopen: false, workerPaused: false, lastTurn: null, unknownDetail: null, attachmentsSupported: false,
+      state: 'idle', readonlyReason: null, canReopen: false, workerPaused: false, lastTurn: null, unknownDetail: null, mcpHealth: null, attachmentsSupported: false,
       session: {
         id: 'ses_lead',
         trackId: 'trk_1',
@@ -629,7 +630,7 @@ describe('Perga /api/v1 protocol contracts', () => {
       ],
       hasMoreBefore: true,
       activeTurn: null,
-      state: 'idle', readonlyReason: null, canReopen: false, workerPaused: false, lastTurn: null, unknownDetail: null, attachmentsSupported: false,
+      state: 'idle', readonlyReason: null, canReopen: false, workerPaused: false, lastTurn: null, unknownDetail: null, mcpHealth: null, attachmentsSupported: false,
       session: {
         id: 'ses_lead', trackId: 'trk_1', isLead: true,
         title: 'Lead', provider: 'codex', model: 'gpt-5', nativeThreadId: 'thr_1', epoch: 1,
@@ -654,7 +655,7 @@ describe('Perga /api/v1 protocol contracts', () => {
     const run = conversationRunOperation('ses_lead').responseSchema.parse({
       items: [],
       activeTurn: null,
-      state: 'idle', readonlyReason: null, canReopen: false, workerPaused: false, lastTurn: null, unknownDetail: null, attachmentsSupported: false,
+      state: 'idle', readonlyReason: null, canReopen: false, workerPaused: false, lastTurn: null, unknownDetail: null, mcpHealth: null, attachmentsSupported: false,
       session: {
         id: 'ses_lead', trackId: 'trk_1', isLead: true,
         title: 'Lead', provider: 'codex', model: 'gpt-5', nativeThreadId: 'thr_1', epoch: 1,
@@ -811,6 +812,24 @@ it('decodes task ownership and latest evidence from the C# task fixture', () => 
   expect(task).toMatchObject({ sessionId: 'session', runCount: 2, outcome: 'attention', workerResult: { summary: 'Latest result' } });
   expect(taskEvidence(task)).toMatchObject({ gatePassed: false, gateSteps: [{ output: 'Check failed' }] });
   expect(task).not.toHaveProperty('latestAttemptId');
+});
+
+it('matches published MCP health status and required nullable fields', () => {
+  const definitions = JSON.parse(JSON.stringify(openapi.components.schemas)
+    .replaceAll('#/components/schemas/', '#/$defs/')) as Record<string, z.core.JSONSchema.JSONSchema>;
+  const published = z.fromJSONSchema({ $defs: definitions, $ref: '#/$defs/SessionItemsPageDto' });
+  const { mcpHealth: healthy, ...page } = hostPayloads.page;
+  expect(healthy).toBeNull();
+  expect(openapi.components.schemas.SessionMcpHealthDto.properties.status.enum).toEqual(['failed', 'unconnected']);
+
+  for (const schema of [sessionItemsPageDtoSchema, published]) {
+    for (const mcpHealth of [healthy, ...Object.values(hostPayloads.mcpHealth)])
+      expect(schema.parse({ ...page, mcpHealth })).toMatchObject({ mcpHealth });
+
+    expect(schema.safeParse(page).success).toBe(false);
+    for (const mcpHealth of [{ status: 'ready', error: null }, { status: 'unconnected' }, { error: null }])
+      expect(schema.safeParse({ ...page, mcpHealth }).success).toBe(false);
+  }
 });
 
 describe('session image attachment contract', () => {

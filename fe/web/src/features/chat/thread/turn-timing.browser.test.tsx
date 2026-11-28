@@ -59,6 +59,7 @@ it.each([390, 1280])('shows persisted duration and completion timestamp for ever
     canReopen: false,
     workerPaused: false,
     unknownDetail: null,
+    mcpHealth: null,
     attachmentsSupported: false,
     session: {
       id: 'ses_1', trackId: 'trk_1', isLead: true, title: 'Multi-turn', provider: 'codex', model: null,

@@ -3,11 +3,88 @@ import type {
   AvailableInstallation,
   AgentStatus,
   InstallationSnapshot,
+  McpServer,
   RawEvent,
   Runtime,
   Session,
   ToolOutputPart,
 } from "@botiverse/oar/browser";
+
+const LOOPBACK_HOSTS = ["localhost", "127.0.0.1", "::1"];
+
+function appendLoopbackHosts(value: string): string {
+  const entries = new Map<string, string>();
+  for (const entry of value.split(",").map(part => part.trim()).filter(Boolean)) {
+    const key = entry.toLowerCase();
+    if (!entries.has(key)) entries.set(key, entry);
+  }
+  for (const host of LOOPBACK_HOSTS) {
+    if (!entries.has(host)) entries.set(host, host);
+  }
+  return [...entries.values()].join(",");
+}
+
+export function withLoopbackNoProxy(
+  env: Readonly<Record<string, string | null>> | undefined,
+  mcpServers: readonly McpServer[],
+  inheritedEnv: Readonly<Record<string, string | undefined>>,
+): Readonly<Record<string, string | null>> | undefined {
+  const hasLoopback = mcpServers.some(server => {
+    if (!("type" in server) || server.type !== "http") return false;
+    const url = URL.parse(server.url);
+    return url !== null && (url.protocol === "http:" || url.protocol === "https:") &&
+      LOOPBACK_HOSTS.includes(url.hostname.replace(/^\[|\]$/g, ""));
+  });
+  if (!hasLoopback) return env;
+
+  const effective = (key: "NO_PROXY" | "no_proxy") => env?.[key] === undefined ? inheritedEnv[key] : env[key];
+  const upper = effective("NO_PROXY");
+  const lower = effective("no_proxy");
+  const hasUpper = typeof upper === "string" && upper.trim().length > 0;
+  const hasLower = typeof lower === "string" && lower.trim().length > 0;
+  const childEnv = { ...env };
+
+  // reqwest needs explicit loopback IP entries. curl and Python use a bare "*" for global bypass.
+  // OAR removes aliases set to null from the child environment.
+  if (hasUpper && hasLower) {
+    childEnv.NO_PROXY = appendLoopbackHosts(upper);
+    childEnv.no_proxy = lower === "*" ? "*" : appendLoopbackHosts(lower);
+  } else if (hasUpper) {
+    childEnv.NO_PROXY = appendLoopbackHosts(upper);
+    if (upper === "*") childEnv.no_proxy = "*";
+    else if (lower !== undefined) childEnv.no_proxy = null;
+  } else if (hasLower) {
+    if (lower === "*") {
+      childEnv.NO_PROXY = appendLoopbackHosts(lower);
+      childEnv.no_proxy = "*";
+    } else {
+      childEnv.no_proxy = appendLoopbackHosts(lower);
+      if (upper !== undefined) childEnv.NO_PROXY = null;
+    }
+  } else {
+    childEnv.NO_PROXY = childEnv.no_proxy = LOOPBACK_HOSTS.join(",");
+  }
+  return childEnv;
+}
+
+export function inspectCodexKernelMcpStatus(record: RawEvent) {
+  if (record.kind !== "frame" || record.body.type !== "mcpServer/startupStatus/updated") return null;
+  const params = asRecord(record.body.native);
+  if (params?.name !== "perga" || (params.status !== "failed" && params.status !== "cancelled")) return null;
+  const error = params.status === "cancelled" ? "MCP startup was cancelled." : describeMcpStartupFailure(asString(params.error) ?? "");
+  return { kind: "mcp_status", server: "perga", status: "failed", error } as const;
+}
+
+function describeMcpStartupFailure(error: string): string {
+  const http = /\bHTTP\s+(\d{3})\b/i.exec(error);
+  if (http) return `MCP server returned HTTP ${http[1]}.`;
+  if (/timed?\s*out/i.test(error)) return "MCP handshake timed out.";
+  if (/connection refused|econnrefused/i.test(error)) return "Could not connect to the Perga MCP endpoint (connection refused).";
+  if (/\bproxy\b/i.test(error)) return "Failed to connect through the configured proxy.";
+  if (/name or service not known|failed to lookup|enotfound|dns/i.test(error)) return "Could not resolve the Perga MCP host.";
+  if (/\btls\b|\bssl\b|certificate/i.test(error)) return "TLS handshake failed for the Perga MCP endpoint.";
+  return "MCP startup failed.";
+}
 
 export function statusEmissionKey(status: AgentStatus): string {
   const { lastEventAt: ignored, ...structural } = status as AgentStatus & { lastEventAt?: number };

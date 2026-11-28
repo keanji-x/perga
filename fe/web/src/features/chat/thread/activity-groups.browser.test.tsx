@@ -580,7 +580,7 @@ describe('what a failed call says to assistive technology', () => {
 it('reads Perga thoughts and tool details as live items update and a reply follows', async () => {
   const read = (items: unknown[]) => buildConversationTranscript(conversationItemsOperation('c1', null).responseSchema.parse({
     session: { id: 'c1', trackId: 'w1', provider: 'opencode', contextUsage: null, createdAtMs: 1, updatedAtMs: 1 },
-    state: 'running', readonlyReason: null, canReopen: false, workerPaused: false, lastTurn: null, unknownDetail: null, attachmentsSupported: false, items,
+    state: 'running', readonlyReason: null, canReopen: false, workerPaused: false, lastTurn: null, unknownDetail: null, mcpHealth: null, attachmentsSupported: false, items,
   }).items, null);
   const row = (id: number, kind: string, payload: unknown) => ({ id, sessionId: 'c1', turnId: 'turn', kind, payload, createdAtMs: id });
   const thought: TranscriptEntry = { id: read([row(1, 'thinking', { text: 'Checking the inventory' })])[0].id, author: 'activity', verb: 'Thinking', state: 'running', target: null, tool: null,

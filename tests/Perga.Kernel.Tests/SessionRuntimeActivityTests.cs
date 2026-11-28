@@ -1,6 +1,7 @@
 using System.Runtime.CompilerServices;
 using Perga.AgentKit;
 using Perga.Contracts;
+using Perga.Kernel.Events;
 using Perga.Kernel.Mcp;
 using Perga.Kernel.Tests.Fakes;
 
@@ -8,6 +9,126 @@ namespace Perga.Kernel.Tests;
 
 public sealed class SessionRuntimeActivityTests
 {
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task McpWarningFollowsRuntimeFailureOrTurnCompletionAndCurrentHandshakeClearsIt(bool reportsFailure)
+    {
+        await using var ctx = new KernelTestContext();
+        var (_, snapshot) = await ctx.CreateDefaultTrackAsync();
+        var id = snapshot.Track.LeadSessionId!;
+        var bridge = ctx.Kernel.McpSessionBridge;
+        var human = new InteropPrincipal.Human();
+        using var events = ctx.EventHub.Subscribe(snapshot.Track.Id);
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var executed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var finish = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        ctx.AgentRuntime.OnOpenedSession = provider => provider.ExpectsKernelMcpHandshake = true;
+        ctx.AgentRuntime.TurnScript = (_, _, ct) => Stream(ct);
+        async IAsyncEnumerable<UnifiedAgentEvent> Stream([EnumeratorCancellation] CancellationToken ct)
+        {
+            yield return new UnifiedAgentEvent.ThinkingDelta("Starting work");
+            executed.TrySetResult();
+            await finish.Task.WaitAsync(ct);
+            yield return new UnifiedAgentEvent.TurnCompleted(null);
+        }
+
+        async Task ExpectHealthAsync(SessionMcpHealthDto? expected)
+        {
+            var page = await ctx.Kernel.GetSessionItemsAsync(id, new(), human, deadline.Token);
+            Assert.Equal(expected, page.McpHealth);
+        }
+
+        async Task ExpectRuntimeStatusAsync()
+        {
+            while ((await events.Reader.ReadAsync(deadline.Token)).Kind != KernelEventKinds.SessionRuntimeStatus) { }
+        }
+
+        var turn = ctx.SendAndWaitForTurnAsync(id, new("Check MCP", "mcp-status"), deadline.Token);
+        ScriptableFakeAgentSession? provider = null;
+        try
+        {
+            await executed.Task.WaitAsync(deadline.Token);
+            await ExpectHealthAsync(null);
+            if (reportsFailure)
+            {
+                provider = Assert.Single(ctx.AgentRuntime.OpenedSessions);
+                provider.EmitRuntimeActivity(new UnifiedAgentEvent.McpServerStatusChanged("perga", "failed", "HTTP 502"));
+                await ExpectRuntimeStatusAsync();
+                await ExpectHealthAsync(new(SessionMcpHealthStatus.Failed, "HTTP 502"));
+            }
+        }
+        finally { finish.TrySetResult(); }
+
+        Assert.Equal("completed", (await turn).Status);
+        if (reportsFailure)
+        {
+            while (events.Reader.TryRead(out var evt))
+                Assert.NotEqual(KernelEventKinds.SessionRuntimeStatus, evt.Kind);
+            await ExpectHealthAsync(new(SessionMcpHealthStatus.Failed, "HTTP 502"));
+        }
+        else
+        {
+            await ExpectRuntimeStatusAsync();
+            await ExpectHealthAsync(new(SessionMcpHealthStatus.Unconnected));
+        }
+
+        bridge.RecordKernelMcpHandshake(ctx.RuntimeCaller(id));
+        await ExpectRuntimeStatusAsync();
+        await ExpectHealthAsync(null);
+        if (provider is not null)
+        {
+            provider.EmitRuntimeActivity(new UnifiedAgentEvent.McpServerStatusChanged("perga", "failed", "Late failure"));
+            await ExpectHealthAsync(null);
+        }
+        await ctx.SendAndWaitForTurnAsync(id, new("Continue", "mcp-reuse"), deadline.Token);
+        Assert.Single(ctx.AgentRuntime.OpenedSessions);
+        await ExpectHealthAsync(null);
+    }
+
+    [Theory]
+    [InlineData(SessionMcpHealthStatus.Failed)]
+    [InlineData(SessionMcpHealthStatus.Unconnected)]
+    [InlineData(null)]
+    public async Task McpWarningForcesNextTurnToReopen(SessionMcpHealthStatus? status)
+    {
+        await using var ctx = new KernelTestContext();
+        var (_, snapshot) = await ctx.CreateDefaultTrackAsync();
+        var id = snapshot.Track.LeadSessionId!;
+        var bridge = ctx.Kernel.McpSessionBridge;
+        ctx.AgentRuntime.OnOpenedSession = provider => provider.ExpectsKernelMcpHandshake = status is not null;
+        ctx.AgentRuntime.TurnScript = (_, _, ct) => CompleteWithoutDeltas(ct);
+        static async IAsyncEnumerable<UnifiedAgentEvent> CompleteWithoutDeltas([EnumeratorCancellation] CancellationToken ct)
+        {
+            await Task.Yield();
+            ct.ThrowIfCancellationRequested();
+            yield return new UnifiedAgentEvent.TurnCompleted(null);
+        }
+
+        var previous = await ctx.OpenMcpCallerAsync(id);
+        var original = Assert.Single(ctx.AgentRuntime.OpenedSessions);
+        var human = new InteropPrincipal.Human();
+        if (status == SessionMcpHealthStatus.Failed)
+            original.EmitRuntimeActivity(new UnifiedAgentEvent.McpServerStatusChanged("perga", "failed", "HTTP 502"));
+        var expected = status is { } value
+            ? new SessionMcpHealthDto(value, value == SessionMcpHealthStatus.Failed ? "HTTP 502" : null)
+            : null;
+        Assert.Equal(expected, (await ctx.Kernel.GetSessionItemsAsync(id, new(), human, default)).McpHealth);
+
+        Assert.Equal("completed", (await ctx.SendAndWaitForTurnAsync(id, new("Retry", "mcp-retry"))).Status);
+        Assert.Equal(status is null ? 1 : 2, ctx.AgentRuntime.OpenedSessions.Count);
+        Assert.Equal(status is not null, original.Disposed);
+        if (status is not null)
+        {
+            var current = ctx.RuntimeCaller(id);
+            Assert.NotEqual(previous.RuntimeBindingId, current.RuntimeBindingId);
+            bridge.RecordKernelMcpHandshake(previous);
+            Assert.False(bridge.HasKernelMcpHandshake(id, current.RuntimeBindingId));
+            Assert.Equal(new SessionMcpHealthDto(SessionMcpHealthStatus.Unconnected),
+                (await ctx.Kernel.GetSessionItemsAsync(id, new(), human, default)).McpHealth);
+        }
+    }
+
     [Fact]
     public async Task BackgroundOutputDuringActivationPrecedesTheNewTurnsReply()
     {

@@ -2,14 +2,55 @@ using Perga.AgentKit;
 using Perga.Contracts;
 using Perga.Kernel.Events;
 using Perga.Kernel.Internal;
+using Perga.Kernel.Ports;
 
 namespace Perga.Kernel.Actors;
 
 public sealed partial class TrackActor
 {
-    private LiveRuntimeActivity? ReadRuntimeActivityCore(AgentSessionDto session) =>
+    private OpenSessionHandle? ReadOpenRuntimeCore(AgentSessionDto session) =>
         _runtimes.TryGetOpen(session.Id, out var open) && open.RuntimeActivity.Epoch == session.Epoch &&
-        session.Status != "unknown" && session.ArchivedAtMs is null ? open.RuntimeActivity : null;
+        session.Status != "unknown" && session.ArchivedAtMs is null ? open : null;
+
+    private SessionMcpHealthDto? ReadMcpHealthCore(string sessionId, OpenSessionHandle open) =>
+        open.RuntimeActivity.McpHealth is { } health && !_mcpBridge.HasKernelMcpHandshake(sessionId, open.RuntimeBindingId)
+            ? health : null;
+
+    private void SetMcpHealthCore(string sessionId, LiveRuntimeActivity state, SessionMcpHealthDto? health)
+    {
+        if (state.McpHealth == health) return;
+        state.McpHealth = health;
+        PublishRuntimeStatus(sessionId, state.Status);
+    }
+
+    private void PublishRuntimeStatus(string sessionId, AgentRuntimeStatusDto? status) =>
+        _eventHub.PublishTransient(_track.AreaId, TrackId, KernelEventKinds.SessionRuntimeStatus,
+            JsonHelpers.ToElement(new { sessionId, status }), NowMs());
+
+    internal void NotifyKernelMcpHandshake(KernelMcpHandshake handshake)
+    {
+        if (_disposed) return;
+        _ = EnqueueRuntimeObservationAsync(() =>
+        {
+            if (_runtimes.TryGetOpen(handshake.SessionId, out var open) && open.RuntimeBindingId == handshake.RuntimeBindingId &&
+                _mcpBridge.HasKernelMcpHandshake(handshake.SessionId, open.RuntimeBindingId))
+                SetMcpHealthCore(handshake.SessionId, open.RuntimeActivity, null);
+            return Task.CompletedTask;
+        });
+    }
+
+    private Task ObserveTurnMcpExecutionAsync(ActiveTurnState active) => EnqueueRuntimeObservationAsync(() =>
+    {
+        var sessionId = active.SessionId;
+        if (!_scheduler.TryGetActive(sessionId, out var current) || !ReferenceEquals(current, active) ||
+            !_runtimes.TryGetOpen(sessionId, out var open) || !ReferenceEquals(open.RuntimeActivity, active.RuntimeActivity) ||
+            open.RuntimeActivity.McpHealth is not null) return Task.CompletedTask;
+        lock (open.RuntimeControl.Sync)
+            if (open.RuntimeControl.Phase != ExecutionPhase.Running) return Task.CompletedTask;
+        if (!_mcpBridge.HasKernelMcpHandshake(sessionId, open.RuntimeBindingId))
+            SetMcpHealthCore(sessionId, open.RuntimeActivity, new(SessionMcpHealthStatus.Unconnected));
+        return Task.CompletedTask;
+    });
 
     private async Task RegisterRuntimeActivityCoreAsync(AgentSessionDto session, IAgentSession provider)
     {
@@ -26,6 +67,7 @@ public sealed partial class TrackActor
         if (state.Epoch != session.Epoch)
         {
             state.Status = null;
+            SetMcpHealthCore(session.Id, state, null);
             state.Tasks.Clear();
             state.EndedOrder.Clear();
             state.Epoch = session.Epoch;
@@ -68,8 +110,7 @@ public sealed partial class TrackActor
             state.Status = null;
             state.Tasks.Clear();
             state.EndedOrder.Clear();
-            _eventHub.PublishTransient(_track.AreaId, TrackId, KernelEventKinds.SessionRuntimeStatus,
-                JsonHelpers.ToElement(new { sessionId, status = (AgentRuntimeStatusDto?)null }), now);
+            PublishRuntimeStatus(sessionId, null);
             await FlushRuntimeOutputCoreAsync(session, state).ConfigureAwait(false);
             return;
         }
@@ -77,6 +118,12 @@ public sealed partial class TrackActor
         lock (open.RuntimeControl.Sync)
             if (open.RuntimeControl.Phase != ExecutionPhase.Running) return;
         _runtimes.Get(sessionId).TouchUsed();
+        if (observation is UnifiedAgentEvent.McpServerStatusChanged { Server: "perga", Status: "failed" } mcp)
+        {
+            if (!_mcpBridge.HasKernelMcpHandshake(sessionId, open.RuntimeBindingId))
+                SetMcpHealthCore(sessionId, state, new(SessionMcpHealthStatus.Failed, mcp.Error));
+            return;
+        }
         if (observation is UnifiedAgentEvent.AgentStatusChanged changed)
         {
             var status = changed.Status;
@@ -96,8 +143,7 @@ public sealed partial class TrackActor
                 state.Tasks.Clear();
                 state.EndedOrder.Clear();
             }
-            _eventHub.PublishTransient(_track.AreaId, TrackId, KernelEventKinds.SessionRuntimeStatus,
-                JsonHelpers.ToElement(new { sessionId, status = state.Status }), now);
+            PublishRuntimeStatus(sessionId, state.Status);
             return;
         }
         if (observation is UnifiedAgentEvent.TextDelta or UnifiedAgentEvent.ThinkingDelta
@@ -285,6 +331,7 @@ public sealed partial class TrackActor
         {
             if (shouldClose is not null && !shouldClose()) return false;
             EndRuntimeBinding(sessionId, open);
+            SetMcpHealthCore(sessionId, open.RuntimeActivity, null);
             if (_sessions.TryGetValue(sessionId, out var session))
                 await FlushRuntimeOutputForCloseAsync(session, open.RuntimeActivity).ConfigureAwait(false);
             return true;

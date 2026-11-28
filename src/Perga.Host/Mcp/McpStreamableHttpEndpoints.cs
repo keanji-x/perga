@@ -144,8 +144,10 @@ public static class McpStreamableHttpEndpoints
         mcp.MapMethods("/kernel", ["POST", "GET", "DELETE"], (
             HttpContext ctx,
             KernelMcpBackend backend,
+            IMcpSessionBridge bridge,
             McpTransportSessionManager sessions) =>
-            HandleAuthorizedMcpAsync(ctx, ctx.Features.Get<McpSessionPrincipal>()!, backend, sessions, preAuthorizeAsync: null));
+            HandleAuthorizedMcpAsync(ctx, ctx.Features.Get<McpSessionPrincipal>()!, backend, sessions, preAuthorizeAsync: null,
+                recordKernelHandshake: bridge.RecordKernelMcpHandshake));
 
         mcp.MapMethods("/vcs", ["POST", "GET", "DELETE"], (
             HttpContext ctx,
@@ -190,7 +192,8 @@ public static class McpStreamableHttpEndpoints
         McpSessionPrincipal principal,
         IMcpToolBackend backend,
         McpTransportSessionManager sessions,
-        Func<CancellationToken, Task>? preAuthorizeAsync)
+        Func<CancellationToken, Task>? preAuthorizeAsync,
+        Action<McpSessionPrincipal>? recordKernelHandshake = null)
     {
         var ct = ctx.RequestAborted;
 
@@ -298,6 +301,7 @@ public static class McpStreamableHttpEndpoints
                         item,
                         principal,
                         backend,
+                        recordKernelHandshake,
                         sessions,
                         responseSessionId,
                         preAuthorizeAsync,
@@ -334,6 +338,7 @@ public static class McpStreamableHttpEndpoints
                     root,
                     principal,
                     backend,
+                    recordKernelHandshake,
                     sessions,
                     responseSessionId,
                     preAuthorizeAsync,
@@ -371,6 +376,7 @@ public static class McpStreamableHttpEndpoints
         JsonElement envelope,
         McpSessionPrincipal principal,
         IMcpToolBackend backend,
+        Action<McpSessionPrincipal>? recordKernelHandshake,
         McpTransportSessionManager sessions,
         string? currentSessionId,
         Func<CancellationToken, Task>? preAuthorizeAsync,
@@ -445,6 +451,7 @@ public static class McpStreamableHttpEndpoints
             case "tools/list":
             {
                 var tools = await backend.ListToolsAsync(principal, ct).ConfigureAwait(false);
+                recordKernelHandshake?.Invoke(principal);
                 return (BuildJsonRpcSuccess(clonedId, new { tools }), null);
             }
 
@@ -461,6 +468,7 @@ public static class McpStreamableHttpEndpoints
                     : McpToolResultFormatter.EmptyObject;
 
                 var callResult = await backend.CallToolAsync(principal, toolName, toolArgs, ct).ConfigureAwait(false);
+                if (!callResult.IsError) recordKernelHandshake?.Invoke(principal);
                 return (BuildJsonRpcSuccess(clonedId, callResult), null);
             }
 

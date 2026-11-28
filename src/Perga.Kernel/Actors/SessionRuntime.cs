@@ -26,6 +26,7 @@ internal sealed class LiveRuntimeActivity
     public long? LastIdleActivityTimestamp { get; set; }
     public bool Exited { get; set; }
     public AgentRuntimeStatusDto? Status { get; set; }
+    public SessionMcpHealthDto? McpHealth { get; set; }
     public Dictionary<string, AgentRuntimeTaskDto> Tasks { get; } = new(StringComparer.Ordinal);
     public Dictionary<string, long> EndedOrder { get; } = new(StringComparer.Ordinal);
     public long NextTaskSequence { get; set; }

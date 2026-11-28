@@ -4300,6 +4300,16 @@
               }
             ]
           },
+          "mcpHealth": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SessionMcpHealthDto"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "pendingInteractions": {
             "anyOf": [
               {
@@ -4424,6 +4434,7 @@
           "hasMoreBefore",
           "items",
           "lastTurn",
+          "mcpHealth",
           "pendingInteractions",
           "permissionModes",
           "queueHandoffIds",
@@ -4437,6 +4448,32 @@
           "turns",
           "unknownDetail",
           "workerPaused"
+        ],
+        "type": "object"
+      },
+      "SessionMcpHealthDto": {
+        "properties": {
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "status": {
+            "enum": [
+              "failed",
+              "unconnected"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "error",
+          "status"
         ],
         "type": "object"
       },

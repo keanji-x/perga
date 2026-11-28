@@ -16,6 +16,7 @@ export type ConversationStore = Readonly<{
   sessionState: import('../../../../core/api/perga-v1.ts').SessionItemsPageDto['state'] | null;
   runtimeStatus?: import('../../../../core/api/perga-v1.ts').AgentRuntimeStatusDto | null;
   runtimeTasks?: readonly import('../../../../core/api/perga-v1.ts').AgentRuntimeTaskDto[] | null;
+  mcpHealth: NonNullable<import('../../../../core/api/perga-v1.ts').SessionItemsPageDto['mcpHealth']> | null;
   readonlyReason: import('../../../../core/api/perga-v1.ts').SessionItemsPageDto['readonlyReason'];
   canReopen: boolean;
   taskId: string | null;

@@ -43,7 +43,7 @@ function setup() {
       if (request.path.includes('/items')) return ok({
         session: fixtureSession(conversationCardId(request.path), TRACK.id, { permissionMode: 'never' }),
         pendingInteractions: conversationCardId(request.path) === PLANNER.id ? [{ ...ASK, kind: 'ask', sessionId: PLANNER.id, title: 'Which branch?', canRespond: true }] : [],
-        items: [], activeTurn: null, state: 'idle', readonlyReason: null, canReopen: false, workerPaused: false, lastTurn: null, unknownDetail: null, attachmentsSupported: false,
+        items: [], activeTurn: null, state: 'idle', readonlyReason: null, canReopen: false, workerPaused: false, lastTurn: null, unknownDetail: null, mcpHealth: null, attachmentsSupported: false,
       });
       if (request.path === '/api/settings') return ok({});
       return ok([]);

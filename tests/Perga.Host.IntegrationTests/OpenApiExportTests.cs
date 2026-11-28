@@ -83,11 +83,17 @@ public sealed class OpenApiExportTests
         Assert.Throws<InvalidOperationException>(() => OpenApiDocumentExporter.Export(app));
     }
 
-    [Fact]
-    public async Task Serialized_session_page_fixture_matches_current_Host_DTO()
+    [Theory]
+    [InlineData(null)]
+    [InlineData("failed")]
+    [InlineData("unconnected")]
+    public async Task Serialized_session_page_fixture_matches_current_Host_DTO(string? mcpStatus)
     {
         var path = Path.Combine(FindRoot(), "fe/core/api/fixtures/unified-host-payloads.json");
-        var fixture = JsonNode.Parse(await File.ReadAllTextAsync(path))!["page"]!;
+        var fixtures = JsonNode.Parse(await File.ReadAllTextAsync(path))!;
+        var fixture = fixtures["page"]!;
+        if (mcpStatus is not null)
+            fixture["mcpHealth"] = fixtures["mcpHealth"]![mcpStatus]!.DeepClone();
         var dto = fixture.Deserialize<SessionItemsPageDto>(PergaJsonDefaults.ApiOptions)!;
         Assert.True(JsonNode.DeepEquals(fixture, JsonSerializer.SerializeToNode(dto, PergaJsonDefaults.ApiOptions)));
     }

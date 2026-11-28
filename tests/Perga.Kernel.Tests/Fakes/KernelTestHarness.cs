@@ -1339,6 +1339,7 @@ internal sealed class ScriptableFakeAgentSession : IAgentSession
     public IReadOnlyList<PermissionModeOption> AvailablePermissionModes { get; set; } = [];
     public string? NativeThreadId { get; set; }
     public bool SupportsNativeSteer { get; set; } = true;
+    public bool ExpectsKernelMcpHandshake { get; set; }
     public bool CanReuseContextWindow => true;
     public bool SupportsNativeCompact { get; set; }
     public bool SupportsSessionResume { get; set; }

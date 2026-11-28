@@ -17,6 +17,7 @@ import {
   buildUsagePayload,
   flattenToolOutput,
   inspectAcpAvailableCommands,
+  inspectCodexKernelMcpStatus,
   installationReason,
   installationVersion,
   listEnabledModels,
@@ -25,6 +26,7 @@ import {
   statusEmissionKey,
   toValidInputId,
   withCodexSandboxEnv,
+  withLoopbackNoProxy,
 } from "./bridge-helpers.ts";
 import { preparePromptImages } from "./prompt-images.ts";
 import { prepareMcpServers, type RawMcpServerInput } from "./mcp-proxy.ts";
@@ -288,9 +290,9 @@ export class OarBridgeServer {
     // OAR's codex runtime reads process.env.OAR_CODEX_SANDBOX (not SessionOptions.env).
     const stripCodexSandboxFromChild =
       runtimeId === "codex" && rawEnv !== null && Object.prototype.hasOwnProperty.call(rawEnv, "OAR_CODEX_SANDBOX");
-    const childEnv = env && stripCodexSandboxFromChild
+    const childEnv = withLoopbackNoProxy(env && stripCodexSandboxFromChild
       ? Object.fromEntries(Object.entries(env).filter(([key]) => key !== "OAR_CODEX_SANDBOX"))
-      : env;
+      : env, preparedMcp.servers, process.env);
 
     const sessionOptions: SessionOptions = {
       cwd,
@@ -367,6 +369,10 @@ export class OarBridgeServer {
 
   private attachSessionListeners(session: Session): void {
     const observeRaw = (record: RawEvent): void => {
+      if (this._runtimeId === "codex" && record.sessionId === session.id) {
+        const mcpStatus = inspectCodexKernelMcpStatus(record);
+        if (mcpStatus) this.emitEvent(mcpStatus);
+      }
       this._statusState = reduceStatus(this._statusState, record, session.id);
       this.emitAgentStatus(session);
       const hasCompact = inspectAcpAvailableCommands(record);

@@ -25,12 +25,13 @@ export function MemorySaveButton({ pending = false, disabled = false, tooltip = 
     isDisabled={pending || disabled} onClick={onSave} />;
 }
 
-export function ConversationSessionHeader({ session, state, taskId, readonlyReason, workerPaused, compactEnabled, resetEnabled, onCompact, onReset, onArchive }: Readonly<{
+export function ConversationSessionHeader({ session, state, taskId, readonlyReason, workerPaused, mcpHealth, compactEnabled, resetEnabled, onCompact, onReset, onArchive }: Readonly<{
   session: AgentSessionDto | null;
   taskId: string | null;
   state: SessionItemsPageDto['state'] | null;
   readonlyReason: SessionItemsPageDto['readonlyReason'];
   workerPaused: boolean;
+  mcpHealth: SessionItemsPageDto['mcpHealth'];
   compactEnabled: boolean;
   resetEnabled: boolean;
   onCompact: () => void;
@@ -58,6 +59,7 @@ export function ConversationSessionHeader({ session, state, taskId, readonlyReas
   return <div className={styles.header} data-nc-session-header="">
     <div className={styles.signals}>
       {sessionNotice !== null && <SessionChip label={sessionNotice.label} tone={sessionNotice.tone} />}
+      {mcpHealth != null && <SessionChip label="Tools disconnected" tone="error" />}
       {readonlyLabel !== null && <SessionChip label={readonlyLabel} tone="muted" />}
     </div>
     <DropdownMenu placement="below" alignment="end" button={{ label: 'Session actions', icon: <Icon name="more" size="sm" />, isIconOnly: true, variant: 'ghost', size: 'sm', className: styles.menuButton }}>

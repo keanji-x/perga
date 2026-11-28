@@ -332,6 +332,8 @@ public sealed partial class TrackActor
             var queue = await ReadMessageQueueCoreAsync(sessionId, ct).ConfigureAwait(false);
             var settingsSession = session.Provider.StartsWith("acp:", StringComparison.OrdinalIgnoreCase)
                 ? FindOpenSessionForSettingsCore(sessionId, session.Provider) : null;
+            var open = ReadOpenRuntimeCore(session);
+            var runtimeActivity = open?.RuntimeActivity;
             return new SessionItemsPageDto(items.Select(item => WithMessageStatus(item, running)).ToArray(),
                 activeTurn, session, hasMoreBefore,
                 queue.Queue, running?.CanSteerQueuedMessages == true, queue.Handoffs,
@@ -341,9 +343,9 @@ public sealed partial class TrackActor
                 binding?.Phase == "paused", lastTurn, ReadUnknownDetailCore(session), settingsSession?.AvailablePermissionModes,
                 ReadActivityCore(running, activityTurnId, afterSequence), binding, ReadCapabilitiesCore(session),
                 ReadInteractionsCore(session, principal ?? new InteropPrincipal.Human()),
-                ReadRuntimeActivityCore(session)?.Status, ReadRuntimeActivityCore(session)?.Tasks.Values.ToArray(),
+                runtimeActivity?.Status, runtimeActivity?.Tasks.Values.ToArray(),
                 AttachmentsSupported: ReadAttachmentSupportCore(session),
-                Turns: pageTurns);
+                Turns: pageTurns, McpHealth: open is null ? null : ReadMcpHealthCore(sessionId, open));
         }, ct);
     }
 
@@ -389,7 +391,10 @@ public sealed partial class TrackActor
                     }
                 }, ct).ConfigureAwait(false);
             }
-            var forceReopen = _runtimes.TryGetOpen(session.Id, out var previous) && !HasRuntimeCredential(session.Id, previous);
+            var forceReopen = _runtimes.TryGetOpen(session.Id, out _) && await EnqueueAsync(_ => Task.FromResult(
+                _runtimes.TryGetOpen(session.Id, out var previous) &&
+                (!HasRuntimeCredential(session.Id, previous) || ReadMcpHealthCore(session.Id, previous) is not null)),
+                ct, touchActivity: false).ConfigureAwait(false);
             var handle = await _runtimes.Get(session.Id).EnsureOpenAsync(EffectiveAgentRuntime,
                 SessionConfiguration.FromNullable(session.Model, session.ReasoningEffort, session.PermissionMode),
                 session.Provider,

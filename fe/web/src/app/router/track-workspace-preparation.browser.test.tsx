@@ -30,7 +30,7 @@ it.each([1280, 390])('keeps a saved first message and an editable composer durin
         sessionId: session.id, messageId: 'inp_first', turnId: null, replay: false, delivery: 'queued',
       });
       if (request.path.startsWith('/api/v1/sessions/ses_lead/items?')) return ok({
-        session, activeTurn: null, state: 'idle', readonlyReason: null, canReopen: false, workerPaused: false, lastTurn: null, unknownDetail: null, attachmentsSupported: false,
+        session, activeTurn: null, state: 'idle', readonlyReason: null, canReopen: false, workerPaused: false, lastTurn: null, unknownDetail: null, mcpHealth: null, attachmentsSupported: false,
         items: [{
           id: 1, sessionId: session.id, turnId: 'turn_first', kind: 'user', createdAtMs: 1,
           payload: { content: message, inputId: 'inp_first' },

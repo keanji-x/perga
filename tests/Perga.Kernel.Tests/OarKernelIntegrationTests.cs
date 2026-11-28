@@ -95,6 +95,7 @@ public sealed class OarKernelIntegrationTests : IDisposable
 
         var firstTurn = await ctx.SendAndWaitForTurnAsync(leadId, new SendSessionMessageRequest("turn 1", "turn-1"));
         Assert.Equal("completed", firstTurn.Status);
+        ctx.Kernel.McpSessionBridge.RecordKernelMcpHandshake(ctx.RuntimeCaller(leadId));
 
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => ctx.Kernel.ControlSessionAsync(leadId, new("compact"), new InteropPrincipal.Human(), default));
 

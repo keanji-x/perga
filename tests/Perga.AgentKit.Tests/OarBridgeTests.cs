@@ -138,6 +138,49 @@ public sealed class OarBridgeTests : IDisposable
         Assert.False(File.Exists(Path.Combine(_workspaceDir, "steer-was-written")));
     }
 
+    [Theory]
+    [InlineData("codex", true)]
+    [InlineData("claude", true)]
+    [InlineData("opencode", true)]
+    [InlineData("acp:opencode", true)]
+    [InlineData("antigravity", true)]
+    [InlineData("agy", true)]
+    [InlineData("kimi", false)]
+    public async Task KernelMcpStatusIsRuntimeActivityAndExpectationFollowsLaunchSpec(string provider, bool expectsHandshake)
+    {
+        File.WriteAllText(_mockBridgePath, MockBridgeScript
+            .Replace("if (req.method === 'session/open') {", """
+                if (req.method === 'session/open') {
+                  send({jsonrpc:'2.0',method:'oar/event',params:{kind:'mcp_status',server:'perga',status:'failed',error:'MCP startup was cancelled.'}});
+                """)
+            .Replace("if (req.method === 'session/prompt') {", """
+                if (req.method === 'session/prompt') {
+                  send({jsonrpc:'2.0',method:'oar/event',params:{kind:'mcp_status',server:'perga',status:'ready'}});
+                  send({jsonrpc:'2.0',method:'oar/event',params:{kind:'mcp_status',server:'perga',status:'failed',error:'MCP server returned HTTP 502.'}});
+                """));
+        await using var runtime = new AgentRuntime(new AgentRuntimeOptions { BridgeScriptPath = _mockBridgePath });
+        await using var withoutKernel = runtime.CreateSession(new HarnessLaunchSpec(provider, null, _workspaceDir,
+            null, null, new Dictionary<string, McpServerConfig>()));
+        Assert.False(withoutKernel.ExpectsKernelMcpHandshake);
+        await using var session = runtime.CreateSession(new HarnessLaunchSpec(provider, null, _workspaceDir,
+            null, null, new Dictionary<string, McpServerConfig>
+            {
+                ["perga"] = new McpServerConfig.HttpMcpServer("http://localhost/mcp/kernel", new Dictionary<string, string>())
+            }));
+        Assert.Equal(expectsHandshake, session.ExpectsKernelMcpHandshake);
+        await session.InitializeAsync(default);
+        var live = new List<UnifiedAgentEvent.McpServerStatusChanged>();
+        var pending = session.AttachRuntimeActivityHandler(observation =>
+        {
+            if (observation is UnifiedAgentEvent.McpServerStatusChanged status) live.Add(status);
+        });
+        Assert.Equal(new UnifiedAgentEvent.McpServerStatusChanged("perga", "failed", "MCP startup was cancelled."),
+            Assert.Single(pending.OfType<UnifiedAgentEvent.McpServerStatusChanged>()));
+        await foreach (var observation in session.StreamTurnAsync(new TurnInput("hello", "mcp-status"), default))
+            Assert.IsNotType<UnifiedAgentEvent.McpServerStatusChanged>(observation);
+        Assert.Equal(new UnifiedAgentEvent.McpServerStatusChanged("perga", "failed", "MCP server returned HTTP 502."), Assert.Single(live));
+    }
+
     [Fact]
     public async Task RuntimeActivityReplaysBeforeAttachAndForwardsDuringAndAfterTurns()
     {

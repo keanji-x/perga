@@ -303,6 +303,7 @@ export function useConversationStore(
     sessionState, readonlyReason,
     runtimeStatus: run.data?.runtimeStatus ?? null,
     runtimeTasks: run.data?.runtimeTasks ?? null,
+    mcpHealth: run.data?.mcpHealth ?? null,
     canReopen: run.data?.canReopen ?? false,
     taskId: run.data?.taskBinding?.task.id ?? null,
     workerPaused: run.data?.workerPaused ?? false,

@@ -593,7 +593,7 @@ export function useConversationPane(
     paneCommands, composerStop, replacing, editingQueue,
     sendText, composerAttachments, mentionTrigger, sessionConfigurationControls, mobileMetaBar, mobileRoleSlot]);
 
-  const { actionArea, changeArchive } = useConversationActionArea({ open, options, store, shownComposer, existingId,
+  const { actionArea, mcpNotice, changeArchive } = useConversationActionArea({ open, options, store, shownComposer, existingId,
     conversationAsks, conversationApprovals, decideApproval, answerAsk, retrySend, focusComposer });
 
   const centeredEmpty = options?.embedded?.active === true && open !== null && store.historyReady && openTurns.length === 0 && !hasPendingMessages && !(pendingPresentation?.conversationId === existingId && pendingPresentation.visible) && !store.sending && !store.working && store.failedSend === null;
@@ -611,7 +611,7 @@ export function useConversationPane(
         mobileSubtitle={mobileSubtitle}
         titleActions={memorySave.headerButton}
         sessionHeader={open === null ? undefined : <ConversationSessionHeader session={store.session} state={store.sessionState}
-          taskId={store.taskId} readonlyReason={store.readonlyReason} workerPaused={store.workerPaused}
+          taskId={store.taskId} readonlyReason={store.readonlyReason} workerPaused={store.workerPaused} mcpHealth={store.mcpHealth}
           compactEnabled={commandEnabled('compact') && store.manualCompactSupported}
           resetEnabled={commandEnabled('reset')}
           onCompact={compact} onReset={() => store.recover('reset_context')}
@@ -721,6 +721,7 @@ export function useConversationPane(
         ) : open === null ? undefined : (
           <>
             {memorySave.notice}
+            {mcpNotice}
             {actionArea}
             {store.readonlyReason === null && composerNode}
             {store.readonlyReason === 'waiting_task' && <HStack gap={1} align="center" wrap="wrap" className={footerStyles.group}>
