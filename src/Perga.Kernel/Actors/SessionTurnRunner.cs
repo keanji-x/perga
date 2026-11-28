@@ -12,6 +12,8 @@ public sealed partial class TrackActor
 {
     private sealed class SessionTurnRunner(TrackActor actor)
     {
+        private const int ToolPreviewLimit = 2048;
+
         private sealed record TurnStart(ActiveTurnState Active, string EffectivePrompt, AgentSessionDto Session);
 
         // What the provider stream established about the turn. Settlement can still mark it interrupted.
@@ -286,9 +288,20 @@ public sealed partial class TrackActor
                 case UnifiedAgentEvent.ToolCallStarted tcs:
                     await FlushThinkingChunkAsync(active, outcome, now).ConfigureAwait(false);
                     outcome.ToolNames[tcs.CallId] = tcs.Name;
+                    object args = tcs.Args;
+                    bool? argsTruncated = null;
+                    if (tcs.Args.GetRawText() is { Length: > ToolPreviewLimit } rawArgs)
+                    {
+                        args = TruncatePreview(rawArgs, ToolPreviewLimit);
+                        argsTruncated = true;
+                    }
                     actor.PublishTurnActivity(active,
                         KernelEventKinds.SessionToolProgress,
-                        JsonHelpers.ToElement(new { sessionId = active.SessionId, turnId = active.TurnDto.Id, phase = "started", callId = tcs.CallId, name = tcs.Name, args = tcs.Args }),
+                        JsonHelpers.ToElement(new
+                        {
+                            sessionId = active.SessionId, turnId = active.TurnDto.Id, phase = "started",
+                            callId = tcs.CallId, name = tcs.Name, args, truncated = argsTruncated
+                        }),
                         now);
                     await RecordActivityAsync(TurnItem(active, "tool_call",
                         JsonHelpers.ToElement(new { v = 1, callId = tcs.CallId, name = tcs.Name, args = tcs.Args }), now)).ConfigureAwait(false);
@@ -297,9 +310,16 @@ public sealed partial class TrackActor
                 case UnifiedAgentEvent.ToolCallCompleted tcc:
                     await FlushThinkingChunkAsync(active, outcome, now).ConfigureAwait(false);
                     outcome.ToolNames.TryGetValue(tcc.CallId, out var name);
+                    var truncateOutput = tcc.Output is { Length: > ToolPreviewLimit };
                     actor.PublishTurnActivity(active,
                         KernelEventKinds.SessionToolProgress,
-                        JsonHelpers.ToElement(new { sessionId = active.SessionId, turnId = active.TurnDto.Id, phase = "completed", callId = tcc.CallId, name, isError = tcc.IsError, output = tcc.Output }),
+                        JsonHelpers.ToElement(new
+                        {
+                            sessionId = active.SessionId, turnId = active.TurnDto.Id, phase = "completed",
+                            callId = tcc.CallId, name, isError = tcc.IsError,
+                            output = truncateOutput ? TruncatePreview(tcc.Output, ToolPreviewLimit) : tcc.Output,
+                            truncated = truncateOutput ? (bool?)true : null
+                        }),
                         now);
                     await RecordActivityAsync(TurnItem(active, "tool_result",
                         JsonHelpers.ToElement(new { v = 1, callId = tcc.CallId, output = tcc.Output, isError = tcc.IsError }), now)).ConfigureAwait(false);
