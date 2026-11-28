@@ -481,7 +481,7 @@
   .feedAreaButton {
     display: inline-flex;
     align-items: center;
-    justify-content: center;
+    justify-content: flex-end;
     min-inline-size: var(--rail-w-collapsed);
     min-block-size: var(--rail-w-collapsed);
     padding: 0;
@@ -498,7 +498,8 @@
     align-items: center;
     gap: var(--space-half);
     min-inline-size: 0;
-    padding: var(--space-half) var(--space-1);
+    padding-block: var(--space-half);
+    padding-inline-start: var(--space-1);
     border-radius: var(--radius-highlight);
     background: transparent;
   }
@@ -553,9 +554,11 @@
 
   .feedTime {
     flex: none;
+    margin-inline-end: auto;
   }
 
   .feedArea {
+    min-inline-size: 0;
     overflow: hidden;
     text-overflow: ellipsis;
   }
