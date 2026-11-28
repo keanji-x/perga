@@ -11,6 +11,7 @@ using Perga.TermClient;
 using Perga.VcsKit;
 using System.Text;
 using System.Text.Json;
+using System.Text.Unicode;
 using Perga.Contracts;
 using Perga.Kernel.Events;
 using Perga.Kernel.Internal;
@@ -106,26 +107,16 @@ public sealed partial class TrackActor
                 : ("output", payload.GetProperty("output").GetString()!);
             fields["truncated"] = true;
             fields[field] = ellipsis;
-            var available = PayloadLimit - Encoding.UTF8.GetByteCount(JsonHelpers.ToElement(fields).GetRawText());
+            var available = Math.Max(0, PayloadLimit - Encoding.UTF8.GetByteCount(JsonHelpers.ToElement(fields).GetRawText()));
 
-            // Measure the escaped JSON string, keeping complete Unicode characters at the cut.
-            var min = 0;
-            var max = Math.Min(value.Length, PayloadLimit);
-            while (min < max)
-            {
-                var middle = (min + max + 1) / 2;
-                var prefix = CompletePrefix(value, middle);
-                if (JsonEncodedText.Encode(prefix, JsonHelpers.SerializerOptions.Encoder).EncodedUtf8Bytes.Length <= available)
-                    min = middle;
-                else
-                    max = middle - 1;
-            }
-            fields[field] = string.Concat(CompletePrefix(value, min), ellipsis);
+            // Escaping cannot shrink UTF-8. The encoder consumes only complete code points that fit.
+            Span<byte> utf8 = new byte[available];
+            Utf8.FromUtf16(value, utf8, out _, out var utf8Length);
+            Span<byte> escaped = new byte[available];
+            JsonHelpers.SerializerOptions.Encoder!.EncodeUtf8(utf8[..utf8Length], escaped, out var bytesConsumed, out _);
+            fields[field] = Encoding.UTF8.GetString(utf8[..bytesConsumed]) + ellipsis;
             return JsonHelpers.ToElement(fields);
         }
-
-        private static ReadOnlySpan<char> CompletePrefix(string value, int length) =>
-            value.AsSpan(0, length > 0 && char.IsHighSurrogate(value[length - 1]) ? length - 1 : length);
 
         public (long Sequence, bool Reset, WorkerActivityEvent[] Events, string Text, bool TextTruncated) Read(long? after, bool sameTurn)
         {
