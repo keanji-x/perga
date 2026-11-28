@@ -61,6 +61,14 @@ public sealed partial class TrackActor
         _eventHub.PublishTransient(_track.AreaId, TrackId, kind, JsonHelpers.ToElement(wire), now);
     }
 
+    private static string TruncatePreview(string value, int maxChars)
+    {
+        if (value.Length <= maxChars)
+            return value;
+        var length = char.IsHighSurrogate(value[maxChars - 1]) ? maxChars - 1 : maxChars;
+        return string.Concat(value.AsSpan(0, length), "…");
+    }
+
     private sealed class TurnActivity
     {
         private const int Capacity = 128;
@@ -73,7 +81,7 @@ public sealed partial class TrackActor
 
         public long Append(string kind, JsonElement payload, long now)
         {
-            var raw = payload.GetRawText();
+            var raw = kind == KernelEventKinds.SessionToolProgress ? null : payload.GetRawText();
             lock (_recent)
             {
                 if (kind == KernelEventKinds.SessionTextDelta && payload.TryGetProperty("delta", out var delta))
@@ -85,47 +93,14 @@ public sealed partial class TrackActor
                         _textTruncated = true;
                     }
                 }
-                if (kind == KernelEventKinds.SessionToolProgress && Encoding.UTF8.GetByteCount(raw) > PayloadLimit)
-                    payload = TruncateToolPayload(payload);
-                else if (raw.Length > PayloadLimit)
-                    payload = JsonHelpers.ToElement(new { preview = raw[..PayloadLimit], truncated = true });
+                if (raw is { Length: > PayloadLimit })
+                    payload = JsonHelpers.ToElement(new { preview = TruncatePreview(raw, PayloadLimit), truncated = true });
                 if (_recent.Count == Capacity)
                     _recent.Dequeue();
                 _recent.Enqueue(new WorkerActivityEvent(++_sequence, kind, payload, now));
                 return _sequence;
             }
         }
-
-        private static JsonElement TruncateToolPayload(JsonElement payload)
-        {
-            const string ellipsis = "…";
-            var fields = payload.EnumerateObject().ToDictionary(property => property.Name, property => (object)property.Value);
-            // Start events carry args; completion events carry output.
-            var (field, value) = payload.TryGetProperty("args", out var args)
-                ? ("args", args.GetRawText())
-                : ("output", payload.GetProperty("output").GetString()!);
-            fields["truncated"] = true;
-            fields[field] = ellipsis;
-            var available = PayloadLimit - Encoding.UTF8.GetByteCount(JsonHelpers.ToElement(fields).GetRawText());
-
-            // Measure the escaped JSON string, keeping complete Unicode characters at the cut.
-            var min = 0;
-            var max = Math.Min(value.Length, PayloadLimit);
-            while (min < max)
-            {
-                var middle = (min + max + 1) / 2;
-                var prefix = CompletePrefix(value, middle);
-                if (JsonEncodedText.Encode(prefix, JsonHelpers.SerializerOptions.Encoder).EncodedUtf8Bytes.Length <= available)
-                    min = middle;
-                else
-                    max = middle - 1;
-            }
-            fields[field] = string.Concat(CompletePrefix(value, min), ellipsis);
-            return JsonHelpers.ToElement(fields);
-        }
-
-        private static ReadOnlySpan<char> CompletePrefix(string value, int length) =>
-            value.AsSpan(0, length > 0 && char.IsHighSurrogate(value[length - 1]) ? length - 1 : length);
 
         public (long Sequence, bool Reset, WorkerActivityEvent[] Events, string Text, bool TextTruncated) Read(long? after, bool sameTurn)
         {
