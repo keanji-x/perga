@@ -99,6 +99,7 @@ function harness(options: {
   claudeUnavailable?: string;
   /** `GET /api/agent-providers` says Codex cannot run now (#1817); create still accepts it. */
   codexUnavailable?: string;
+  settingsRead?: Promise<ApiTransportResponse>;
   /** The created Planner card's `provider`; its `?card_id=` catalog is that provider's. */
   plannerProvider?: 'codex' | 'claude';
   /** Override the detail read the track page makes when the create lands. */
@@ -125,6 +126,7 @@ function harness(options: {
   const transport: ApiTransportPort = {
     send(request: ApiRequest): Promise<ApiTransportResponse> {
       sent.push(request);
+      if (request.path === '/api/v1/settings' && options.settingsRead !== undefined) return options.settingsRead;
       if (request.path.includes('/workspace-options')) return Promise.resolve({ status: 200, statusText: 'OK', body: { defaultId: 'direct', options: [{ id: 'direct', label: 'Direct folder', description: 'Use this folder' }] } });
       if (request.path === '/api/v1/templates') {
         return (options.heldTemplates ?? Promise.resolve()).then(() => ({ status: 200, statusText: 'OK', body: options.templates ?? [] }));
@@ -447,16 +449,17 @@ describe('New track model selection', () => {
     expect(sent.some((request) => request.path === '/api/v1/bootstrap?card_id=card-planner')).toBe(true);
   });
 
-  it('names the Codex Planner backend on every create', async () => {
-    const { sent } = harness({ });
+  it.each(['pending', 'errored'] as const)('uses the first ready provider when settings are %s', async (state) => {
+    const settingsRead = state === 'pending' ? new Promise<ApiTransportResponse>(() => undefined)
+      : Promise.resolve({ status: 503, statusText: 'Service Unavailable', body: { code: 'settings_unavailable', error: 'Unavailable' } });
+    const { sent } = harness({ claudePlanner: true, codexUnavailable: 'Codex is unavailable.', settingsRead });
     await userEvent.click(await screen.findByRole('button', { name: 'New track in Work' }));
     await findComposer();
+    expect(await screen.findByRole('button', { name: 'Model: Claude Default' })).toBeTruthy();
     await userEvent.type(screen.getByLabelText(TASK_LABEL), 'Start the Planner');
     await userEvent.click(screen.getByRole('button', { name: 'Create track' }));
     await waitFor(() => expect(createdTrackRequests(sent)).toHaveLength(1));
-    expect(createdTrackRequests(sent)[0]?.body).toMatchObject({
-      provider: 'codex',
-    });
+    expect(createdTrackRequests(sent)[0]?.body).toMatchObject({ provider: 'claude' });
     expect(createdTrackRequests(sent)[0]?.body).not.toHaveProperty('first_message');
   });
 });
@@ -1372,11 +1375,12 @@ describe('a refused create that names a field', () => {
 });
 
 it.each([
-  { templateId: 'compiled-template', templateInputs: { ticket: 'saved-input' } },
-  { executionTargetId: 'remote', workspaceOptionId: 'direct' },
+  { templateId: 'compiled-template', templateInputs: { ticket: 'saved-input' }, provider: 'codex' },
+  { executionTargetId: 'remote', workspaceOptionId: 'direct', provider: 'codex' },
+  {},
 ])('replays a restored unknown creation with its original starting point %j', async startingPoint => {
   const request = { key: 'native-unconfirmed-key', message: '  Native intent  ', body: {
-    areaId: 'c1', provider: 'codex' as const,
+    areaId: 'c1',
     ...startingPoint,
   } };
   const submittedStorage = createMemoryStorage();
@@ -1387,7 +1391,7 @@ it.each([
   await waitFor(() => expect(screen.getByLabelText(TASK_LABEL).getAttribute('contenteditable')).toBe('false'));
   await userEvent.click(screen.getByRole('button', { name: 'Create track' }));
   await waitFor(() => expect(createdTrackRequests(sent)).toHaveLength(1));
-  expect(createdTrackRequests(sent)[0]?.body).toMatchObject(request.body);
+  expect(createdTrackRequests(sent)[0]?.body).toEqual(request.body);
   expect(createdTrackRequests(sent)[0]?.headers?.['Idempotency-Key']).toBe(request.key);
 });
 

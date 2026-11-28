@@ -1,24 +1,23 @@
-import { providerPresentation } from '../../../../core/domain/provider-presentation.ts';
-// Settings › Planners — whether each Planner provider can run on this server right now, and the fix
-// when one cannot (#1817), plus the next turn's execution budget (#2618).
-
-import { useId } from 'react';
-import { Badge as AstryxBadge } from '@astryxdesign/core/Badge';
 import { Button as AstryxButton } from '@astryxdesign/core/Button';
+import { Heading as AstryxHeading } from '@astryxdesign/core/Heading';
+import { IconButton as AstryxIconButton } from '@astryxdesign/core/IconButton';
 import { Text as AstryxText } from '@astryxdesign/core/Text';
+import { Tooltip as AstryxTooltip } from '@astryxdesign/core/Tooltip';
 
+import type { SettingsSnapshotDto } from '../../../../core/api/generated/wire.ts';
 import type { AgentProvider } from '../../../../core/api/schemas.ts';
 import {
   unavailableCreationNote, type ProviderAvailability, type ManagedProviderAvailability, type AuthenticationRetryResponse,
 } from '../../../../core/domain/agent-providers.ts';
+import { providerPresentation } from '../../../../core/domain/provider-presentation.ts';
 import { ErrorBox } from '../../ui/error-box/public.tsx';
-import { plannerTurnDuration } from '../../../../core/domain/settings.ts';
-import { SettingRow, SettingsList, SettingsPane } from './public.tsx';
-import { SettingEditor, type SettingEditorCopy, type SettingEditorProps } from './setting-editor.tsx';
+import { Icon } from '../../ui/icon/public.tsx';
+import { bindSettingsSection, SettingFieldsList } from './fields.tsx';
+import { SettingRow, SettingsList, SettingsPane, SettingStatus } from './pane.tsx';
 import styles from './settings.module.css';
 
 export type PlannersPaneProps = Readonly<{
-  turnDuration: SettingEditorProps;
+  settings?: PlannerDefaultsProps;
   /** `undefined` means "still checking" — never render a guessed status. */
   providers: readonly PlannerProvider[] | undefined;
   loadError: string | null;
@@ -39,27 +38,39 @@ export type PlannersPaneProps = Readonly<{
   }> | null;
 }>;
 
+type PlannerDefaultsProps = Readonly<{
+  snapshot: SettingsSnapshotDto | undefined;
+  loadError: string | null;
+  saveError: string | null;
+  saving: boolean;
+  onChange: (key: string, value: string | number) => void;
+  onRetry: () => void;
+}>;
+
+function PlannerDefaults({ snapshot, loadError, saveError, saving, onChange, onRetry }: PlannerDefaultsProps) {
+  const fields = snapshot === undefined ? [] : bindSettingsSection(snapshot, 'planners', onChange);
+  if (snapshot !== undefined && fields.length === 0 && loadError === null) return null;
+
+  return (
+    <section className={styles.settingsSection} aria-label="Defaults" aria-busy={saving || undefined}>
+      <header className={styles.sectionHeader}>
+        <AstryxHeading level={4} className={styles.eyebrow}>Defaults</AstryxHeading>
+      </header>
+      {loadError !== null ? <ErrorBox message={loadError} actionLabel="Retry defaults" onRetry={onRetry} />
+        : snapshot === undefined ? <AstryxText as="p" color="secondary">Loading planner defaults…</AstryxText>
+          : <SettingFieldsList fields={fields} disabled={saving} density="compact" />}
+      {loadError === null && saveError !== null && <p className={styles.error} role="alert">{saveError}</p>}
+    </section>
+  );
+}
+
 /** Availability and the one required capability consumed by Settings. */
 type PlannerProvider = Readonly<{
   availability: ProviderAvailability;
   accepts_unavailable_blank_track: ManagedProviderAvailability['accepts_unavailable_blank_track'];
 }>;
 
-const TURN_DURATION: SettingEditorCopy = Object.freeze({
-  label: 'Maximum turn duration (minutes)',
-  unit: 'minutes',
-  inputMode: 'numeric',
-  name: 'duration',
-  resetLabel: 'Restore default duration',
-  parse(value: string | undefined) {
-    const parsed = plannerTurnDuration(value);
-    return parsed.ok ? { ok: true as const, text: String(parsed.minutes) } : parsed;
-  },
-});
-
-
-/** `unavailable` is warning, not error: a login or a config fix away. `not_configured` is a server fact, not a fault. */
-const STATUS_BADGES: Readonly<Record<ProviderAvailability['status'], Readonly<{
+const STATUS_META: Readonly<Record<ProviderAvailability['status'], Readonly<{
   label: string; variant: 'success' | 'warning' | 'neutral';
 }>>> = Object.freeze({
   ready: Object.freeze({ label: 'Ready', variant: 'success' }),
@@ -67,12 +78,10 @@ const STATUS_BADGES: Readonly<Record<ProviderAvailability['status'], Readonly<{
   not_configured: Object.freeze({ label: 'Not configured', variant: 'neutral' }),
 });
 
-const READY_DESCRIPTION = 'Passed every check; new tracks can use it.';
-
-/** The server's reason and its blank-creation advice. */
-function describe({ availability: entry, accepts_unavailable_blank_track }: PlannerProvider): string {
+/** The server's reason and its blank-creation advice; `null` when ready with nothing extra to say. */
+function describe({ availability: entry, accepts_unavailable_blank_track }: PlannerProvider): string | null {
   if (entry.authentication_notice !== null) return entry.authentication_notice.text;
-  if (entry.reason === null) return READY_DESCRIPTION;
+  if (entry.reason === null) return null;
   return entry.status === 'unavailable' && accepts_unavailable_blank_track
     ? `${entry.reason} ${unavailableCreationNote(providerPresentation(entry.provider).label)}`
     : entry.reason;
@@ -85,59 +94,66 @@ function oldestCheck(providers: readonly ProviderAvailability[]): number | null 
 }
 
 export function PlannersPane({
-  providers, loadError, onRetryLoad, onRecheck, rechecking, recheckError, authenticationRecovery, turnDuration,
+  settings, providers, loadError, onRetryLoad, onRecheck, rechecking, recheckError, authenticationRecovery,
 }: PlannersPaneProps) {
-  const durationDescriptionId = useId();
   const checkedAt = providers === undefined ? null : oldestCheck(providers.map(({ availability }) => availability));
   return (
-    <SettingsPane
-      category="planners"
-      title="Planners"
-      lede="Which Planner providers this server can run right now, and how to fix one that cannot."
-    >
-      <SettingsList>
-        <SettingRow
-          title="Maximum turn duration"
-          titleSuffix={TURN_DURATION.unit}
-          description={<span id={durationDescriptionId} className={styles.plannerReason}>Default: 30 minutes. Choose 1–240 minutes. Changes apply to the next turn; retrying an unconfirmed start keeps its frozen budget. Hold waiting time does not count. Backends without steer support receive only the budget reminder at the start of the turn, without a mid-turn warning.</span>}
-          control={<SettingEditor {...turnDuration} copy={TURN_DURATION} hideLabel describedById={durationDescriptionId} />}
-        />
-      </SettingsList>
+    <SettingsPane category="planners">
+      {settings !== undefined && <PlannerDefaults {...settings} />}
       {loadError !== null && <ErrorBox message={loadError} onRetry={onRetryLoad} />}
       {providers === undefined
         ? loadError === null && <AstryxText as="p" color="secondary">Checking providers…</AstryxText>
         : (
-          <SettingsList>
-            {providers.map(({ availability: entry, accepts_unavailable_blank_track }) => (
-              <SettingRow
-                key={entry.provider}
-                title={providerPresentation(entry.provider).label}
-                /* A node, not a string: a string description is cut to one line, and a reason is a fix to read whole. */
-                description={<span className={styles.plannerReason}>
-                  {entry.authentication_method !== null && <span>Authentication: {entry.authentication_method}</span>}
-                  {entry.authentication_method !== null && <br />}
-                  {describe({ availability: entry, accepts_unavailable_blank_track })}
-                </span>}
-                control={<>
-                  <AstryxBadge className={styles.plannerStatusStamp} data-nc-planner-status={entry.status}
-                    variant={STATUS_BADGES[entry.status].variant} label={STATUS_BADGES[entry.status].label} />
-                  {authenticationRecovery?.provider === entry.provider && entry.authentication_notice?.kind === 'sign_in_required'
-                    && <AstryxButton label="Retry queued messages after server sign-in" variant="secondary"
-                      isLoading={authenticationRecovery.pending} onClick={() => authenticationRecovery.onRetry(entry.authentication_notice!.revision)}>
-                      Retry after server sign-in
-                    </AstryxButton>}
-                </>}
-              />
-            ))}
-            <SettingRow
-              title="Recheck"
-              description={checkedAt === null
-                ? 'Runs every check again now.'
-                : `Last checked at ${new Date(checkedAt).toLocaleTimeString()}. The server keeps an answer for 30 seconds.`}
-              control={<AstryxButton label="Recheck planners" variant="secondary" isLoading={rechecking}
-                onClick={onRecheck}>Recheck</AstryxButton>}
-            />
-          </SettingsList>
+          <section className={styles.settingsSection} aria-label="Providers">
+            <header className={styles.sectionHeader}>
+              <div className={styles.sectionHeading}>
+                <AstryxHeading level={4} className={styles.eyebrow}>Providers</AstryxHeading>
+                <AstryxTooltip content="Recheck planners" placement="above">
+                  <AstryxIconButton className={styles.recheckButton} label="Recheck planners" variant="ghost" size="sm"
+                    isLoading={rechecking} icon={<Icon name="refresh" size="sm" />} onClick={onRecheck} />
+                </AstryxTooltip>
+              </div>
+              {checkedAt !== null && <span className={styles.checkTime}>
+                Last checked at {new Date(checkedAt).toLocaleTimeString()}
+              </span>}
+            </header>
+            <SettingsList density="compact" className={styles.providerList}>
+              {providers.map(({ availability: entry, accepts_unavailable_blank_track }) => {
+                const notice = entry.authentication_notice;
+                const detail = describe({ availability: entry, accepts_unavailable_blank_track });
+                const recovery = authenticationRecovery?.provider === entry.provider && notice?.kind === 'sign_in_required'
+                  ? <AstryxButton label="Retry queued messages after server sign-in" variant="secondary" size="sm"
+                    isLoading={authenticationRecovery.pending} onClick={() => authenticationRecovery.onRetry(notice.revision)}>
+                    Retry after server sign-in
+                  </AstryxButton>
+                  : null;
+                const label = providerPresentation(entry.provider).label;
+                const authText = entry.authentication_method !== null ? `Authentication: ${entry.authentication_method}` : null;
+                const inlineMeta = authText !== null || detail !== null
+                  ? <span className={styles.plannerInlineMeta}>
+                    {authText !== null && <AstryxText className={styles.authenticationMethod} type="inherit" color="inherit"
+                      tabIndex={0} maxLines={1} hasTruncateTooltip="below">{authText}</AstryxText>}
+                    {detail !== null && <AstryxText className={styles.plannerNote} type="inherit" color="inherit"
+                      tabIndex={0} maxLines={1} hasTruncateTooltip="below">{detail}</AstryxText>}
+                  </span>
+                  : null;
+                return (
+                  <SettingRow
+                    key={entry.provider}
+                    title={<span className={styles.providerHeadline}>
+                      <span className={styles.providerName}>{label}</span>
+                      <SettingStatus label={STATUS_META[entry.status].label} variant={STATUS_META[entry.status].variant} />
+                      {inlineMeta}
+                    </span>}
+                    startContent={<span className={styles.providerIcon}><Icon size="sm"
+                      name={entry.provider === 'claude' ? 'claude' : entry.provider === 'codex' ? 'codex' : 'agent'} /></span>}
+                    stackControlOnMobile={recovery !== null}
+                    control={recovery}
+                  />
+                );
+              })}
+            </SettingsList>
+          </section>
         )}
       {authenticationRecovery?.error !== null && authenticationRecovery?.error !== undefined
         && <p className={styles.error} role="alert">{authenticationRecovery.error}</p>}

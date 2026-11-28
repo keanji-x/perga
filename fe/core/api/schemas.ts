@@ -3,6 +3,7 @@
 import { z } from 'zod';
 
 import { memoryUpdatedPayloadSchema } from '../domain/memory.js';
+import type { SettingsFieldDto, SettingsFieldOptionDto, SettingsSectionDto, SettingsSnapshotDto } from './generated/wire.js';
 import { areaDtoSchema, agentSessionDtoSchema, askDtoSchema, decodePergaEventEnvelope, mailDtoSchema, readReceiptDtoSchema, sessionRuntimeStatusPayloadSchema, sessionTaskProgressPayloadSchema, sessionTextDeltaPayloadSchema, sessionThinkingDeltaPayloadSchema, sessionToolProgressPayloadSchema, sessionTurnDtoSchema, systemUpgradeStatusPayloadSchema, terminalDtoSchema, trackDtoSchema, workspaceFileOpenRequestedSchema, type PergaStreamDelta } from './perga-v1.js';
 import type { ApiDecodeFailure } from './types.js';
 
@@ -14,6 +15,38 @@ export function normalizeWireAgentProvider(raw: unknown): AgentProvider | null {
   const parsed = agentProviderSchema.safeParse(raw);
   return parsed.success ? parsed.data : null;
 }
+
+const settingsSectionDtoSchema = z.object({
+  id: z.string(),
+  label: z.string(),
+  description: z.string().nullable(),
+}) satisfies z.ZodType<SettingsSectionDto>;
+
+const settingsFieldOptionDtoSchema = z.object({
+  value: z.string(),
+  label: z.string(),
+}) satisfies z.ZodType<SettingsFieldOptionDto>;
+
+const settingsFieldDtoSchema = z.object({
+  key: z.string(),
+  section: z.string(),
+  label: z.string(),
+  description: z.string().nullable(),
+  control: z.string(),
+  valueType: z.string(),
+  defaultValue: z.json(),
+  min: z.number().int().nullable(),
+  max: z.number().int().nullable(),
+  unit: z.string().nullable(),
+  options: z.array(settingsFieldOptionDtoSchema).nullable(),
+}) satisfies z.ZodType<SettingsFieldDto>;
+
+export const settingsSnapshotDtoSchema = z.object({
+  rev: z.number().int(),
+  sections: z.array(settingsSectionDtoSchema),
+  fields: z.array(settingsFieldDtoSchema),
+  values: z.record(z.string(), z.json()),
+}) satisfies z.ZodType<SettingsSnapshotDto>;
 
 export const areaUpdatedSchema = z.object({
   ev: z.literal('area.updated'),

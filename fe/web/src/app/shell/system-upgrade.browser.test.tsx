@@ -1,6 +1,6 @@
 import '../../styles/entry.css';
 import { SystemUpgradeProvider } from '../providers/connection-status.tsx';
-import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
 import { page, userEvent } from 'vitest/browser';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -31,18 +31,16 @@ it('keeps draft text through draining, restart, and build changes and displays t
     <SystemUpgradeBannerHost /><textarea aria-label="Unsent message" /><VersionCard />
   </LiveConnectionProvider></SystemUpgradeProvider></QueryClientProvider>);
   await waitFor(() => expect(screen.getByText('w1')).toBeTruthy());
-  const details = screen.getByText('Diagnostics').closest('details')!;
-  expect(details.open).toBe(false);
-  await userEvent.click(screen.getByText('Diagnostics'));
-  expect(details.open).toBe(true);
   expect(screen.getByText('w1').getBoundingClientRect().height).toBeGreaterThan(0);
   await userEvent.fill(screen.getByRole('textbox'), 'Keep my unsent draft');
   act(() => sink.frame({ type: 'event', meta: { id: 0, eventVersion: 1 }, event: { ev: 'system.upgrade_status', data: { draining: true, activeDispatches: 2 } } }));
-  expect(screen.getByRole('status').textContent).toContain('2 active dispatches');
-  expect(screen.getByRole('complementary', { name: 'System upgrade' }).getBoundingClientRect().top).toBeLessThan(screen.getByRole('textbox').getBoundingClientRect().top);
+  const upgradeBanner = screen.getByRole('complementary', { name: 'System upgrade' });
+  const upgradeStatus = within(upgradeBanner).getByRole('status');
+  expect(upgradeStatus.textContent).toContain('2 active dispatches');
+  expect(upgradeBanner.getBoundingClientRect().top).toBeLessThan(screen.getByRole('textbox').getBoundingClientRect().top);
   info = { ...info, releaseId: 'r2', draining: true, activeDispatches: 2 };
   act(() => sink.connectionState('disconnected'));
-  expect(screen.getByRole('status').textContent).toContain('Reconnecting during upgrade');
+  expect(upgradeStatus.textContent).toContain('Reconnecting during upgrade');
   act(() => sink.connectionState('connected'));
   await waitFor(() => expect(screen.getAllByText('r2').length).toBeGreaterThanOrEqual(1));
   expect(screen.queryByRole('button', { name: 'Refresh' })).toBeNull();

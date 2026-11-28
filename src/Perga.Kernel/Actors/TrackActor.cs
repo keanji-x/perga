@@ -9,6 +9,7 @@ using Perga.Kernel.Flow;
 using Perga.Kernel.Internal;
 using Perga.Kernel.Mcp;
 using Perga.Kernel.Ports;
+using Perga.Kernel.Settings;
 using Perga.Kernel.Tasks;
 using Perga.Kernel.Templates;
 using Perga.PolicyVm;
@@ -29,6 +30,7 @@ public sealed partial class TrackActor : IAsyncDisposable
     private readonly IMcpSessionBridge _mcpBridge;
     private readonly EventHub _eventHub;
     private readonly KernelOptions _options;
+    private readonly AppSettingsService? _appSettings;
     private readonly TimeProvider _timeProvider;
     private readonly IScheduleCronEvaluator? _scheduleCronEvaluator;
 
@@ -83,7 +85,8 @@ public sealed partial class TrackActor : IAsyncDisposable
         KernelOptions options,
         TimeProvider timeProvider,
         IScheduleCronEvaluator? scheduleCronEvaluator,
-        IMemoryContextProvider? memoryContext = null)
+        IMemoryContextProvider? memoryContext = null,
+        AppSettingsService? appSettings = null)
     {
         TrackId = trackId;
         _terminalLifecycle = new TerminalLifecycle(this);
@@ -104,6 +107,7 @@ public sealed partial class TrackActor : IAsyncDisposable
         _mcpBridge = mcpBridge;
         _eventHub = eventHub;
         _options = options;
+        _appSettings = appSettings;
         _timeProvider = timeProvider;
         _runtimes = new(timeProvider, PrepareRuntimeCloseAsync, (id, binding) => _mcpBridge.RevokeSession(id, binding));
         _lastActivityAtMs = NowMs();
@@ -132,7 +136,10 @@ public sealed partial class TrackActor : IAsyncDisposable
         _scheduler.HasActiveWork;
 
     internal bool CanEvictIdleActor =>
-        !HasActiveWork && (_options.SessionIdleTimeout <= TimeSpan.Zero || !_runtimes.HasOpenHandles);
+        !HasActiveWork && (SessionIdleTimeout <= TimeSpan.Zero || !_runtimes.HasOpenHandles);
+
+    private TimeSpan SessionIdleTimeout => _appSettings?.Current.SessionIdleTimeout ?? _options.SessionIdleTimeout;
+    private double AutoCompactionThreshold => _appSettings?.Current.AutoCompactionThreshold ?? _options.AutoCompactionThreshold;
 
     public bool IsSessionOrTaskRunning =>
         _scheduler.HasActiveTurns || _taskCoordinator.HasActiveWork || _activeWatches.Count > 0 || _scheduler.HasDispatchingInputs;

@@ -2,6 +2,7 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Http;
 using Perga.Host.Serialization;
 using Perga.Kernel;
+using Perga.Kernel.Settings;
 using Perga.ReportDoc;
 
 namespace Perga.Host.Http;
@@ -10,6 +11,8 @@ public sealed record ApiErrorResponse(
     string Code,
     string Error,
     string? NextStep = null);
+
+public sealed record SettingsValidationErrorResponse(string Code, string Error, string Field);
 
 public static class HttpErrorHandling
 {
@@ -35,6 +38,16 @@ public static class HttpErrorHandling
                 statusCode: StatusCodes.Status409Conflict),
 
             KernelException kex => MapKernelException(kex),
+
+            AppSettingValidationException validation => Results.Json(
+                new SettingsValidationErrorResponse("invalid_argument", validation.Message, validation.Field),
+                PergaJsonDefaults.ApiOptions,
+                statusCode: StatusCodes.Status400BadRequest),
+
+            AppSettingsLoadException load => Results.Json(
+                new ApiErrorResponse("settings_unavailable", load.Message),
+                PergaJsonDefaults.ApiOptions,
+                statusCode: StatusCodes.Status503ServiceUnavailable),
 
             BadHttpRequestException { StatusCode: < 500 } badHttp => Results.Json(
                 new ApiErrorResponse(badHttp.StatusCode == StatusCodes.Status413PayloadTooLarge ? "payload_too_large" : "bad_request",

@@ -63,6 +63,109 @@ public static partial class WorkspaceFileReader
         }
     }
 
+    public static FileStream OpenRegularFileNoFollow(string path)
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            if ((File.GetAttributes(path) & (FileAttributes.ReparsePoint | FileAttributes.Directory | FileAttributes.Device)) != 0)
+                throw new IOException("Path must be a regular file.");
+            var windowsHandle = File.OpenHandle(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            try
+            {
+                if (!IsRegularHandle(windowsHandle, path))
+                    throw new IOException("Path must be a regular file.");
+                return new FileStream(windowsHandle, FileAccess.Read);
+            }
+            catch
+            {
+                windowsHandle.Dispose();
+                throw;
+            }
+        }
+
+        // O_NOFOLLOW rejects links at open, and O_NONBLOCK avoids hanging on a FIFO.
+        var (noFollow, nonBlock, cloexec) = UnixRegularFileFlags();
+        var handle = OpenUnixReadOnly(path, noFollow | nonBlock | cloexec);
+        try
+        {
+            if (!IsRegularHandle(handle, path))
+                throw new IOException("Path must be a regular file.");
+            return new FileStream(handle, FileAccess.Read);
+        }
+        catch
+        {
+            handle.Dispose();
+            throw;
+        }
+    }
+
+    public static SafeFileHandle OpenDirectoryHandle(string path)
+    {
+        var (directory, cloexec) = UnixDirectoryFlags();
+        return OpenUnixReadOnly(path, directory | cloexec);
+    }
+
+    public static void FlushDirectory(SafeFileHandle directory)
+    {
+        const int eintr = 4;
+        while (FSync(directory) != 0)
+        {
+            var error = Marshal.GetLastPInvokeError();
+            if (error != eintr)
+                throw new IOException($"Could not flush directory (errno {error}).");
+        }
+    }
+
+    private static (int NoFollow, int NonBlock, int CloExec) UnixRegularFileFlags()
+    {
+        if (OperatingSystem.IsMacOS())
+            return (0x100, 0x4, 0x1000000);
+        if (OperatingSystem.IsLinux())
+        {
+            var noFollow = RuntimeInformation.ProcessArchitecture switch
+            {
+                Architecture.X64 or Architecture.X86 => 0x20000,
+                Architecture.Arm64 or Architecture.Arm => 0x10000,
+                _ => throw new PlatformNotSupportedException($"Unsupported Linux architecture '{RuntimeInformation.ProcessArchitecture}'.")
+            };
+            return (noFollow, 0x800, 0x80000);
+        }
+
+        throw new PlatformNotSupportedException("Unix regular-file open is only supported on Linux and macOS.");
+    }
+
+    private static (int Directory, int CloExec) UnixDirectoryFlags()
+    {
+        if (OperatingSystem.IsMacOS())
+            return (0x100000, 0x1000000);
+        if (OperatingSystem.IsLinux())
+        {
+            var directory = RuntimeInformation.ProcessArchitecture switch
+            {
+                Architecture.X64 or Architecture.X86 => 0x10000,
+                Architecture.Arm64 or Architecture.Arm => 0x4000,
+                _ => throw new PlatformNotSupportedException($"Unsupported Linux architecture '{RuntimeInformation.ProcessArchitecture}'.")
+            };
+            return (directory, 0x80000);
+        }
+
+        throw new PlatformNotSupportedException("Unix directory open is only supported on Linux and macOS.");
+    }
+
+    private static SafeFileHandle OpenUnixReadOnly(string path, int flags)
+    {
+        const int enoent = 2;
+        const int eintr = 4;
+        while (true)
+        {
+            var fd = OpenUnix(path, flags);
+            if (fd >= 0) return new SafeFileHandle(fd, ownsHandle: true);
+            var error = Marshal.GetLastPInvokeError();
+            if (error == enoent) throw new FileNotFoundException("Path does not exist.", path);
+            if (error != eintr) throw new IOException($"Could not open path (errno {error}).");
+        }
+    }
+
     private static EntryKind GetLinuxEntryKind(string path, int fd = -100, int flags = 0) // AT_FDCWD
     {
         const uint statxType = 1;
@@ -142,6 +245,9 @@ public static partial class WorkspaceFileReader
 
     [DllImport("libc", EntryPoint = "fstat", SetLastError = true)]
     private static extern int MacFStat(SafeFileHandle fd, out MacStat info);
+
+    [DllImport("libc", EntryPoint = "fsync", SetLastError = true)]
+    private static extern int FSync(SafeFileHandle fd);
 
     [DllImport("kernel32.dll")]
     private static extern uint GetFileType(SafeFileHandle handle);

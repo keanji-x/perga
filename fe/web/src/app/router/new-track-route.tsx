@@ -21,6 +21,7 @@ import { ErrorBox } from '../../ui/error-box/public.tsx';
 import { useCompactViewport } from '../../ui/viewport/public.ts';
 import { useConversationCommands } from '../conversations/public.tsx';
 import { agentProvidersQueryOptions } from '../providers/agent-providers.ts';
+import { appSettingsQueryOptions } from '../providers/app-settings.ts';
 import { createDirectoryLister } from '../providers/directory.ts';
 import { mintIdempotencyKey } from '../providers/idempotency-key.ts';
 import { useManagedProviderCatalogs } from '../providers/managed-providers.ts';
@@ -70,6 +71,7 @@ function NewTrackEditor({ transport, unauthorized, memoryEnabled, workspace, ses
   /* Availability has one cache owner; the managed response supplies only static creation capability.
      The server admits each submitted shape and renders any refusal through the existing error flow. */
   const availability = useQuery(agentProvidersQueryOptions(transport, unauthorized, targetId));
+  const settings = useQuery(appSettingsQueryOptions(transport, unauthorized));
   const { providers, catalogs } = useManagedProviderCatalogs(transport, unauthorized, targetId);
   const optionCwd = session.form?.cwd ?? session.area.defaultCwd ?? '';
   const workspaceOptionsQuery = useQuery({
@@ -87,18 +89,10 @@ function NewTrackEditor({ transport, unauthorized, memoryEnabled, workspace, ses
   const mentionTrigger = useMentionTrigger(useMentionSearch(transport, unauthorized, areaId, null, undefined,
     memoryEnabled ? areaId : false), memoryEnabled);
 
-  const providerSeeded = useRef(false);
-  /* Seed once; later explicit choices may select an unavailable provider. */
-  useEffect(() => {
-    if (providerSeeded.current || availability.data === undefined) return;
-    providerSeeded.current = true;
-    if (session.request !== null || session.model.model !== null) return;
-    if (availabilityOf(availability.data, session.provider)?.status === 'ready') return;
-    const firstReady = availability.data.find((entry) => entry.status === 'ready');
-    if (firstReady !== undefined && firstReady.provider !== session.provider) {
-      store.update(areaId, { provider: firstReady.provider });
-    }
-  }, [ availability.data, session.provider, session.request, session.model.model, areaId, store]);
+  const savedProvider = settings.isSuccess ? settings.data.values['planners.default_provider'] : undefined;
+  const defaultProvider = typeof savedProvider === 'string' && availabilityOf(availability.data, savedProvider)?.status === 'ready'
+    ? savedProvider : availability.data?.find((entry) => entry.status === 'ready')?.provider ?? 'codex';
+  const provider = session.request?.body.provider ?? session.provider ?? defaultProvider;
   const available = workspace.areasError === null && !workspace.areasLoading
     && workspace.areas.some((area) => area.id === areaId);
   const liveRef = useRef(true);
@@ -144,7 +138,7 @@ function NewTrackEditor({ transport, unauthorized, memoryEnabled, workspace, ses
     const attemptKey = current.key;
     const body = {
       areaId: areaId,
-      provider: current.provider,
+      provider: current.provider ?? provider,
       ...(current.permissionMode === null ? {} : { permissionMode: current.permissionMode }),
       ...(current.model.model === null ? {} : { model: current.model.model }),
       ...(current.model.reasoning_effort === null ? {} : { reasoningEffort: current.model.reasoning_effort }),
@@ -207,7 +201,7 @@ function NewTrackEditor({ transport, unauthorized, memoryEnabled, workspace, ses
 
   const permissionControl = resolvePermissionControl({
     storedMode: session.permissionMode,
-    providerModes: permissionModesForProvider(providers.data, session.provider),
+    providerModes: permissionModesForProvider(providers.data, provider),
     metadataLoaded: providers.data !== undefined,
     isDisabled: session.creating || session.request !== null,
   });
@@ -231,7 +225,7 @@ function NewTrackEditor({ transport, unauthorized, memoryEnabled, workspace, ses
         <PermissionModePill
           mode={permissionControl.mode}
           options={permissionControl.options}
-          onChange={(permissionMode) => { store.update(areaId, { permissionMode }); }}
+          onChange={(permissionMode) => { store.update(areaId, { provider, permissionMode }); }}
           isDisabled={permissionControl.isDisabled}
         />
       )}
@@ -242,7 +236,7 @@ function NewTrackEditor({ transport, unauthorized, memoryEnabled, workspace, ses
           availability: availabilityOf(availability.data, entry.availability.provider),
           acceptsUnavailableBlankTrack: entry.accepts_unavailable_blank_track,
         }))}
-        provider={session.provider}
+        provider={provider}
         effortControl={compactViewport ? 'in-menu' : 'separate'}
         selection={session.model}
         /* The pick is the Planner's provider too (#1810); a pick never carries another provider's effort. */

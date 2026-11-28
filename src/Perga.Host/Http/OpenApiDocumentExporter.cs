@@ -112,7 +112,7 @@ public static class OpenApiDocumentExporter
 
             foreach (var response in endpoint.Metadata.GetOrderedMetadata<IProducesResponseTypeMetadata>().GroupBy(r => r.StatusCode).Select(group => group.Last()).OrderBy(r => r.StatusCode))
             {
-                var item = new JsonObject { ["description"] = $"HTTP {response.StatusCode}" };
+                var item = new JsonObject { ["description"] = response.Description ?? $"HTTP {response.StatusCode}" };
                 if (response.Type is not null && response.Type != typeof(void))
                 {
                     JsonNode schema = Schema(response.Type);

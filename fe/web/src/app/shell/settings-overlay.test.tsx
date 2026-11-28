@@ -34,7 +34,7 @@ afterEach(() => {
 
 function bodyFor(path: string): unknown {
   if (path === '/api/v1/areas') return [];
-  if (path === '/api/settings') return { settings: {} };
+  if (path === '/api/v1/settings') return { rev: 1, sections: [], fields: [], values: {} };
   if (path === '/api/plugins') return [];
   if (path === '/api/v1/templates') return [];
   return [];

@@ -14,6 +14,7 @@ using Perga.Host.SystemUpgrade;
 using Perga.Kernel.Templates;
 using Perga.Kernel;
 using Perga.Kernel.Ports;
+using Perga.Kernel.Settings;
 using Perga.PolicyVm;
 using Perga.MemoryKit;
 using Perga.ReportDoc;
@@ -209,7 +210,7 @@ public static class PergaHostServiceCollectionExtensions
         services.TryAddSingleton<ISystemUpgradeController, SystemUpgradeController>();
         services.TryAddSingleton<ISystemUpgradeReceiptSource, UpgradeReceiptSource>();
 
-        services.TryAddSingleton<IPergaKernel>(sp =>
+        services.TryAddSingleton(sp =>
         {
             var opts = sp.GetRequiredService<PergaHostOptions>();
             var paths = sp.GetRequiredService<ResolvedHostStoragePaths>();
@@ -218,7 +219,7 @@ public static class PergaHostServiceCollectionExtensions
                 ? hostBridge.ResolveBaseUri()
                 : (opts.McpBaseUri ?? "http://127.0.0.1:5000");
 
-            var kernelOpts = new KernelOptions
+            return new KernelOptions
             {
                 Version = opts.Version,
                 TemplatesDirectory = opts.TemplatesDirectory,
@@ -235,7 +236,17 @@ public static class PergaHostServiceCollectionExtensions
                 ProviderCancelDispatchGrace = opts.ProviderCancelDispatchGrace,
                 ProviderTerminalStopGrace = opts.ProviderTerminalStopGrace
             };
+        });
+        services.TryAddSingleton<IAppSettingsStore>(sp =>
+            new TomlAppSettingsStore(sp.GetRequiredService<ResolvedHostStoragePaths>().DataDir));
+        services.TryAddSingleton(sp => new AppSettingsRegistry(
+            sp.GetRequiredService<KernelOptions>(),
+            AgentRuntime.GetRegisteredProviderIds(sp.GetRequiredService<PergaHostOptions>().ProviderExecutables.Keys)));
+        services.TryAddSingleton<AppSettingsService>();
 
+        services.TryAddSingleton<IPergaKernel>(sp =>
+        {
+            var opts = sp.GetRequiredService<PergaHostOptions>();
             var policyVm = sp.GetRequiredService<IPolicyVm>();
             var templateCatalog = sp.GetService<Perga.Kernel.Templates.ITemplateCatalog>()
                                   ?? CreateResilientTemplateCatalog(policyVm, opts.TemplatesDirectory);
@@ -248,16 +259,17 @@ public static class PergaHostServiceCollectionExtensions
                 workspaceDrivers: sp.GetRequiredService<IWorkspaceDriverRegistry>(),
                 vcsService: sp.GetRequiredService<IVcsService>(),
                 terminalClient: sp.GetRequiredService<ITerminalBridgeClient>(),
-                options: kernelOpts,
+                options: sp.GetRequiredService<KernelOptions>(),
                 templateCatalog: templateCatalog,
-                mcpSessionBridge: bridge,
+                mcpSessionBridge: sp.GetRequiredService<IMcpSessionBridge>(),
                 commandRunner: sp.GetService<IShellCommandRunner>(),
                 timeProvider: sp.GetRequiredService<TimeProvider>(),
                 systemUpgradeController: sp.GetRequiredService<ISystemUpgradeController>(),
                 upgradeReceiptSource: sp.GetRequiredService<ISystemUpgradeReceiptSource>(),
                 scheduleCronEvaluator: sp.GetRequiredService<IScheduleCronEvaluator>(),
                 executionEnvironments: sp.GetRequiredService<IExecutionEnvironmentRegistry>(),
-                memoryContext: sp.GetRequiredService<IMemoryContextProvider>());
+                memoryContext: sp.GetRequiredService<IMemoryContextProvider>(),
+                appSettings: sp.GetRequiredService<AppSettingsService>());
         });
 
         services.TryAddSingleton<KernelMcpBackend>();

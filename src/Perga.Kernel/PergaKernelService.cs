@@ -9,6 +9,7 @@ using Perga.Kernel.Flow;
 using Perga.Kernel.Internal;
 using Perga.Kernel.Mcp;
 using Perga.Kernel.Ports;
+using Perga.Kernel.Settings;
 using Perga.Kernel.Tasks;
 using Perga.Kernel.Templates;
 using Perga.PolicyVm;
@@ -146,6 +147,7 @@ public sealed partial class PergaKernelService : IPergaKernel, IFlowTrackSpawner
     private readonly IExecutionEnvironmentRegistry _executionEnvironments;
     private readonly EventHub _eventHub;
     private readonly KernelOptions _options;
+    private readonly AppSettingsService? _appSettings;
     private readonly TimeProvider _timeProvider;
     private readonly string _fallbackDatabaseId = Guid.NewGuid().ToString("N");
     private readonly ConcurrentDictionary<string, SemaphoreSlim> _providerProbeLocks = new(StringComparer.Ordinal);
@@ -174,7 +176,8 @@ public sealed partial class PergaKernelService : IPergaKernel, IFlowTrackSpawner
         IScheduleCronEvaluator? scheduleCronEvaluator = null,
         IExecutionEnvironmentRegistry? executionEnvironments = null,
         IGitHubForgeService? gitHubForgeService = null,
-        IMemoryContextProvider? memoryContext = null)
+        IMemoryContextProvider? memoryContext = null,
+        AppSettingsService? appSettings = null)
     {
         _store = store ?? throw new ArgumentNullException(nameof(store));
         _reportEngine = reportEngine ?? throw new ArgumentNullException(nameof(reportEngine));
@@ -184,6 +187,7 @@ public sealed partial class PergaKernelService : IPergaKernel, IFlowTrackSpawner
         ArgumentNullException.ThrowIfNull(vcsService);
         ArgumentNullException.ThrowIfNull(terminalClient);
         _options = options ?? new KernelOptions();
+        _appSettings = appSettings;
         _systemUpgradeController = systemUpgradeController;
         _scheduleCronEvaluator = scheduleCronEvaluator;
         _memoryContext = memoryContext ?? NoMemoryContextProvider.Instance;
@@ -217,7 +221,8 @@ public sealed partial class PergaKernelService : IPergaKernel, IFlowTrackSpawner
             _options,
             _timeProvider,
             _scheduleCronEvaluator,
-            _memoryContext);
+            _memoryContext,
+            _appSettings);
         UpgradeReceipts = new SystemUpgrade.UpgradeReceiptConsumer(_store, upgradeReceiptSource, Actors, _eventHub, DispatchAdmission);
         BootReconciler = new BootReconciler(_store, workspaceDrivers, Actors, UpgradeReceipts, _memoryContext);
         DispatchAdmission.Changed += PublishUpgradeStatus;
@@ -225,6 +230,7 @@ public sealed partial class PergaKernelService : IPergaKernel, IFlowTrackSpawner
     }
 
     public IKernelEventBus EventBus => _eventHub;
+    private string DefaultProvider => _appSettings?.Current.DefaultProvider ?? _options.DefaultProvider;
     public ITemplateCatalog Templates { get; }
     public IMcpSessionBridge McpSessionBridge { get; }
     public IExecutionEnvironmentRegistry ExecutionEnvironments => _executionEnvironments;
@@ -742,11 +748,11 @@ public sealed partial class PergaKernelService : IPergaKernel, IFlowTrackSpawner
             ExecutionTargetId: trackTargetId,
             OriginTrackId: originTrackId);
 
-        var defaultProvider = SessionLaunchValidator.NormalizeProvider(_options.DefaultProvider);
-        var leadProvider = SessionLaunchValidator.NormalizeTaskProviderId(req.Provider) ?? defaultProvider;
+        var configuredDefaultProvider = SessionLaunchValidator.NormalizeProvider(_options.DefaultProvider);
+        var leadProvider = SessionLaunchValidator.NormalizeTaskProviderId(req.Provider) ?? DefaultProvider;
         var leadPermissionMode = RuntimePermissionModes.Resolve(leadProvider, req.PermissionMode);
         var leadModel = req.Model ?? (flowKey is null &&
-            SessionLaunchValidator.NormalizeProvider(leadProvider) == defaultProvider
+            SessionLaunchValidator.NormalizeProvider(leadProvider) == configuredDefaultProvider
                 ? _options.DefaultModel
                 : null);
         var leadSession = new AgentSessionDto(
@@ -810,7 +816,7 @@ public sealed partial class PergaKernelService : IPergaKernel, IFlowTrackSpawner
 
     private async Task<string> ResolveDefaultProviderAsync(string targetId, CancellationToken ct)
     {
-        var defaultProvider = SessionLaunchValidator.NormalizeProvider(_options.DefaultProvider);
+        var defaultProvider = SessionLaunchValidator.NormalizeProvider(DefaultProvider);
         IReadOnlyList<ProviderStatus> targetProviders = [];
         try
         {

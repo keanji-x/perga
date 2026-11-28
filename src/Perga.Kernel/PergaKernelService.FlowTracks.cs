@@ -46,7 +46,7 @@ public sealed partial class PergaKernelService
             ? area.ExecutionTargetId : ExecutionTargetIds.Normalize(action.ExecutionTargetId);
 
         var providers = await GetTargetProvidersAsync(targetId, ct: ct).ConfigureAwait(false);
-        var defaultProvider = SessionLaunchValidator.NormalizeProvider(_options.DefaultProvider);
+        var defaultProvider = SessionLaunchValidator.NormalizeProvider(DefaultProvider);
         var sourceProvider = parentLead is not null ? SessionLaunchValidator.NormalizeProvider(parentLead.Provider) : null;
         var requestedProvider = SessionLaunchValidator.NormalizeTaskProviderId(action.Provider);
         var provider = requestedProvider is not null
@@ -67,7 +67,8 @@ public sealed partial class PergaKernelService
             !status.Models.Contains(inheritedModel, StringComparer.Ordinal))
             inheritedModel = null;
         var model = requestedModel ?? inheritedModel ?? SessionLaunchValidator.DefaultModel(status)
-            ?? (provider == defaultProvider ? _options.DefaultModel : null);
+            ?? (provider == defaultProvider && provider == SessionLaunchValidator.NormalizeProvider(_options.DefaultProvider)
+                ? _options.DefaultModel : null);
 
         var effort = action.ReasoningEffort?.Trim();
         SessionLaunchValidator.ValidateModelAndEffort(provider, status, requestedModel, model, effort);

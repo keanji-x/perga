@@ -264,15 +264,15 @@ public sealed partial class TrackActor
     }
 
     private async Task<bool> CloseSessionRuntimeAsync(string sessionId, long expectedGeneration,
-        bool propagateFailure = false, long? idleCutoffMs = null, string? allowDispatchInputId = null)
+        bool propagateFailure = false, bool dueToIdle = false, string? allowDispatchInputId = null)
     {
         var runtime = _runtimes.Get(sessionId);
         try
         {
             return await runtime.CloseAsync(_options.SessionStartupTimeout, _actorShutdownCts.Token,
                 shouldClose: () => _scheduler.IsIdleForRuntimeClose(sessionId, allowDispatchInputId) &&
-                    (idleCutoffMs is null || !runtime.IsShutdownUnconfirmed &&
-                        runtime.Snapshot is { } handle && RuntimeIsIdleCore(handle, idleCutoffMs.Value)),
+                    (!dueToIdle || !runtime.IsShutdownUnconfirmed &&
+                        runtime.Snapshot is { } handle && RuntimeIsIdleCore(handle)),
                 expectedGeneration: expectedGeneration).ConfigureAwait(false);
         }
         catch (Exception)
@@ -290,15 +290,12 @@ public sealed partial class TrackActor
         if (_disposed || _runtimes.SnapshotOpen().Count == 0)
             return 0;
 
-        long? idleCutoffMs = _options.SessionIdleTimeout > TimeSpan.Zero
-            ? NowMs() - (long)_options.SessionIdleTimeout.TotalMilliseconds
-            : null;
-        List<(string SessionId, long Generation, long? IdleCutoffMs)> candidates;
+        List<(string SessionId, long Generation, bool DueToIdle)> candidates;
         try
         {
             candidates = await EnqueueAsync(_ =>
             {
-                var idle = new List<(string, long, long?)>();
+                var idle = new List<(string, long, bool)>();
                 if (!_hydrated) return Task.FromResult(idle);
                 foreach (var (sessionId, handle) in _runtimes.SnapshotOpen())
                 {
@@ -309,12 +306,12 @@ public sealed partial class TrackActor
                         !HasRuntimeCredential(sessionId, handle);
                     if (retired)
                     {
-                        idle.Add((sessionId, handle.Generation, null));
+                        idle.Add((sessionId, handle.Generation, false));
                         continue;
                     }
-                    if (idleCutoffMs is null || !RuntimeIsIdleCore(handle, idleCutoffMs.Value) || _scheduler.IsOccupied(session)) continue;
+                    if (!RuntimeIsIdleCore(handle) || _scheduler.IsOccupied(session)) continue;
                     if (handle.Agent.SupportsSessionResume && !string.IsNullOrWhiteSpace(session.NativeThreadId))
-                        idle.Add((sessionId, handle.Generation, idleCutoffMs));
+                        idle.Add((sessionId, handle.Generation, true));
                 }
                 return Task.FromResult(idle);
             }, ct, touchActivity: false).ConfigureAwait(false);
@@ -326,16 +323,19 @@ public sealed partial class TrackActor
 
         if (candidates.Count == 0) return 0;
         var results = await Task.WhenAll(candidates.Select(candidate =>
-            CloseSessionRuntimeAsync(candidate.SessionId, candidate.Generation, idleCutoffMs: candidate.IdleCutoffMs)))
+            CloseSessionRuntimeAsync(candidate.SessionId, candidate.Generation, dueToIdle: candidate.DueToIdle)))
             .ConfigureAwait(false);
         return results.Count(closed => closed);
     }
 
-    private bool RuntimeIsIdleCore(OpenSessionHandle handle, long cutoffMs) =>
-        handle.LastUsedAtMs <= cutoffMs &&
-        !handle.RuntimeActivity.Tasks.Values.Any(task => task.Status is "running" or "pending") &&
-        !_approvals.Values.Any(approval => ReferenceEquals(approval.Control, handle.RuntimeControl)) &&
-        !_interactions.HasRuntimeWaiter(handle.RuntimeControl);
+    private bool RuntimeIsIdleCore(OpenSessionHandle handle)
+    {
+        var timeout = SessionIdleTimeout;
+        return timeout > TimeSpan.Zero && handle.LastUsedAtMs <= NowMs() - (long)timeout.TotalMilliseconds &&
+            !handle.RuntimeActivity.Tasks.Values.Any(task => task.Status is "running" or "pending") &&
+            !_approvals.Values.Any(approval => ReferenceEquals(approval.Control, handle.RuntimeControl)) &&
+            !_interactions.HasRuntimeWaiter(handle.RuntimeControl);
+    }
 
     private async Task NotifyParentCoreAsync(AgentSessionDto child, string policy, string key, string prompt)
     {

@@ -123,14 +123,6 @@ export function createUiPreferences(storage?: UiPreferenceStorage) {
       return typeof value === 'string' ? value : null;
     },
     setPreviewViewport: (trackId: string, key: string, value: string) => write(`preview-viewport:${trackId}:${key}`, value, false),
-    turnDurationMinutes(): number | null {
-      const stored = read('browser:perga-turn-duration');
-      const value = typeof stored === 'string' ? Number(stored) : 0;
-      return Number.isInteger(value) && value >= 1 && value <= 240 ? value : null;
-    },
-    setTurnDurationMinutes: (minutes: number | null) =>
-      write('browser:perga-turn-duration', minutes === null ? null : String(minutes), true),
-
   });
 }
 
