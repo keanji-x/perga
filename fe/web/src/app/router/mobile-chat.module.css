@@ -152,5 +152,13 @@
     justify-content: flex-end;
     gap: var(--space-1);
     padding-block-start: var(--space-1);
+    margin-block-end: var(--space-3);
   }
+
+  .embeddedHeader button {
+    opacity: 0.45;
+    transition: opacity var(--motion-quick) var(--ease-feedback);
+  }
+
+  .embeddedHeader button:is(:hover, :focus-within) { opacity: 1; }
 }

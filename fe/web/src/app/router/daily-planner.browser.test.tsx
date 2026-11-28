@@ -5,7 +5,7 @@ import { page,userEvent } from 'vitest/browser';
 import { transcript } from '../../../../core/events/query-keys.ts';
 import { withFontRoleProbe } from '../../../../tools/styles/font-role-fixture.ts';
 import { NewTrackForm } from '../../features/area/new-track/public.tsx';
-import { sessionItem,sessionPage,sessionTurn } from './conversation-session-data.ts';
+import { sessionItem,sessionPage,sessionReply,sessionTurn } from './conversation-session-data.ts';
 import { renderDailyFixture } from './daily-planner-fixture.tsx';
 import { fixtureBootstrap,fixtureSession,fixtureSnapshot,fixtureTrack } from './session-contract-fixture.ts';
 
@@ -252,11 +252,66 @@ it.each([900, 600])('optically centers the empty perga Today composer and pins i
   expect(host.hasAttribute('data-nc-centered-footer')).toBe(false);
   expect(field.element()).toBe(editor);
   await expect.element(field).toHaveTextContent('Keep this draft');
+  editable.blur();
+  await expect.poll(() => getComputedStyle(body).boxShadow).toBe(referenceShadow);
+  expect(getComputedStyle(body).borderWidth).toBe('0px');
+  expect(parseFloat(getComputedStyle(editable).minBlockSize)).toBeCloseTo(2 * parseFloat(getComputedStyle(editable).lineHeight));
+  expect(getComputedStyle(footer).paddingBlockEnd).toBe(getComputedStyle(body).paddingInlineEnd);
+  editable.focus();
+  await expect.poll(() => getComputedStyle(body).boxShadow).toBe(referenceFocus);
+  const noteStyle = getComputedStyle(assistant.getByText('Plan the release', { exact: true }).element());
+  expect(noteStyle.maxInlineSize).toBe('78%');
+  expect(noteStyle.borderBlockStartWidth).toBe('0px');
+  expect(noteStyle.backgroundColor).toBe(getComputedStyle(body).backgroundColor);
+  expect(noteStyle.boxShadow).toBe('none');
   expect(assistant.getByText('Report changes').query()).toBeNull();
   expect(assistant.getByRole('heading', { name: 'What would you like to move forward today?' }).query()).toBeNull();
   const send = assistant.getByRole('button', { name: 'Send', exact: true }).element().getBoundingClientRect();
   expect(send.bottom).toBeLessThanOrEqual(box.bottom);
   expect(send.top).toBeGreaterThan(box.top + box.height / 2);
+});
+
+it('keeps embedded session warnings at full opacity and uses paper for dark message bubbles', async () => {
+  await page.viewport(1440, 900);
+  const session = fixtureSession('daily-planner', 'daily', { isLead: true });
+  renderDailyFixture({
+    themeStorage: { getItem: () => 'dark', setItem: () => undefined },
+    reply: request => request.path.includes('/daily-planner/items?')
+      ? sessionReply({
+        ...sessionPage(session, [sessionItem(session.id, 1, 'Plan the release', 'user')]),
+        mcpHealth: { status: 'failed', error: 'HTTP 502' },
+      })
+      : undefined,
+  });
+  const assistant = page.getByRole('region', { name: 'Today Assistant', exact: true });
+  const note = assistant.getByText('Plan the release', { exact: true });
+  const chip = assistant.getByText('Tools disconnected', { exact: true });
+  const actions = assistant.getByRole('button', { name: 'Session actions', exact: true });
+  await expect.element(chip).toBeVisible();
+  await note.hover();
+  const button = actions.element() as HTMLButtonElement;
+  for (let node: Element | null = chip.element(); node !== null && node !== assistant.element(); node = node.parentElement) {
+    expect(getComputedStyle(node).opacity).toBe('1');
+  }
+  await expect.poll(() => getComputedStyle(button).opacity).toBe('0.45');
+  await actions.hover();
+  await expect.poll(() => getComputedStyle(button).opacity).toBe('1');
+  await chip.hover();
+  await expect.poll(() => getComputedStyle(button).opacity).toBe('0.45');
+  button.focus();
+  await expect.poll(() => getComputedStyle(button).opacity).toBe('1');
+
+  expect(document.documentElement.dataset.theme).toBe('dark');
+  const bubble = note.element();
+  const paper = document.createElement('span');
+  paper.style.backgroundColor = 'var(--paper)';
+  paper.hidden = true;
+  bubble.append(paper);
+  try {
+    expect(getComputedStyle(bubble).backgroundColor).toBe(getComputedStyle(paper).backgroundColor);
+  } finally {
+    paper.remove();
+  }
 });
 
 it.each([900, 600])('shows the shared masthead above a clean perga composer and keeps the right card usable at height %s', async height => {

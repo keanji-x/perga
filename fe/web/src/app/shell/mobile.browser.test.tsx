@@ -472,7 +472,7 @@ describe('Track mobile presentation', () => {
     await page.getByRole('dialog', { name: 'New area', exact: true }).findElement();
     expect(page.getByRole('dialog').elements()).toHaveLength(1);
     await page.getByRole('textbox', { name: /^Name/ }).fill('Research');
-    await page.getByRole('button', { name: 'Create area', exact: true }).click();
+    await page.getByRole('button', { name: 'Create', exact: true }).click();
     await expect.poll(() => router.state.location.pathname).toBe('/area/c3/new');
     expect(page.getByRole('dialog', { name: 'New area', exact: true }).query()).toBeNull();
     expect(page.getByRole('dialog', { name: 'Tracks and settings' }).query()).toBeNull();

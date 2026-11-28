@@ -12,6 +12,9 @@ import { NewTrackForm } from '../../features/area/new-track/public.tsx';
 import { ModelPill } from '../../features/chat/thread/model-pill.tsx';
 import { useState } from '../../ui/state/public.ts';
 
+const OVERFLOW_CWD = '/srv/a-long-folder-for-the-overflow-layout';
+const OVERFLOW_FOLDER_LABEL = `Repo: a-long-folder-for-the-overflow-layout (${OVERFLOW_CWD})`;
+
 function ModelForm({
   onChange = () => undefined, submitting = false, locked = false, initialCwd = null,
   modelName = 'Test model',
@@ -67,7 +70,7 @@ it('keeps phone preferences compact while selecting model and effort in one menu
     expect(screen.getAllByRole('button')).toHaveLength(3); // Options, Model and Create track.
     for (const [width, height] of [[390, 844], [320, 700]]) {
       await page.viewport(width, height);
-      expect(await screen.findByRole('button', { name: width === 320 ? 'Track options' : 'Workspace: Managed' })).toBeTruthy();
+      expect(await screen.findByRole('button', { name: 'Default folder' })).toBeTruthy();
       const model = screen.getByRole('button', { name: /^Model: Test model/ }).getBoundingClientRect();
       const send = screen.getByRole('button', { name: 'Create track' }).getBoundingClientRect();
       expect(Math.abs(model.top + model.height / 2 - send.top - send.height / 2)).toBeLessThan(2);
@@ -92,7 +95,7 @@ it('gives the phone composer a compact input and one aligned preference row with
       const send = screen.getByRole('button', { name: 'Create track' }).getBoundingClientRect();
       await waitFor(() => {
         expect(screen.queryByRole('button', { name: 'Track options' })).toBeNull();
-        for (const name of ['Workspace: Managed', 'Model: Default']) expectFullLabel(name);
+        for (const name of ['Default folder', 'Model: Default']) expectFullLabel(name);
       });
       expect(Math.abs(model.top + model.height / 2 - send.top - send.height / 2)).toBeLessThan(2);
       expect(model.right).toBeLessThanOrEqual(send.left);
@@ -123,7 +126,7 @@ it('keeps a retained phone draft at the same text size and height while submitti
     for (const [submitting, locked] of [[true, false], [false, true], [false, false]]) {
       view.rerender(<ModelForm submitting={submitting} locked={locked} />);
       expect(input.textContent).toBe(originalText);
-      expect(screen.getByRole<HTMLButtonElement>('button', { name: 'Workspace: Managed' }).getAttribute('aria-disabled') === 'true').toBe(submitting || locked);
+      expect(screen.getByRole<HTMLButtonElement>('button', { name: 'Default folder' }).getAttribute('aria-disabled') === 'true').toBe(submitting || locked);
       expect(getComputedStyle(input).fontSize).toBe(fontSize);
       expect(getComputedStyle(input).lineHeight).toBe(lineHeight);
       expect(input.getBoundingClientRect().height).toBe(height);
@@ -144,7 +147,6 @@ it('keeps long custom preferences readable inside overflow and switches back via
     await userEvent.click(screen.getByRole('radio', { name: modelName }));
     await userEvent.click(await screen.findByRole('button', { name: 'Track options' }));
     const options = await screen.findByRole('dialog', { name: 'Track options' });
-    expect(within(options).queryByRole('button', { name: 'Use a Perga workspace instead' })).toBeNull();
     for (const width of [320, 390]) {
       await page.viewport(width, 740);
       const folder = within(options).getByRole('button', { name: `Repo: a-long-custom-folder-for-the-mobile-layout (${cwd})` }).getBoundingClientRect();
@@ -152,9 +154,9 @@ it('keeps long custom preferences readable inside overflow and switches back via
       expect(document.documentElement.scrollWidth).toBe(width);
     }
     await page.elementLocator(within(options).getByRole('button', { name: `Repo: a-long-custom-folder-for-the-mobile-layout (${cwd})` })).click();
-    await page.getByRole('menuitem', { name: /^Use Perga workspace/ }).click();
+    await page.getByRole('menuitem', { name: /^Default$/ }).click();
     await page.viewport(600, 740);
-    await expect.element(page.getByRole('button', { name: 'Workspace: Managed' })).toBeVisible();
+    await expect.element(page.getByRole('button', { name: 'Default folder' })).toBeVisible();
   } finally {
     view.unmount();
     await page.viewport(1280, 720);
@@ -162,20 +164,20 @@ it('keeps long custom preferences readable inside overflow and switches back via
 });
 
 it('keeps Model beside Create and moves preferences into overflow before they stop fitting', async () => {
-  const view = render(<ModelForm />);
+  const view = render(<ModelForm initialCwd={OVERFLOW_CWD} />);
   try {
-    await page.viewport(390, 844);
+    await page.viewport(600, 844);
     const model = screen.getByRole('button', { name: 'Model: Default' }).getBoundingClientRect();
     const send = screen.getByRole('button', { name: 'Create track' }).getBoundingClientRect();
     expect(Math.abs(model.top + model.height / 2 - send.top - send.height / 2)).toBeLessThan(2);
-    expect(await screen.findByRole('button', { name: 'Workspace: Managed' })).toBeTruthy();
-    await page.viewport(280, 740);
+    expect(await screen.findByRole('button', { name: OVERFLOW_FOLDER_LABEL })).toBeTruthy();
+    await page.viewport(320, 740);
     expect(await screen.findByRole('button', { name: 'Track options' })).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Template: No template' })).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Workspace: Managed' })).toBeNull();
+    expect(screen.queryByRole('button', { name: OVERFLOW_FOLDER_LABEL })).toBeNull();
     await page.viewport(600, 740);
     await waitFor(() => { expect(screen.queryByRole('button', { name: 'Track options' })).toBeNull(); });
-    expectFullLabel('Workspace: Managed');
+    expectFullLabel(OVERFLOW_FOLDER_LABEL);
   } finally {
     view.unmount();
     await page.viewport(1280, 720);
@@ -183,24 +185,24 @@ it('keeps Model beside Create and moves preferences into overflow before they st
 });
 
 it('keeps directory selection and cancellation usable through overflow', async () => {
-  await page.viewport(280, 740);
+  await page.viewport(320, 740);
   const cwd = '/srv/a-long-directory-selected-through-the-real-browser';
-  const view = render(<ModelForm listDirectory={() => Promise.resolve({ path: cwd, parent: null, entries: [] })} />);
+  const view = render(<ModelForm initialCwd={OVERFLOW_CWD} listDirectory={() => Promise.resolve({ path: cwd, parent: null, entries: [] })} />);
   try {
     const more = await screen.findByRole('button', { name: 'Track options' });
     more.focus();
     await userEvent.keyboard('{Enter}');
     const options = await screen.findByRole('dialog', { name: 'Track options' });
-    await page.elementLocator(within(options).getByRole('button', { name: 'Workspace: Managed' })).click();
-    await page.getByRole('menuitem', { name: /^Choose folder…/ }).click();
+    await page.elementLocator(within(options).getByRole('button', { name: OVERFLOW_FOLDER_LABEL })).click();
+    await page.getByRole('menuitem', { name: /^Change folder…/ }).click();
     const cancelledDirectory = await screen.findByRole('dialog', { name: 'Choose a directory' });
     await page.elementLocator(within(cancelledDirectory).getByRole('button', { name: 'Cancel' })).click();
     await waitFor(() => { expect(screen.queryByRole('dialog', { name: 'Choose a directory' })).toBeNull(); });
     expect(screen.queryByRole('dialog', { name: 'Track options' })).toBeNull();
     await waitFor(() => { expect(document.activeElement).toBe(more); });
     await page.getByRole('button', { name: 'Track options' }).click();
-    await page.getByRole('button', { name: 'Workspace: Managed' }).click();
-    await page.getByRole('menuitem', { name: /^Choose folder…/ }).click();
+    await page.getByRole('button', { name: OVERFLOW_FOLDER_LABEL }).click();
+    await page.getByRole('menuitem', { name: /^Change folder…/ }).click();
     const directory = await screen.findByRole('dialog', { name: 'Choose a directory' });
     await page.elementLocator(await within(directory).findByRole('button', { name: 'Select this directory' })).click();
     await waitFor(() => { expect(screen.queryByRole('dialog', { name: 'Choose a directory' })).toBeNull(); });
@@ -214,10 +216,10 @@ it('keeps directory selection and cancellation usable through overflow', async (
     await page.viewport(600, 844);
     await waitFor(() => { expect(screen.queryByRole('button', { name: 'Track options' })).toBeNull(); });
     await page.getByRole('button', { name: `Repo: a-long-directory-selected-through-the-real-browser (${cwd})` }).click();
-    await page.getByRole('menuitem', { name: /Perga workspace/ }).click();
+    await page.getByRole('menuitem', { name: /^Default$/ }).click();
     await waitFor(() => { expect(screen.queryByRole('button', { name: 'Track options' })).toBeNull(); });
-    expect(screen.getByRole('button', { name: 'Workspace: Managed' })).toBeTruthy();
-    expectFullLabel('Workspace: Managed');
+    expect(screen.getByRole('button', { name: 'Default folder' })).toBeTruthy();
+    expectFullLabel('Default folder');
   } finally {
     view.unmount();
     await page.viewport(1280, 720);
@@ -225,12 +227,12 @@ it('keeps directory selection and cancellation usable through overflow', async (
 });
 
 it('restores the visible options trigger after a trusted pointer cancels directory browsing', async () => {
-  await page.viewport(280, 740);
-  const view = render(<ModelForm />);
+  await page.viewport(320, 740);
+  const view = render(<ModelForm initialCwd={OVERFLOW_CWD} />);
   try {
     await page.getByRole('button', { name: 'Track options', exact: true }).click();
-    await page.getByRole('button', { name: 'Workspace: Managed', exact: true }).click();
-    await page.getByRole('menuitem', { name: /^Choose folder…/ }).click();
+    await page.getByRole('button', { name: OVERFLOW_FOLDER_LABEL, exact: true }).click();
+    await page.getByRole('menuitem', { name: /^Change folder…/ }).click();
     await page.getByRole('dialog', { name: 'Choose a directory', exact: true }).getByRole('button', { name: 'Cancel', exact: true }).click();
     await waitFor(() => { expect(screen.queryByRole('dialog', { name: 'Choose a directory' })).toBeNull(); });
     expect(screen.queryByRole('dialog', { name: 'Track options' })).toBeNull();
@@ -242,8 +244,8 @@ it('restores the visible options trigger after a trusted pointer cancels directo
 });
 
 it('keeps standard secondary button affordances on the visible model and overflow controls', async () => {
-  await page.viewport(280, 740);
-  const view = render(<ModelForm />);
+  await page.viewport(320, 740);
+  const view = render(<ModelForm initialCwd={OVERFLOW_CWD} />);
   try {
     const more = await screen.findByRole('button', { name: 'Track options' });
     const model = screen.getByRole('button', { name: 'Model: Default' });
@@ -258,26 +260,26 @@ it('keeps standard secondary button affordances on the visible model and overflo
 });
 
 it('restores a focused overflow trigger into inline preferences without moving unrelated focus on resize', async () => {
-  await page.viewport(280, 740);
-  const view = render(<ModelForm />);
+  await page.viewport(320, 740);
+  const view = render(<ModelForm initialCwd={OVERFLOW_CWD} />);
   try {
     const more = await screen.findByRole('button', { name: 'Track options' });
     more.focus();
     expect(document.activeElement).toBe(more);
     await page.viewport(844, 740);
-    const folder = await screen.findByRole('button', { name: 'Workspace: Managed' });
+    const folder = await screen.findByRole('button', { name: OVERFLOW_FOLDER_LABEL });
     await waitFor(() => { expect(document.activeElement).toBe(folder); });
 
     const editor = screen.getByRole('textbox', { name: 'What this track should do' });
     editor.focus();
-    await page.viewport(280, 740);
+    await page.viewport(320, 740);
     expect(await screen.findByRole('button', { name: 'Track options' })).toBeTruthy();
     expect(document.activeElement).toBe(editor);
 
     const model = screen.getByRole('button', { name: 'Model: Default' });
     model.focus();
     await page.viewport(844, 740);
-    expect(await screen.findByRole('button', { name: 'Workspace: Managed' })).toBeTruthy();
+    expect(await screen.findByRole('button', { name: OVERFLOW_FOLDER_LABEL })).toBeTruthy();
     expect(document.activeElement).toBe(model);
   } finally {
     view.unmount();
@@ -302,7 +304,7 @@ it('uses the card radius for the composer while retaining full pill and send con
     await expect.poll(() => getComputedStyle(body).boxShadow).toContain('0px 0px 0px 2px');
     expect(getComputedStyle(body).borderRadius).toBe('16px');
 
-    for (const name of ['Workspace: Managed', 'Model: Default', 'Create track']) {
+    for (const name of ['Default folder', 'Model: Default', 'Create track']) {
       expect(getComputedStyle(await screen.findByRole('button', { name })).borderRadius).toBe('999px');
     }
 
@@ -331,7 +333,7 @@ it('keeps attach button and options aligned without overlap on narrow mobile vie
       area={{ id: 'work', name: 'Work' }}
       submitting={false}
       error={null}
-      initialCwd={null}
+      initialCwd={OVERFLOW_CWD}
       listDirectory={(path) => Promise.resolve({ path: path ?? '/', parent: null, entries: [] })}
       onSubmit={vi.fn()}
       attachButton={<button type="button" data-nc-attach="">Attach</button>}

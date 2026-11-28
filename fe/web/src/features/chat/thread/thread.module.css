@@ -233,10 +233,11 @@
     color: var(--text);
   }
 
-  /* On the page ground (`EmbeddedReadingHost`), `--bg` matches the surface behind
-     it; step to `--surface-chip` so your turn keeps a visible well. */
   [data-nc-embedded-reading] .said {
-    background: var(--surface-chip);
+    max-inline-size: 78%;
+    padding: var(--space-3) var(--space-4);
+    border: 0;
+    background: var(--paper);
   }
 
   /*
@@ -521,12 +522,8 @@
    */
   /* An empty disabled editor loses its line box. Reserve the same line and
      vertical padding while a send is out so the pinned composer cannot shrink. */
-  .composer:not(:where([data-nc-centered-footer] *)) .input [contenteditable]:not([data-astryx-token]) {
+  .composer:not(:where([data-nc-embedded-reading] *)) .input [contenteditable]:not([data-astryx-token]) {
     min-block-size: calc(1lh + var(--space-2) * 2);
-  }
-
-  [data-nc-embedded-reading]:not([data-nc-centered-footer]) .input [contenteditable]:not([data-astryx-token]) {
-    min-block-size: calc(1.5lh + var(--space-2) * 2);
   }
 
   .composer {
@@ -568,8 +565,7 @@
     --color-accent: var(--text-3);
   }
 
-  /* Ground-polarity inversion for `EmbeddedReadingHost` on `--bg`: lift the well
-     to `--paper` with a quiet `--hairline` edge, flush with the document column. */
+  /* The embedded well sits on the paper surface, flush with the document column. */
   [data-nc-embedded-reading] .composer {
     --nc-card-inset: 0px;
     --color-background-popover: var(--paper);

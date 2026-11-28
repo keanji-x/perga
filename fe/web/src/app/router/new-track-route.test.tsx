@@ -43,7 +43,7 @@ function memoryStorage() {
 /* astryx puts `label` on the `contenteditable` as `aria-label`, so the composer resolves by label query. */
 const TASK_LABEL = 'What this track should do';
 
-const FOLDER_CHIP_NAME = 'Workspace: Managed';
+const FOLDER_CHIP_NAME = 'Default folder';
 
 
 const AREA = { id: 'c1', name: 'Work', color: '#5B8DEF', sortOrder: 1, kind: 'user', createdAtMs: 1, updatedAtMs: 1 };
@@ -932,7 +932,7 @@ describe('the new-track page is a route reached from Area groups', () => {
     // Exposed first: the absence checks below would pass vacuously against a page that never rendered.
     expect(await findComposer()).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Area: Reading' })).toBeTruthy();
-    expect(screen.getByRole('button', { name: FOLDER_CHIP_NAME }).textContent).toBe(FOLDER_CHIP_NAME);
+    expect(screen.getByRole('button', { name: FOLDER_CHIP_NAME }).textContent).toBe('Default');
     await userEvent.type(screen.getByLabelText(TASK_LABEL), 'Read it');
     await userEvent.click(await screen.findByRole('button', { name: 'Create track' }));
     await waitFor(() => expect(createdTrackBodies(sent)).toHaveLength(1));
@@ -983,7 +983,7 @@ describe('the new-track page is a route reached from Area groups', () => {
     await userEvent.click(await screen.findByRole('button', { name: 'New track in Work' }));
     expect(await findComposer()).toBeTruthy();
     await userEvent.click(screen.getByRole('button', { name: /^Repo: area-default/ }));
-    await userEvent.click(await screen.findByRole('menuitem', { name: /Perga workspace/ }));
+    await userEvent.click(await screen.findByRole('menuitem', { name: /^Default$/ }));
     await userEvent.type(screen.getByLabelText(TASK_LABEL), 'Read it');
     await userEvent.click(screen.getByRole('button', { name: 'Create track' }));
     await waitFor(() => expect(createdTrackBodies(sent)).toHaveLength(1));
@@ -1014,7 +1014,7 @@ describe('the new-track page is a route reached from Area groups', () => {
     await userEvent.type(screen.getByLabelText(TASK_LABEL), 'Read it');
 
     await userEvent.click(await screen.findByRole('button', { name: FOLDER_CHIP_NAME }));
-    await userEvent.click(await screen.findByRole('menuitem', { name: /^Choose folder…/ }));
+    await userEvent.click(await screen.findByRole('menuitem', { name: 'Choose folder…' }));
     expect(await screen.findByRole('dialog', { name: 'Choose a directory' })).toBeTruthy();
     await screen.findByDisplayValue('/srv/app/');
     await userEvent.click(await screen.findByRole('button', { name: 'Select this directory' }));

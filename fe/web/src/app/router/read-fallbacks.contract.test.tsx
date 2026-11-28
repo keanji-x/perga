@@ -146,7 +146,7 @@ describe('degraded workspace reads stay usable', () => {
     await userEvent.click(await screen.findByRole('button', { name: 'New area' }));
     await userEvent.type(screen.getByRole('textbox', { name: 'Name' }), 'Offline draft');
     act(() => onlineManager.setOnline(false));
-    await userEvent.click(screen.getByRole('button', { name: 'Create area' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Create' }));
     const dialog = screen.getByRole('dialog', { name: 'New area' });
     expect((await within(dialog).findByRole('alert')).textContent).toBe('The area was not created.');
     expect(within(dialog).getByRole<HTMLInputElement>('textbox', { name: 'Name' }).value).toBe('Offline draft');
@@ -169,7 +169,7 @@ describe('degraded workspace reads stay usable', () => {
     await userEvent.click(await screen.findByRole('button', { name: 'New area' }));
     await userEvent.type(screen.getByRole('textbox', { name: 'Name' }), 'Offline draft');
     act(() => onlineManager.setOnline(false));
-    await userEvent.click(screen.getByRole('button', { name: 'Create area' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Create' }));
     const dialog = screen.getByRole('dialog', { name: 'New area' });
     await within(dialog).findByRole('alert');
     const name = within(dialog).getByRole<HTMLInputElement>('textbox', { name: 'Name' });
@@ -177,7 +177,7 @@ describe('degraded workspace reads stay usable', () => {
     await userEvent.type(name, 'Revised draft');
     await act(async () => { onlineManager.setOnline(true); await client.resumePausedMutations(); });
     expect(creates).toEqual([]);
-    await userEvent.click(within(dialog).getByRole('button', { name: 'Create area' }));
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Create' }));
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'New area' })).toBeNull());
     expect(creates).toHaveLength(1);
     expect(creates[0]?.body).toMatchObject({ name: 'Revised draft' });

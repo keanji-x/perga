@@ -38,8 +38,8 @@ export function AreaEditorDialog({ editor }: Readonly<{ editor: ShellController[
           targetEditable
           onCreateExecutionTarget={editor.onCreateExecutionTarget}
           nameInputRef={editor.nameInputRef}
-          submitLabel={target.kind === 'edit' ? 'Save changes'
-            : createRequest === null ? 'Create area' : 'Try again'}
+          submitLabel={target.kind === 'edit' ? 'Save'
+            : createRequest === null ? 'Create' : 'Try again'}
           cancelLabel={!pending && target.kind === 'create' && createRequest !== null ? 'Discard draft' : 'Cancel'}
           onCancel={editor.onCancel}
           onSubmit={editor.onSubmit}

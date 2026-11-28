@@ -4,45 +4,18 @@
     color: var(--text);
   }
 
-  .subtitle {
-    margin: 0;
-    color: var(--text-3);
-    font: var(--type-metadata);
-  }
-
-  .folderRow {
+  .footer {
     display: flex;
-    flex: 1;
+    justify-content: space-between;
     align-items: center;
     gap: var(--space-2);
+  }
+
+  .folderPill {
     min-inline-size: 0;
-    padding: var(--space-2) var(--space-3);
-    border: var(--space-px) solid var(--hairline);
-    border-radius: var(--radius-highlight);
-    background: transparent;
-    color: var(--text-2);
-    text-align: start;
-    cursor: pointer;
-    transition: background-color var(--motion-quick) var(--ease-feedback);
+    max-inline-size: 13rem;
+    border-radius: var(--radius-pill);
   }
 
-  .folderRow:disabled { opacity: 0.5; cursor: default; }
-  .folderRow:not(:disabled):hover { background: var(--overlay-hover); }
-  .folderRow > svg { flex: none; }
-
-  .folderText {
-    display: grid;
-    flex: 1;
-    gap: var(--space-half);
-    min-inline-size: 0;
-  }
-
-  .folderName {
-    color: var(--text);
-    font: var(--type-ui);
-    font-weight: var(--weight-medium);
-  }
-
-  .folderDetail, .folderCue { color: var(--text-3); font: var(--type-metadata); }
-  .folderName, .folderDetail { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .actions { flex: none; }
 }

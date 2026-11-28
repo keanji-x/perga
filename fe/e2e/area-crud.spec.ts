@@ -27,7 +27,11 @@ test('creates, edits, and deletes an area through the shared dialog', async ({ p
   const create = page.getByRole('dialog', { name: 'New area' });
   await create.getByRole('textbox', { name: /^Name/ }).fill(name);
   await expect(create.getByRole('button', { name: /template|isolation/i })).toHaveCount(0);
-  await create.getByRole('button', { name: 'Create area' }).click();
+  await create.getByRole('button', { name: 'Default folder', exact: true }).click();
+  await expect(create.getByRole('menuitem', { name: /^Default.*Selected$/ })).toBeVisible();
+  await expect(create.getByRole('menuitem', { name: 'Choose folder…' })).toBeVisible();
+  await page.keyboard.press('Escape');
+  await create.getByRole('button', { name: 'Create' }).click();
 
   const row = rail.getByRole('button', { name: `Collapse area ${name}` });
   await expect(row).toBeVisible();
@@ -47,7 +51,7 @@ test('creates, edits, and deletes an area through the shared dialog', async ({ p
   const edit = page.getByRole('dialog', { name: `Edit ${name}` });
   await expect(edit.getByRole('button', { name: /template|isolation/i })).toHaveCount(0);
   await edit.getByRole('textbox', { name: /^Name/ }).fill(renamed);
-  await edit.getByRole('button', { name: 'Save changes' }).click();
+  await edit.getByRole('button', { name: 'Save' }).click();
   const renamedRow = rail.getByRole('button', { name: `Collapse area ${renamed}` });
   await expect(renamedRow).toBeVisible();
   await expect.poll(async () => {

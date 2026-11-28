@@ -13,4 +13,5 @@
   .centered .viewport { display: none; }
   .centered .scroll { block-size: auto; overflow: visible; }
   .centered .column, .centered .footer { max-inline-size: 100%; margin-inline: 0; }
+  .host:not(.centered) .footer { padding-block-end: var(--space-4); }
 }

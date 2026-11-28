@@ -3,16 +3,21 @@
 
 import { Banner } from '@astryxdesign/core/Banner';
 import { Button } from '@astryxdesign/core/Button';
+import { DropdownMenu, DropdownMenuItem } from '@astryxdesign/core/DropdownMenu';
 import { HStack } from '@astryxdesign/core/HStack';
+import { Icon as AstryxIcon } from '@astryxdesign/core/Icon';
+import { Text } from '@astryxdesign/core/Text';
 import { TextInput } from '@astryxdesign/core/TextInput';
 import { VStack } from '@astryxdesign/core/VStack';
-import { useId, type FormEvent, type RefObject } from 'react';
+import { VisuallyHidden } from '@astryxdesign/core/VisuallyHidden';
+import { useRef, type FormEvent, type RefObject } from 'react';
+import { flushSync } from 'react-dom';
 
 import type { CreateExecutionTargetBody, ExecutionTargetDto } from '../../../../../core/domain/area.ts';
 import type { ListDirectory } from '../../../ui/directory-browser/public.tsx';
 import { Icon } from '../../../ui/icon/public.tsx';
 import { useState } from '../../../ui/state/public.ts';
-import { basenameOf, FolderClearButton, folderLabelParts } from '../default-pills/public.tsx';
+import { basenameOf, compactPathDescription, folderLabelParts } from '../default-pills/public.tsx';
 import { DirectoryPicker } from '../directory-picker.tsx';
 import styles from './area-editor.module.css';
 
@@ -56,21 +61,38 @@ export function AreaEditorForm(props: AreaEditorFormProps) {
     listDirectory, listDirectoryForTarget, executionTargets, targetEditable = false,
     onCreateExecutionTarget, nameInputRef, submitLabel, onCancel, onSubmit,
   } = props;
-  const baseId = useId();
-  const folderId = `${baseId}-default-folder`;
+  const folderRef = useRef<HTMLButtonElement>(null);
   const [name, setName] = useState(initial.name);
   const [cwd, setCwd] = useState(initial.defaultCwd ?? '');
   const [targetId, setTargetId] = useState(initial.executionTargetId ?? 'local');
   const [browsing, setBrowsing] = useState(false);
+  const [folderMenuOpen, setFolderMenuOpen] = useState(false);
   const normalizedName = name.trim();
   const targetLabel = targetId === 'local' ? undefined : executionTargets?.find((target) => target.id === targetId)?.label ?? targetId;
   const folderBound = cwd !== '';
-  const targetSuffix = targetLabel === undefined ? '' : ` · ${targetLabel}`;
-  const { accessibleName } = folderLabelParts({
-    value: cwd, controlLabel: 'Default folder', emptyLabel: `Perga workspace${targetSuffix}`, modeSuffix: targetLabel,
+  const { visibleLabel, accessibleName } = folderLabelParts({
+    value: cwd,
+    controlLabel: 'Default folder',
+    modeSuffix: targetLabel,
   });
-  const folderDetail = `${folderBound ? cwd : 'Managed by Perga'}${targetSuffix}`;
   const fieldsDisabled = submitting || locked;
+  const folderButton = {
+    ref: folderRef,
+    label: accessibleName,
+    variant: 'secondary' as const,
+    size: 'sm' as const,
+    icon: <Icon name="folder" size="sm" />,
+    className: styles.folderPill,
+    isDisabled: fieldsDisabled,
+    children: <Text key={visibleLabel} type="inherit" color="inherit" maxLines={1} hasTruncateTooltip={!folderMenuOpen}>
+      {visibleLabel}
+    </Text>,
+  };
+
+  const openFolderPicker = () => {
+    folderRef.current?.focus();
+    setBrowsing(true);
+  };
 
   const submit = (event: FormEvent<HTMLElement>) => {
     event.preventDefault();
@@ -88,7 +110,6 @@ export function AreaEditorForm(props: AreaEditorFormProps) {
   return (
     <VStack as="form" gap={3} className={styles.form} onSubmit={submit}>
       {error !== null && <Banner status="error" role="alert" title={error} data-nc-area-editor-error />}
-      <p className={styles.subtitle}>Group related tracks under a shared workspace.</p>
       <TextInput
         {...NATIVE_REQUIRED_INPUT_PROPS}
         ref={nameInputRef}
@@ -100,34 +121,36 @@ export function AreaEditorForm(props: AreaEditorFormProps) {
         width="100%"
         isDisabled={fieldsDisabled}
       />
-      <HStack gap={1} align="center">
-        <button type="button" className={styles.folderRow} id={folderId} aria-label={accessibleName}
-          aria-haspopup="dialog" title={accessibleName} disabled={fieldsDisabled} onClick={() => setBrowsing(true)}>
-          <Icon name="folder" size="sm" />
-          <span className={styles.folderText}>
-            <span className={styles.folderName}>{folderBound ? basenameOf(cwd) : 'Perga workspace'}</span>
-            <span className={styles.folderDetail}>Default folder · {folderDetail}</span>
-          </span>
-          <span className={styles.folderCue}>{folderBound ? 'Change' : 'Choose'}</span>
-        </button>
-        {folderBound && <FolderClearButton label="Use a new Perga workspace" isDisabled={fieldsDisabled} onClear={() => {
-          setCwd('');
-          if (targetEditable) setTargetId('local');
-        }} />}
-      </HStack>
-      <HStack gap={1} justify="end">
-        <Button type="button" variant="ghost" label={cancelLabel} isDisabled={submitting} onClick={onCancel} />
-        <Button
-          type="submit"
-          variant="primary"
-          label={submitting ? 'Saving…' : submitLabel}
-          isDisabled={normalizedName === ''}
-          isLoading={submitting}
-          tooltip={submitting
-            ? 'Saving in progress'
-            : normalizedName === '' ? 'Enter a name to save' : submitLabel}
-        />
-      </HStack>
+      <div className={styles.footer}>
+        <DropdownMenu isMenuOpen={folderMenuOpen && !fieldsDisabled}
+          onOpenChange={(open) => setFolderMenuOpen(open && !fieldsDisabled)} button={folderButton}>
+          <DropdownMenuItem label="Default"
+            endContent={folderBound ? undefined : <><AstryxIcon icon="check" size="sm" color="accent" /><VisuallyHidden>Selected</VisuallyHidden></>}
+            onClick={folderBound ? () => {
+              setCwd('');
+              if (targetEditable) setTargetId('local');
+            } : undefined} />
+          <DropdownMenuItem label={folderBound ? 'Change folder…' : 'Choose folder…'}
+            description={folderBound ? compactPathDescription(cwd) : undefined}
+            hasCloseOnSelect={false} onClick={() => {
+              flushSync(() => setFolderMenuOpen(false));
+              queueMicrotask(openFolderPicker);
+            }} />
+        </DropdownMenu>
+        <HStack className={styles.actions} gap={1}>
+          <Button type="button" variant="ghost" label={cancelLabel} isDisabled={submitting} onClick={onCancel} />
+          <Button
+            type="submit"
+            variant="primary"
+            label={submitting ? 'Saving…' : submitLabel}
+            isDisabled={normalizedName === ''}
+            isLoading={submitting}
+            tooltip={submitting
+              ? 'Saving in progress'
+              : normalizedName === '' ? 'Enter a name to save' : submitLabel}
+          />
+        </HStack>
+      </div>
       <DirectoryPicker
         open={browsing}
         initialPath={cwd === '' ? null : cwd}
