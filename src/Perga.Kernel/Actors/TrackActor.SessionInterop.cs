@@ -426,12 +426,12 @@ public sealed partial class TrackActor
         if (!string.Equals(handle?.LaunchSpec.Provider, session.Provider, StringComparison.OrdinalIgnoreCase)) handle = null;
         var configuration = handle?.Agent.WorkerConfiguration;
         var supportsResume = handle?.Agent.SupportsSessionResume ?? EffectiveAgentRuntime.CanResumeSession(session.Provider);
-        // Compact can reopen an existing session before choosing native compaction or an epoch handover.
+        // Live handles report their own native compact support; evicted resumable sessions can reopen on compact.
         var canResumeForCompact = supportsResume && !session.ReconnectInvalidated &&
             !string.IsNullOrWhiteSpace(session.NativeThreadId);
         return new(configuration?.Models ?? [], configuration?.DefaultModel, configuration?.DefaultReasoningEffort,
             handle?.Agent.AvailablePermissionModes ?? [], handle?.Agent.SupportsNativeSteer == true,
-            supportsResume, handle?.Agent.SupportsNativeCompact == true || canResumeForCompact);
+            supportsResume, handle?.Agent.SupportsNativeCompact ?? canResumeForCompact);
     }
 
     private IReadOnlyList<PendingInteractionDto> ReadInteractionsCore(AgentSessionDto session, InteropPrincipal principal)
