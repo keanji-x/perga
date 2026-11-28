@@ -243,7 +243,7 @@ export function Dialog({ purpose, origin, open, onClose, title, hideTitleRow, hi
         if (view) { if (view.onEscape) view.onEscape(); else popView(); }
         else onClose();
       }}><Icon name="close" /></button>}</header>}
-      <div className={fullscreen ? `dialog-body ${styles.fullscreenBody}` : 'dialog-body'} style={showingView ? { display: 'none' } : undefined}>{children}</div>
+      <div className={fullscreen ? `dialog-body ${styles.fullscreenBody}` : flush && !showingView ? `dialog-body ${styles.flushBody}` : 'dialog-body'} style={showingView ? { display: 'none' } : undefined}>{children}</div>
       {showingView && (
         <div className={fullscreen ? `dialog-body dialog-child-view ${styles.fullscreenBody}` : 'dialog-body dialog-child-view'} data-nc-dialog-child-view="">{view.body}</div>
       )}

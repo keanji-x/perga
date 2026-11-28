@@ -1,6 +1,7 @@
 using System.Text;
 using Microsoft.Win32.SafeHandles;
 using Perga.Kernel.Settings;
+using Perga.VcsKit;
 
 namespace Perga.Host.Configuration;
 
@@ -10,7 +11,7 @@ internal sealed class TomlAppSettingsStore(string dataDir, Action<SafeFileHandle
     private const UnixFileMode SharedPermissions = UnixFileMode.GroupRead | UnixFileMode.GroupWrite | UnixFileMode.GroupExecute |
         UnixFileMode.OtherRead | UnixFileMode.OtherWrite | UnixFileMode.OtherExecute;
     private readonly string _path = Path.Combine(dataDir, "settings.toml");
-    private readonly Action<SafeFileHandle> _flushDirectory = flushDirectory ?? SettingsUnixFiles.FlushDirectory;
+    private readonly Action<SafeFileHandle> _flushDirectory = flushDirectory ?? WorkspaceFileReader.FlushDirectory;
     private bool _pendingDirectorySync;
 
     public async Task<IReadOnlyDictionary<string, object>> ReadAsync(CancellationToken ct)
@@ -18,7 +19,7 @@ internal sealed class TomlAppSettingsStore(string dataDir, Action<SafeFileHandle
         RetryPendingDirectorySync();
         try
         {
-            await using var stream = OpenRead();
+            await using var stream = WorkspaceFileReader.OpenRegularFileNoFollow(_path);
             if (!OperatingSystem.IsWindows() && (File.GetUnixFileMode(stream.SafeFileHandle) & SharedPermissions) != 0)
                 throw new IOException("settings.toml must have owner-only permissions.");
 
@@ -34,17 +35,6 @@ internal sealed class TomlAppSettingsStore(string dataDir, Action<SafeFileHandle
         {
             throw new FormatException("Expected valid UTF-8.", ex);
         }
-    }
-
-    private FileStream OpenRead()
-    {
-        if (!OperatingSystem.IsWindows())
-            return new FileStream(SettingsUnixFiles.OpenRegularFile(_path), FileAccess.Read);
-
-        if ((File.GetAttributes(_path) & (FileAttributes.ReparsePoint | FileAttributes.Directory | FileAttributes.Device)) != 0)
-            throw new IOException("settings.toml must be a regular file.");
-        return new FileStream(_path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete,
-            bufferSize: 4096, useAsync: true);
     }
 
     public async Task WriteAsync(IReadOnlyDictionary<string, object> values, CancellationToken ct)
@@ -74,7 +64,7 @@ internal sealed class TomlAppSettingsStore(string dataDir, Action<SafeFileHandle
                 stream.Flush(flushToDisk: true);
             }
             ct.ThrowIfCancellationRequested();
-            using var parent = OperatingSystem.IsWindows() ? null : SettingsUnixFiles.OpenDirectory(dataDir);
+            using var parent = OperatingSystem.IsWindows() ? null : WorkspaceFileReader.OpenDirectoryHandle(dataDir);
             File.Move(tempPath, _path, overwrite: true);
             if (parent is not null)
             {
@@ -92,7 +82,7 @@ internal sealed class TomlAppSettingsStore(string dataDir, Action<SafeFileHandle
     private void RetryPendingDirectorySync()
     {
         if (!_pendingDirectorySync) return;
-        using var parent = SettingsUnixFiles.OpenDirectory(dataDir);
+        using var parent = WorkspaceFileReader.OpenDirectoryHandle(dataDir);
         SyncParentDirectory(parent);
     }
 

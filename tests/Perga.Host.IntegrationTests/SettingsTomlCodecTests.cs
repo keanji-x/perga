@@ -2,6 +2,7 @@ using System.Text.Json;
 using Perga.Host.Configuration;
 using Perga.Kernel;
 using Perga.Kernel.Settings;
+using Perga.VcsKit;
 
 namespace Perga.Host.IntegrationTests;
 
@@ -127,7 +128,7 @@ public sealed class SettingsTomlCodecTests
             {
                 syncAttempts++;
                 if (failSync) throw syncError;
-                SettingsUnixFiles.FlushDirectory(parent);
+                WorkspaceFileReader.FlushDirectory(parent);
             });
             using var settings = new AppSettingsService(new(new KernelOptions(), ["codex"]), store);
             var initial = await settings.ReloadAsync();

@@ -99,7 +99,7 @@ export function SettingsOverlay({ transport, unauthorized, onOwnerSetupComplete 
   };
   if (section === null) return null;
   return <Dialog purpose="form" origin={{ kind: 'surface-center' }} open onClose={leaveSettings}
-    title="Settings" wide fullscreen={compact} hideTitleRow>
+    title="Settings" wide="medium" placement="center" flush fullscreen={compact} hideTitleRow>
     <section className={compact ? styles.page : styles.desktopFrame} data-nc-settings-page={compact ? '' : undefined} aria-label="Settings">
       <div hidden={!compact}>
         <MobileHeader title={mobileIndex ? 'Settings' : settingsSection(section).label} level={1}
