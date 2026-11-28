@@ -155,7 +155,7 @@ export function useAppBack(alias?: TrackRouteAlias) {
   const goBack = useCallback((fallback: NavTarget) => {
     if (!pop()) go(fallback, { replace: true });
   }, [go, pop]);
-  return { canGoBack, previousEntry, goBack, pop, stepsBackOutOf: stack?.stepsBackOutOf };
+  return { canGoBack, previousEntry, goBack, pop, continueForward: stack?.continueForward, stepsBackOutOf: stack?.stepsBackOutOf };
 }
 
 /**
@@ -582,7 +582,7 @@ export type TrackPanelNavigation = Readonly<{
 
 /** Panel-to-panel switches replace the open panel. Closing follows the app's history floor. */
 export function useTrackPanelNavigation(alias?: TrackRouteAlias): TrackPanelNavigation {
-  const { pop } = useAppBack(alias);
+  const { pop, continueForward } = useAppBack(alias);
   const navigate = useNavigate();
   const go = useGo(alias);
   const location = useRouterState({ select: (state) => state.location });
@@ -614,7 +614,9 @@ export function useTrackPanelNavigation(alias?: TrackRouteAlias): TrackPanelNavi
 
   const closePanel = useCallback((expectedTrackId: string, options?: Readonly<{ pushedOnly: boolean }>) => {
     // Desktop can also receive a saved panel URL as part of opening a report.
-    if ((!options?.pushedOnly || hasPanelPushedMarker(location.state)) && pop()) return;
+    if (!options?.pushedOnly || hasPanelPushedMarker(location.state)) {
+      if ((options?.pushedOnly && continueForward?.()) || pop()) return;
+    }
     const search = sameTrackSearch(location, expectedTrackId, { panel: undefined }, alias);
     if (search === null) {
       go({ name: 'track', trackId: expectedTrackId }, { replace: true });
@@ -626,7 +628,7 @@ export function useTrackPanelNavigation(alias?: TrackRouteAlias): TrackPanelNavi
       hash: true,
       replace: true,
     });
-  }, [go, location, navigate, pop, alias]);
+  }, [go, location, navigate, pop, continueForward, alias]);
 
   return { openPanel, closePanel };
 }

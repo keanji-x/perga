@@ -52,6 +52,12 @@ export function createAppHistory(history: RouterHistory, readEntry: (location: R
       return () => { listeners.delete(listener); };
     },
     snapshot: () => snapshot,
+    continueForward: () => {
+      // Browser history length includes entries outside this mounted app.
+      if (snapshot.lastAction !== 'FORWARD' || ![...entries.keys()].some((index) => index > current)) return false;
+      history.forward();
+      return true;
+    },
     stepsBackOutOf: (predicate: (entry: AppEntry) => boolean) => {
       if (!snapshot.canGoBack) return 0;
       for (let index = current; index >= floor; index--) {

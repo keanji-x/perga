@@ -32,7 +32,7 @@ async function nativeFixture(initial: string, options: Parameters<typeof renderD
     ...fixture,
     host,
     at: async (href: string) => {
-      await expect.poll(() => host.location.pathname + host.location.search).toBe(href);
+      await expect.poll(() => host.location.pathname + host.location.search + host.location.hash).toBe(href);
       await expect.poll(() => fixture.router.state.resolvedLocation?.href).toBe(href);
     },
     close: () => { cleanup(); history.destroy(); host.close(); },
@@ -406,4 +406,30 @@ it('pops an open Conversations entry on desktop resize and Forward', async () =>
     await button(/^Back to (Project|Report)$/).click();
     await app.at(area);
   } finally { stop(); app.close(); }
+});
+
+it('skips a mobile Outline on desktop Forward to reach its later Report anchor', async () => {
+  await page.viewport(390, 844);
+  const app = await nativeFixture(area);
+  try {
+    await openProject();
+    await app.at(track);
+    const reportIndex = app.router.history.location.state.__TSR_index;
+    await button('Track actions').click();
+    await page.getByRole('menuitem', { name: 'Outline', exact: true }).click();
+    await app.at(`${track}?panel=outline`);
+    await button('Project result').click();
+    const anchoredReport = `${track}#prose-h1`;
+    await app.at(anchoredReport);
+    expect(app.router.history.location.state.__TSR_index).toBe(reportIndex + 2);
+
+    await page.viewport(1280, 800);
+    await page.getByRole('navigation', { name: 'Workspace' }).findElement();
+    app.host.history.back();
+    await app.at(track);
+    expect(app.router.history.location.state.__TSR_index).toBe(reportIndex);
+    app.host.history.forward();
+    await app.at(anchoredReport);
+    expect(app.router.history.location.state.__TSR_index).toBe(reportIndex + 2);
+  } finally { app.close(); }
 });
