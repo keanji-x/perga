@@ -83,5 +83,12 @@ export function useConversationActionArea({ open, options, store, shownComposer,
       </ChatFooterNotice>}
     </section>;
 
-  return { actionArea, changeArchive };
+  const mcpNotice = store.mcpHealth === null ? null : <ChatFooterNotice>
+    <span>{store.session?.isLead === true
+      ? 'Perga tools are not connected — Lead cannot update the Report or manage Flow.'
+      : 'Perga tools are not connected — this conversation cannot access Track tools.'}</span>
+    {store.mcpHealth.error && <ChatFooterError message={store.mcpHealth.error} />}
+  </ChatFooterNotice>;
+
+  return { actionArea, mcpNotice, changeArchive };
 }

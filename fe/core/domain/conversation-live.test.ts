@@ -124,7 +124,7 @@ describe('conversationLiveOperation', () => {
     expect(operation.responseSchema.safeParse({ turn_id: 'T', items: [] }).success).toBe(false);
     const result = operation.responseSchema.parse({
       session: { id: 'card/1', trackId: 'track', provider: 'codex', contextUsage: null, createdAtMs: 0, updatedAtMs: 0 },
-      items: [], state: 'running', readonlyReason: null, canReopen: false, workerPaused: false, unknownDetail: null, attachmentsSupported: false,
+      items: [], state: 'running', readonlyReason: null, canReopen: false, workerPaused: false, unknownDetail: null, mcpHealth: null, attachmentsSupported: false,
       activity: { turnId: 'T', sequence: 1, reset: false, text: 'Live reply', truncated: false, events: [] },
     });
     expect(result.turn).toEqual({ thread_id: 'epoch-1', turn_id: 'T', items: [{ item_id: 'ws-T', text: 'Live reply' }] });

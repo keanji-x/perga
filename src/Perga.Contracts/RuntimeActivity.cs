@@ -1,6 +1,12 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace Perga.Contracts;
+
+public enum SessionMcpHealthStatus { Failed, Unconnected }
+
+public sealed record SessionMcpHealthDto(SessionMcpHealthStatus Status,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? Error = null);
 
 public sealed record AgentIdleActivityDto(long Since, long LastEventAt);
 public sealed record AgentTurnOutcomeDto(string Kind, string? Failure = null, string? Reason = null,

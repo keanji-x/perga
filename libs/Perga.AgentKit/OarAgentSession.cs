@@ -80,6 +80,8 @@ public sealed class OarAgentSession : IAgentSession
     public string? NativeThreadId => Volatile.Read(ref _nativeThreadId);
     public bool SupportsImages => Volatile.Read(ref _supportsImages);
     public bool SupportsNativeSteer => Volatile.Read(ref _supportsNativeSteer);
+    public bool ExpectsKernelMcpHandshake => _launchSpec.McpServers.ContainsKey("perga") &&
+        _runtimeId is "codex" or "claude" or "opencode" or "antigravity";
     public bool SupportsNativeCompact => Volatile.Read(ref _supportsNativeCompact);
     public bool CanReuseContextWindow => true;
     public long? ContextUsageRevision => Interlocked.Read(ref _contextUsageRevision);
@@ -568,6 +570,10 @@ public sealed class OarAgentSession : IAgentSession
             case "agent_status":
                 if (p.TryGetProperty("status", out var runtimeStatus) && ParseRuntimeStatus(runtimeStatus) is { } status)
                     PublishRuntimeActivity(new UnifiedAgentEvent.AgentStatusChanged(status));
+                break;
+            case "mcp_status" when TryGetString(p, "server") == "perga" && TryGetString(p, "status") == "failed":
+                PublishRuntimeActivity(new UnifiedAgentEvent.McpServerStatusChanged("perga", "failed",
+                    TryGetString(p, "error")), includeTurn: false);
                 break;
             case "text_delta" when TryGetRawString(p, "delta") is { Length: > 0 } d:
                 PublishOutput(new UnifiedAgentEvent.TextDelta(d));

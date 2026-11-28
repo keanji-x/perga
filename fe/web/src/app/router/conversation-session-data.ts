@@ -19,5 +19,5 @@ export function sessionPage(session: AgentSessionDto, items: SessionItemDto[] = 
   state: SessionItemsPageDto['state'] = activeTurn?.status === 'running' ? 'running' : 'idle', attachmentsSupported = false): SessionItemsPageDto {
   return { session, items, activeTurn, state, attachmentsSupported, readonlyReason: session.archivedAtMs != null ? 'archived' : null,
     capabilities: { models: [], defaultModel: null, defaultReasoningEffort: null, permissionModes: [], supportsNativeSteer: true, supportsSessionResume: true, supportsCompact: true },
-    canReopen: session.archivedAtMs != null, workerPaused: false, lastTurn: activeTurn, unknownDetail: null };
+    canReopen: session.archivedAtMs != null, workerPaused: false, lastTurn: activeTurn, unknownDetail: null, mcpHealth: null };
 }

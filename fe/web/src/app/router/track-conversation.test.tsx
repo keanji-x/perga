@@ -1338,6 +1338,18 @@ async function openAssistant() {
   fireEvent.click(await screen.findByRole('button', { name: 'Conversation Assistant' }));
   await waitFor(() => expect(messageField().getAttribute('contenteditable')).toBe('true'));
 }
+
+it('shows the MCP error in the conversation header and footer without disabling the composer', async () => {
+  setup(request => request.path.includes(`${ASSISTANT_CARD.id}/items?`)
+    ? ok({ ...sessionPage(ASSISTANT_CARD), mcpHealth: { status: 'failed', error: 'Connection refused' } })
+    : undefined);
+  await openAssistant();
+  const drawer = within(drawerElement());
+  expect(drawer.getByText('Tools disconnected', { exact: true })).toBeTruthy();
+  expect(within(drawer.getByRole('alert')).getByText('Perga tools are not connected — this conversation cannot access Track tools.')).toBeTruthy();
+  expect(within(drawer.getByRole('alert')).getByText('Connection refused')).toBeTruthy();
+  expect(messageField().getAttribute('contenteditable')).toBe('true');
+});
 async function sendUntilSpent(text: string) {
   await openAssistant();
   await write(text);

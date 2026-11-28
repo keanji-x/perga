@@ -69,6 +69,8 @@ public sealed class TrackActorRegistry : IAsyncDisposable
                 _options.ActorEvictionSweepInterval,
                 _options.ActorEvictionSweepInterval);
         }
+
+        _mcpBridge.KernelMcpHandshakeRecorded += OnKernelMcpHandshakeRecorded;
     }
 
     public int ActiveActorCount => _actors.Count;
@@ -77,6 +79,12 @@ public sealed class TrackActorRegistry : IAsyncDisposable
 
     public bool TryGetActive(string trackId, out TrackActor? actor) =>
         _actors.TryGetValue(trackId, out actor);
+
+    private void OnKernelMcpHandshakeRecorded(KernelMcpHandshake handshake)
+    {
+        if (_actors.TryGetValue(handshake.TrackId, out var actor))
+            actor.NotifyKernelMcpHandshake(handshake);
+    }
 
     public TrackActor GetOrActivate(string trackId)
     {
@@ -193,6 +201,7 @@ public sealed class TrackActorRegistry : IAsyncDisposable
         }
 
         _disposed = true;
+        _mcpBridge.KernelMcpHandshakeRecorded -= OnKernelMcpHandshakeRecorded;
         if (_evictionTimer is not null)
         {
             await _evictionTimer.DisposeAsync().ConfigureAwait(false);

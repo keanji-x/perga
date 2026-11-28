@@ -515,6 +515,8 @@ export const pendingInteractionSchema = z.object({
   canRespond: z.boolean(), createdAtMs: z.number(), toolName: z.string().nullish(), arguments: z.unknown().nullish(),
 });
 export type PendingInteraction = z.infer<typeof pendingInteractionSchema>;
+const sessionMcpHealthSchema = z.object({ status: z.enum(['failed', 'unconnected']), error: z.string().nullable() });
+
 export const sessionItemsPageDtoSchema = z.object({
   items: z.array(sessionItemDtoSchema).nullish().transform((v) => v ?? []),
   activeTurn: sessionTurnDtoSchema.nullish(),
@@ -540,6 +542,7 @@ export const sessionItemsPageDtoSchema = z.object({
   permissionModes: z.array(permissionModeOptionDtoSchema).nullish(),
   runtimeStatus: agentRuntimeStatusSchema.nullish(),
   runtimeTasks: z.array(agentRuntimeTaskSchema).nullish(),
+  mcpHealth: sessionMcpHealthSchema.nullable(),
   turns: z.array(sessionTurnDtoSchema).nullish(),
 });
 export type SessionItemsPageDto = z.infer<typeof sessionItemsPageDtoSchema>;

@@ -32,7 +32,7 @@ export function renderFirstMessageFixture({ mobile = false }: { mobile?: boolean
       if (created && request.path === '/api/v1/tracks/daily/sessions') return ok([session]);
       if (request.path.startsWith(`/api/v1/sessions/${session.id}/items?`)) {
         reads += 1; await historyGate;
-        return ok({ session, activeTurn: null, state: 'idle', readonlyReason: null, canReopen: false, workerPaused: false, lastTurn: null, unknownDetail: null, attachmentsSupported: false, items } satisfies SessionItemsPageDto);
+        return ok({ session, activeTurn: null, state: 'idle', readonlyReason: null, canReopen: false, workerPaused: false, lastTurn: null, unknownDetail: null, mcpHealth: null, attachmentsSupported: false, items } satisfies SessionItemsPageDto);
       }
       return undefined;
     },

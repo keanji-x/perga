@@ -75,6 +75,7 @@ public abstract record UnifiedAgentEvent
     public sealed record TaskUpdated(AgentRuntimeTask Task) : UnifiedAgentEvent;
     public sealed record TaskEnded(AgentRuntimeTask Task) : UnifiedAgentEvent;
     public sealed record AgentStatusChanged(AgentRuntimeStatus Status) : UnifiedAgentEvent;
+    public sealed record McpServerStatusChanged(string Server, string Status, string? Error = null) : UnifiedAgentEvent;
     public sealed record RuntimeExited : UnifiedAgentEvent;
     public sealed record TurnAccepted(string? NativeTurnId) : UnifiedAgentEvent;
     public sealed record ThreadBound(string NativeThreadId) : UnifiedAgentEvent;
@@ -164,6 +165,7 @@ public interface IAgentSession : IAsyncDisposable
     string? NativeThreadId { get; }
     bool SupportsNativeSteer { get; }
     bool SupportsImages => false;
+    bool ExpectsKernelMcpHandshake => false;
     long? ContextUsageRevision => 0;
     bool CanReuseContextWindow => false;
     bool SupportsNativeCompact => false;

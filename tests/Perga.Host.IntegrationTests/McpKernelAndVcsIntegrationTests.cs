@@ -17,8 +17,10 @@ namespace Perga.Host.IntegrationTests;
 
 public sealed class McpKernelAndVcsIntegrationTests
 {
-    [Fact]
-    public async Task McpStreamableHttp_Auth_Initialize_Batch_PostSse_And_GetSseStream_WorkEndToEnd()
+    [Theory]
+    [InlineData("tools/list")]
+    [InlineData("tools/call")]
+    public async Task McpStreamableHttp_Auth_Initialize_Batch_PostSse_And_GetSseStream_WorkEndToEnd(string firstHandshake)
     {
         await using var cluster = new PergaHostTestCluster();
         var client = cluster.AuthenticatedClient;
@@ -67,13 +69,27 @@ public sealed class McpKernelAndVcsIntegrationTests
         var authHeader = pergaServer.Headers["Authorization"];
         Assert.StartsWith("Bearer pg_", authHeader, StringComparison.Ordinal);
         var pgToken = authHeader["Bearer ".Length..];
+        var bridge = cluster.Services.GetRequiredService<IMcpSessionBridge>();
+        var caller = Assert.IsType<McpSessionPrincipal>(bridge.ResolveToken(pgToken));
+        cluster.AgentRuntime.EmitRuntimeActivity(createdLeadId, new UnifiedAgentEvent.McpServerStatusChanged("perga", "failed", "HTTP 502"));
+        async Task<SessionItemsPageDto> ReadPageAsync() => (await client.GetFromJsonAsync<SessionItemsPageDto>(
+            $"/api/v1/sessions/{createdLeadId}/items?limit=1", PergaJsonDefaults.ApiOptions, ct))!;
+        Assert.Equal(new SessionMcpHealthDto(SessionMcpHealthStatus.Failed, "HTTP 502"), (await ReadPageAsync()).McpHealth);
 
         // 1. Missing or invalid token -> 401 Unauthorized
         using var noAuthResp = await cluster.PostMcpAsync("/mcp/kernel", null, new { jsonrpc = "2.0", id = 1, method = "ping" }, ct: ct);
         Assert.Equal(HttpStatusCode.Unauthorized, noAuthResp.StatusCode);
 
-        using var badTokenResp = await cluster.PostMcpAsync("/mcp/kernel", "pg_invalid_token", new { jsonrpc = "2.0", id = 1, method = "ping" }, ct: ct);
+        using var badTokenResp = await cluster.PostMcpAsync("/mcp/kernel", "pg_invalid_token", new { jsonrpc = "2.0", id = 1, method = "initialize" }, ct: ct);
         Assert.Equal(HttpStatusCode.Unauthorized, badTokenResp.StatusCode);
+
+        using var vcsInit = await cluster.PostMcpAsync("/mcp/vcs", pgToken, new { jsonrpc = "2.0", id = 1, method = "initialize" }, ct: ct);
+        vcsInit.EnsureSuccessStatusCode();
+        using var ping = await cluster.PostMcpAsync("/mcp/kernel", pgToken, new { jsonrpc = "2.0", id = 1, method = "ping" }, ct: ct);
+        ping.EnsureSuccessStatusCode();
+        var (_, toolError) = await CallToolAsync(cluster, "/mcp/kernel", pgToken, "unknown_tool", new { }, ct);
+        Assert.True(toolError);
+        Assert.False(bridge.HasKernelMcpHandshake(createdLeadId, caller.RuntimeBindingId));
 
         // 2. initialize -> returns serverInfo.name == "perga" + Mcp-Session-Id header
         using var initResp = await cluster.PostMcpAsync(
@@ -94,6 +110,8 @@ public sealed class McpKernelAndVcsIntegrationTests
 
         using var initDoc = JsonDocument.Parse(await initResp.Content.ReadAsStringAsync(ct));
         Assert.Equal("perga", initDoc.RootElement.GetProperty("result").GetProperty("serverInfo").GetProperty("name").GetString());
+        Assert.False(bridge.HasKernelMcpHandshake(createdLeadId, caller.RuntimeBindingId));
+        Assert.Equal(new SessionMcpHealthDto(SessionMcpHealthStatus.Failed, "HTTP 502"), (await ReadPageAsync()).McpHealth);
 
         // 3. notifications/initialized -> 202 Accepted
         using var notifResp = await cluster.PostMcpAsync(
@@ -103,6 +121,14 @@ public sealed class McpKernelAndVcsIntegrationTests
             mcpSessionId: mcpSessionId,
             ct: ct);
         Assert.Equal(HttpStatusCode.Accepted, notifResp.StatusCode);
+
+        if (firstHandshake == "tools/call")
+        {
+            var (_, isError) = await CallToolAsync(cluster, "/mcp/kernel", pgToken, KernelMcpToolNames.TrackStatus, new { }, ct);
+            Assert.False(isError);
+            Assert.True(bridge.HasKernelMcpHandshake(createdLeadId, caller.RuntimeBindingId));
+            Assert.Null((await ReadPageAsync()).McpHealth);
+        }
 
         // 4. Batch JSON-RPC request [ping, tools/list]
         using var batchResp = await cluster.PostMcpAsync(
@@ -118,6 +144,9 @@ public sealed class McpKernelAndVcsIntegrationTests
         Assert.Equal(HttpStatusCode.OK, batchResp.StatusCode);
         using var batchDoc = JsonDocument.Parse(await batchResp.Content.ReadAsStringAsync(ct));
         Assert.Equal(2, batchDoc.RootElement.GetArrayLength());
+        Assert.True(batchDoc.RootElement[1].GetProperty("result").GetProperty("tools").GetArrayLength() > 0);
+        Assert.True(bridge.HasKernelMcpHandshake(createdLeadId, caller.RuntimeBindingId));
+        Assert.Null((await ReadPageAsync()).McpHealth);
 
         // 5. POST with Accept: text/event-stream -> returns text/event-stream SSE!
         using var postSseResp = await cluster.PostMcpAsync(
@@ -167,6 +196,16 @@ public sealed class McpKernelAndVcsIntegrationTests
         delReq.Headers.TryAddWithoutValidation("Mcp-Session-Id", mcpSessionId);
         using var delResp = await client.SendAsync(delReq, ct);
         Assert.Equal(HttpStatusCode.NoContent, delResp.StatusCode);
+
+        var replacement = bridge.RegisterSession(createdTrackId, createdLeadId, true, null, null, [], "replacement").Principal;
+        bridge.RecordKernelMcpHandshake(caller);
+        Assert.False(bridge.HasKernelMcpHandshake(createdLeadId, caller.RuntimeBindingId));
+        Assert.False(bridge.HasKernelMcpHandshake(createdLeadId, replacement.RuntimeBindingId));
+        bridge.RecordKernelMcpHandshake(replacement);
+        bridge.RevokeSession(createdLeadId, caller.RuntimeBindingId);
+        Assert.True(bridge.HasKernelMcpHandshake(createdLeadId, replacement.RuntimeBindingId));
+        bridge.RevokeTrack(createdTrackId);
+        Assert.False(bridge.HasKernelMcpHandshake(createdLeadId));
     }
 
     [Fact]
