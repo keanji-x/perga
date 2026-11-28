@@ -1,13 +1,15 @@
 import '../../styles/entry.css';
 import { cleanup } from '@testing-library/react';
-import { afterEach, expect, it } from 'vitest';
+import { afterEach, beforeEach, expect, it } from 'vitest';
 import { page, userEvent } from 'vitest/browser';
 import type { BootstrapDto } from '../../../../core/api/perga-v1.ts';
+import { queryKeys } from '../providers/query-keys.ts';
 import { fixtureBootstrap } from './session-contract-fixture.ts';
 import { renderAssistantProviderFixture } from './assistant-provider-fixture.tsx';
 
 const claudeBootstrap = (): BootstrapDto => fixtureBootstrap(['claude'], ['selected']);
-afterEach(async () => { cleanup(); document.getElementById('root')?.remove(); await page.viewport(1280, 800); });
+beforeEach(async () => { await page.viewport(1280, 800); });
+afterEach(() => { cleanup(); document.getElementById('root')?.remove(); });
 
 it.each([1280, 390])('selects a dynamically registered backend through the keyboard and freezes retry (%ipx)', async width => {
   await page.viewport(width, 950);
@@ -78,16 +80,41 @@ it('renders, selects and sends a managed identifier independently of legacy UI l
   expect(fixture.requests.find(request => request.method === 'POST' && request.path.endsWith('/sessions'))?.body).toMatchObject({ provider: 'acp:opencode', model: 'selected' });
 });
 
-it('refreshes owner metadata before retrying a draft that never dispatched', async () => {
-  const options = { bootstrap: fixtureBootstrap([]) };
+it.each(['pending', 'failed'] as const)('sends the first draft message with bootstrap %s', async bootstrapRead => {
+  const fixture = renderAssistantProviderFixture({ bootstrap: fixtureBootstrap(), bootstrapRead });
+  await page.getByRole('button', { name: 'New conversation', exact: true }).click();
+  await expect.poll(() => fixture.requests.some(request => request.path === '/api/v1/bootstrap?scope=managed')).toBe(true);
+  const status = bootstrapRead === 'pending' ? 'pending' : 'error';
+  await expect.poll(() => fixture.client.getQueryState(queryKeys.managedProviders())?.status).toBe(status);
+  await page.getByRole('combobox', { name: 'Message' }).fill('Send the first message');
+  await userEvent.keyboard('{Enter}');
+  await expect.poll(() => fixture.requests.filter(request => request.method === 'POST').map(request => [request.path, request.body]))
+    .toEqual([['/api/v1/tracks/provider-track/sessions', expect.objectContaining({ prompt: 'Send the first message', provider: 'codex' })]]);
+  await expect.element(page.getByRole('complementary', { name: 'Created Assistant' })).toBeVisible();
+});
+
+it('opens a draft without requesting server version', async () => {
+  const fixture = renderAssistantProviderFixture({ bootstrap: fixtureBootstrap() });
+  await page.getByRole('button', { name: 'New conversation', exact: true }).click();
+  await expect.poll(() => fixture.client.getQueryState(queryKeys.managedProviders())?.status).toBe('success');
+  expect(fixture.requests.some(request => request.path === '/api/v1/bootstrap')).toBe(false);
+});
+
+it.each([
+  { refresh: 'succeeds', failBootstrapRefresh: false },
+  { refresh: 'fails', failBootstrapRefresh: true },
+])('retries a draft refused for a missing provider when refresh $refresh', async ({ failBootstrapRefresh }) => {
+  const options = { bootstrap: fixtureBootstrap([]), failBootstrapRefresh };
   const fixture = renderAssistantProviderFixture(options);
   await page.getByRole('button', { name: 'New conversation', exact: true }).click();
-  await page.getByRole('combobox', { name: 'Message' }).fill('Retry after registration');
+  await expect.poll(() => fixture.client.getQueryData(queryKeys.managedProviders())).toEqual([]);
+  await page.getByRole('combobox', { name: 'Message' }).fill('Retry the original draft');
   await userEvent.keyboard('{Enter}');
-  await expect.element(page.getByRole('button', { name: /^(Try again|Retry|Retry safely \(same key\))$/, exact: true })).toBeVisible();
+  await expect.element(page.getByText('Managed provider capabilities are unavailable. Reconnect before sending.')).toBeVisible();
   expect(fixture.requests.filter(request => request.method === 'POST' && request.path.endsWith('/sessions'))).toHaveLength(0);
-  options.bootstrap = fixtureBootstrap();
-  await page.getByRole('button', { name: /^(Try again|Retry|Retry safely \(same key\))$/, exact: true }).click();
-  await expect.poll(() => fixture.requests.filter(request => request.method === 'POST' && request.path.endsWith('/sessions')).length).toBe(1);
-  expect(fixture.requests.some(request => request.path === '/api/v1/bootstrap?scope=managed&refresh=true')).toBe(true);
+  if (!failBootstrapRefresh) options.bootstrap = fixtureBootstrap();
+  await page.getByRole('button', { name: 'Try again', exact: true }).click();
+  await expect.poll(() => fixture.requests.filter(request => request.path === '/api/v1/bootstrap?scope=managed&refresh=true' || request.method === 'POST')
+    .map(request => request.path)).toEqual(['/api/v1/bootstrap?scope=managed&refresh=true', '/api/v1/tracks/provider-track/sessions']);
+  await expect.element(page.getByRole('complementary', { name: 'Created Assistant' })).toBeVisible();
 });

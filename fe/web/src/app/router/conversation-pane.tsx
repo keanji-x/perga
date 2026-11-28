@@ -250,8 +250,6 @@ export function useConversationPane(
     openTarget?.kind === 'draft' || canSwitchProvider,
     source.executionTargetId,
   );
-  const draftCapabilities = managed.version;
-  const supportsDraftModel = draftCapabilities.data?.conversationCreateModel === true;
   const threadAvailable = open !== null
     && (store.historyReady || openTurns.length > 0 || hasPendingMessages || store.stopFeedback !== null);
   const threadPresented = useContentAdmission(open?.id ?? null, threadAvailable);
@@ -281,7 +279,6 @@ export function useConversationPane(
       ? current : { ...current, ...change(current) });
   };
   const draftAttachments = usePlannerAttachments(draft ?? {}, changeDraftAttachments);
-  const draftImagesSupported = draftCapabilities.data?.conversationInitialInput === true;
   const draftLocked = creating || draft?.submitted != null;
   const draftFocus = useMemo(() => ({ key: draft?.key ?? null, handle: createRef<ComposerFocusHandle>() }), [draft?.key]);
   // Rekey keeps this scope's event channel, but only the actual current attempt
@@ -303,13 +300,10 @@ export function useConversationPane(
   useConversationDraftRetention({ discardUnsentDraft, sourceScopeId });
 
   const { start, startWithMessage, withDraft, sendDraft, retryDraft, sendAsNewConversation, closeDrawer } = createConversationDraftActions({
-    registry, draft, creating, source, sourceScopeId, supportsDraftModel,
+    registry, draft, creating, source, sourceScopeId,
     defaultProvider: source.defaultProvider,
-    supportsInitialInput: !draftCapabilities.isError && draftCapabilities.data?.conversationInitialInput === true,
     managedProviders: managed.answers,
     recheckManagedProviders: managed.recheck,
-    supportsAssistantProviders: managed.supportsAssistantProviders,
-    supportsSideConversation: draftCapabilities.data?.conversationSide === true,
     openDraft: () => { options?.onPresent?.(); setComposerFocusRequest(count => count + 1); setOpenTarget({ kind: 'draft' }); }, closeView: () => setOpenTarget(null),
     onGone: () => go({ name: 'today' }),
     onAdopt: onAdoptDraft,
@@ -326,7 +320,7 @@ export function useConversationPane(
   const contextSource = source.rows.find((row) => row.id === contextSourceId);
   const draftOpen = options?.enabled !== false && openTarget?.kind === 'draft' && draft !== null;
 
-  useConversationDraftAutoSend({ draftOpen, draft, creating: creating || managed.loading || draftCapabilities.isLoading, registry, sendDraft });
+  useConversationDraftAutoSend({ draftOpen, draft, creating, registry, sendDraft });
 
   const existingId = open?.id ?? null;
   const retrySend = useCommittedCallback(existingId, () => {
@@ -675,7 +669,7 @@ export function useConversationPane(
               });
               const changeDraftPermission = (permissionMode: string) => withDraft(draft, current =>
                 current.creating || current.submitted !== null ? current : { ...current, permissionMode });
-              const modelDisabled = draftLocked || !supportsDraftModel || !managed.supportsAssistantProviders;
+              const modelDisabled = draftLocked;
               return (
                 /* Initial submit hands words to the held draft, including refusal; only recovery uses the takeover boolean. */
                 <ConversationComposer commands={conversationCommands({ terminal: onTerminal, openFile: source.openFileCommand, compactViewport: compactComposer, newConversation: allowNewConversation ? startAnother : undefined })} target={{ kind: 'scope', id: sourceScopeId }} layout={mobileSheet ? 'mobile' : 'standard'} disabled={creating} sendWaiting={creating} onSend={text => { sendDraft(text); }}
@@ -683,7 +677,7 @@ export function useConversationPane(
                   mentionTrigger={mentionTrigger}
                   changeText={setNewConversationText}
                   allowEmptyText={draftAttachments.items.length > 0}
-                  onFiles={draftImagesSupported && !draftLocked ? draftAttachments.attach : undefined}
+                  onFiles={draftLocked ? undefined : draftAttachments.attach}
                   drawer={<ComposerAttachmentStrip items={draftAttachments.items} error={draftAttachments.error} onRemove={draftAttachments.remove} disabled={draftLocked} />}
                   /* Menu membership and readiness come from the managed backend declarations. */
                   mobileMetaBar={mobileSheet ? (
@@ -702,13 +696,13 @@ export function useConversationPane(
                         disabled: draftPermissionControl.isDisabled,
                       } : undefined}
                       attachments={draftAttachments}
-                      attachmentsAvailable={draftImagesSupported}
+                      attachmentsAvailable
                       attachDisabled={draftLocked}
                     />
                   ) : undefined}
                   footerActions={mobileSheet ? undefined : (
                     <HStack gap={1} align="center" wrap="wrap" className={footerStyles.group}>
-                      <PlannerAttachButton attachments={draftAttachments} available={draftImagesSupported} disabled={draftLocked} />
+                      <PlannerAttachButton attachments={draftAttachments} available disabled={draftLocked} />
                       <ModelPill groups={managed.groups} provider={draft.provider} selection={draft.model}
                         effortControl="separate" onChange={changeDraftModel} isDisabled={modelDisabled} />
                       {draftPermissionControl.visible && (

@@ -15,15 +15,15 @@ import { ThemeProvider } from '../theme/public.tsx';
 /** Real router/query/draft/store over explicit server declarations, without CLI credentials. */
 export function renderAssistantProviderFixture(options: {
   bootstrap: BootstrapDto;
+  bootstrapRead?: 'pending' | 'failed';
+  failBootstrapRefresh?: boolean;
   listRead?: 'pending' | 'failed';
   failFirstCreate?: boolean;
   landFirstCreate?: boolean;
   hideLanded?: boolean;
   existingProvider?: AgentProvider;
   dormant?: boolean;
-  assistantProviders?: boolean;
   mobile?: boolean;
-  webCompatVersion?: number;
   runAttachmentsSupported?: boolean;
 }) {
   const requests: ApiRequest[] = [];
@@ -37,6 +37,13 @@ export function renderAssistantProviderFixture(options: {
     requests.push(request);
     let body: unknown = [];
     let status = 200;
+    if (request.path === '/api/v1/bootstrap' || request.path === '/api/v1/bootstrap?scope=managed') {
+      if (options.bootstrapRead === 'pending') return new Promise(() => {});
+      if (options.bootstrapRead === 'failed') return { status: 503, statusText: 'Unavailable', body: { error: 'Bootstrap unavailable' } };
+    }
+    if (request.path === '/api/v1/bootstrap?scope=managed&refresh=true' && options.failBootstrapRefresh) {
+      return { status: 503, statusText: 'Unavailable', body: { error: 'Bootstrap unavailable' } };
+    }
     if (request.path.startsWith('/api/v1/bootstrap')) body = options.bootstrap;
     if (request.path === '/api/v1/areas') body = [{ id: 'area', name: 'Work', color: '#123456', sortOrder: 1, kind: 'user', createdAtMs: 1, updatedAtMs: 1 }];
     if (request.path === '/api/v1/areas/area/tracks?includeClosed=true') body = [track];

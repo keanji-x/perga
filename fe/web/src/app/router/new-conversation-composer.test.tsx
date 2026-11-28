@@ -1,7 +1,6 @@
 import { fixtureSnapshot, fixtureSession, fixtureTrack, fixtureCreation } from './session-contract-fixture.ts';
 import { prepareReportDocument } from '../../features/report/document/preparation.ts';
 // @vitest-environment jsdom
-import { WEB_COMPAT_VERSION } from '../providers/public.tsx';
 // A conversation not created yet keeps its unsent words per Track, driven through the real router (#1923).
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { RouterProvider, createMemoryHistory } from '@tanstack/react-router';
@@ -41,7 +40,6 @@ function renderApp(managed = false, createdTitle: string | null = null) {
   const transport: ApiTransportPort = {
     send(request) {
       requests.push(request);
-      if (request.path === '/api/v1/bootstrap') return Promise.resolve(ok({ webCompatVersion: WEB_COMPAT_VERSION, minWebCompatVersion: WEB_COMPAT_VERSION, syncEventVersion: 20, dbInstanceId: 'test', assistantProviders: true, conversationInitialInput: true, conversationCreateModel: true }));
       if (request.path.startsWith('/api/v1/bootstrap?scope=managed')) return Promise.resolve(ok({ version: 'test', providers: [{ provider: managed ? 'claude' : 'codex', available: true, version: null, reason: null, models: [] }], templates: [], areas: [] }));
       if (managed && request.path === '/api/v1/bootstrap?provider=claude') return Promise.resolve(ok({ version: 'test', providers: [{ provider: 'claude', available: true, models: ['sonnet'] }], templates: [], areas: [] }));
       const conversations = /^\/api\/v1\/tracks\/(\w+)\/sessions$/.exec(request.path);

@@ -1,10 +1,8 @@
 import { priorityConversation } from '../../../../core/domain/activity.ts';
 import { sideConversationSnapshot } from '../../../../core/domain/side-conversation.ts';
 import { useConversationPaneTarget } from '../conversations/pane-lifecycle.ts';
-import { queryKeys } from '../providers/query-keys.ts';
 import { TerminalCompanion } from './terminal-companion.tsx';
 
-import { useQuery } from '@tanstack/react-query';
 import { useEffect,useMemo,useRef } from 'react';
 
 import type { ApiTransportPort } from '../../../../core/api/types.ts';
@@ -16,9 +14,7 @@ useConversationCommands,
 useConversationDraft
 } from '../conversations/public.tsx';
 import { mintIdempotencyKey } from '../providers/idempotency-key.ts';
-import { runOperation } from '../providers/query-operation.ts';
 import { useReadReceipts } from '../providers/read-receipts.tsx';
-import { serverVersionOperation } from '../providers/server-queries.ts';
 
 import { useConversationPane } from './conversation-pane.tsx';
 import type { ConversationPanelOptions,ConversationPanelSource } from './conversation-panel-contract.ts';
@@ -48,8 +44,6 @@ export function useConversationPanel(
       ?? source.planner?.cardId ?? preferredConversation?.id ?? source.rows[0]?.id ?? null
     : parentId;
   const mainReportComposer = options.reportComposer === undefined ? undefined : { ...options.reportComposer, conversationId: dockOwnerId };
-  const capabilities = useQuery({ queryKey: queryKeys.serverVersion(),
-    queryFn: () => runOperation(transport, serverVersionOperation(), unauthorized), enabled: parentId !== null && !compact, retry: false });
   const sideSlot = `${source.scopeId}:side:${parentId ?? ''}`;
   const sideTarget = useConversationPaneTarget(sideSlot, source.rows);
   const sideDraft = useConversationDraft(sideSlot);
@@ -79,10 +73,6 @@ export function useConversationPanel(
         : sideAvailable && side.isOpen ? side.drawerFor : undefined,
       onSide: (parent, entries, question) => {
         if (compact) throw new Error('Side conversations are available on desktop.');
-        if (capabilities.isPending) throw new Error('Checking server support for side conversations. Try again in a moment.');
-        if (capabilities.data?.conversationSide !== true) {
-          throw new Error('Side conversations require a server that reports support. Update or reconnect, then try again.');
-        }
         options.terminal?.workbench.suspend();
         if (sideDraft !== null && sideDraft.submitted !== null) {
           sideTarget[1]({ kind: 'draft' });
