@@ -432,6 +432,38 @@ it('holds the returning footer on handle acquisition without pointer movement', 
   expect(footer.style.transform).toBe('');
 });
 
+it('retains the returning footer velocity when the open frame changes', async () => {
+  const { panel, footer, frame, settle, update } = await mount();
+  await settle();
+  update({ open: false });
+  const [exit, footerExit] = await pausePair(panel, footer);
+  exit.currentTime = footerExit.currentTime = 60;
+  update({ open: true });
+  const [entry, footerEntry] = await pausePair(panel, footer);
+  entry.play(); footerEntry.play();
+  await Promise.all([entry.ready, footerEntry.ready]);
+
+  const bottom = () => footer.getBoundingClientRect().bottom;
+  // Measure the previous velocity from native paint around the rebase.
+  entry.currentTime = footerEntry.currentTime = 79; const before = bottom();
+  entry.currentTime = footerEntry.currentTime = 81; const after = bottom();
+  entry.currentTime = footerEntry.currentTime = 80; const held = bottom();
+  const velocity = (after - before) * 500;
+  expect(velocity).toBeLessThan(-500);
+
+  const bottomInsetPx = 120;
+  update({ frame: { heightPx: 500, bottomInsetPx } });
+  const [rebasedPanel, rebasedFooter] = await pausePair(panel, footer);
+  rebasedPanel.currentTime = rebasedFooter.currentTime = 0;
+  const start = bottom();
+  expect(Math.abs(start - (held - bottomInsetPx))).toBeLessThan(1);
+  rebasedPanel.currentTime = rebasedFooter.currentTime = 10;
+  expect(Math.abs((bottom() - start) * 100 - velocity)).toBeLessThan(150);
+  const panelOffset = panel.getBoundingClientRect().top - frame.getBoundingClientRect().top;
+  const footerOffset = bottom() - frame.getBoundingClientRect().bottom;
+  expect(Math.abs(footerOffset - panelOffset)).toBeLessThan(1);
+});
+
 it.each([
   { position: 1, velocity: 800 }, { position: 0, velocity: 800 }, { position: 0, velocity: 0 },
 ])('returns a held footer smoothly after releasing the panel at $position px and $velocity px/s', async ({ position, velocity }) => {

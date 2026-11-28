@@ -1,4 +1,4 @@
-import { playSpring, playTrajectory, springTrajectory, type SpringSample } from '../motion/spring.ts';
+import { playSpring, playTrajectory, springTrajectory, type SpringPlayback, type SpringSample } from '../motion/spring.ts';
 import { createPlaybackTarget } from '../motion/target.ts';
 import { notifyAncestorVisualChange } from '../hover-preview/visual-change.ts';
 
@@ -12,6 +12,7 @@ function footerOffset(footer: HTMLDivElement) {
 export function createSheetMotion(panel: HTMLDivElement, getFooter: () => HTMLDivElement | null) {
   const active = createPlaybackTarget<number>();
   let footerAnimation: Animation | null = null;
+  let footerReturnPlayback: SpringPlayback | null = null;
   let footerVelocityScale = 0;
   let live = true;
   let revision = 0;
@@ -21,6 +22,7 @@ export function createSheetMotion(panel: HTMLDivElement, getFooter: () => HTMLDi
   const paint = (value: number) => ({ transform: `translateY(${value}px)` });
   const cancelFooter = () => {
     footerAnimation?.cancel(); footerAnimation = null;
+    footerReturnPlayback = null;
     footerVelocityScale = 0;
   };
   const holdFooter = () => {
@@ -62,6 +64,7 @@ export function createSheetMotion(panel: HTMLDivElement, getFooter: () => HTMLDi
       const height = panel.getBoundingClientRect().height;
       if (!Number.isFinite(height) || height <= 0 || getComputedStyle(panel).visibility !== 'visible') return false;
       const velocityScale = footerVelocityScale;
+      const footerSample = footerReturnPlayback?.sample();
       const from = hold(); const generation = revision;
       const footer = getFooter();
       const footerFrom = footer?.isConnected ? footerOffset(footer) : 0;
@@ -73,7 +76,8 @@ export function createSheetMotion(panel: HTMLDivElement, getFooter: () => HTMLDi
       if (immediate || exit && from.value >= to || from.value === to && from.velocity === 0 && footerFrom === 0) {
         complete(); return true;
       }
-      const footerReturn = !exit && footerFrom > 0 ? springTrajectory(footerFrom, 0, from.velocity * velocityScale) : undefined;
+      const footerVelocity = footerSample?.velocity ?? from.velocity * velocityScale;
+      const footerReturn = !exit && footerFrom > 0 ? springTrajectory(footerFrom, 0, footerVelocity) : undefined;
       const panelSpan = to - from.value;
       const syncExit = exit && footer?.isConnected;
       const exitScale = syncExit ? Math.max(panelSpan,
@@ -92,10 +96,10 @@ export function createSheetMotion(panel: HTMLDivElement, getFooter: () => HTMLDi
         void footerAnimation.finished.catch(() => {});
         footerVelocityScale = exitScale;
       } else if (footer?.isConnected && footerReturn) {
-        const returning = playTrajectory([footer], { ...footerReturn, scaleVelocity: (value, rate) => value * rate },
+        footerReturnPlayback = playTrajectory([footer], { ...footerReturn, scaleVelocity: (value, rate) => value * rate },
           value => paint(Math.max(0, value)));
-        [footerAnimation] = returning.animations;
-        void returning.finished.catch(() => {});
+        [footerAnimation] = footerReturnPlayback.animations;
+        void footerReturnPlayback.finished.catch(() => {});
       }
       if (footerAnimation !== null) footerAnimation.startTime = primary.startTime;
       playback.setOnVisualChange(() => {
