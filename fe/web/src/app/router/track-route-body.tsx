@@ -81,7 +81,7 @@ import dailyStyles from './daily-planner.module.css';
 import { deriveEmptyTrackCenter, type CenteredStagePresentation } from './centered-stage.tsx';
 import mobileChatStyles from './mobile-chat.module.css';
 import {
-renderedMobilePanel,
+cardIdFromLocation,isSameTrackEntry,renderedMobilePanel,
 useAppBack,useGo,useGoSameTrack,
 usePlannerOpenIntent,
 useRouteCardId,useRouteFileBackPath,useRouteFileLine,useRouteFilePath,useRouteHash,
@@ -161,7 +161,8 @@ export function TrackRouteBody({
   const mobileHeaderTitleHost = useMobileHeaderTitleHost();
   const { previousEntry, pop } = useAppBack(alias);
   const shellBack = useMobileShellBack(areas, memoryAreaId === false);
-  const surfaceBackLabel = mobileBackLabel(previousEntry, 'Report', areas);
+  const surfaceBackEntry = isSameTrackEntry(previousEntry, track.id, alias) ? previousEntry : null;
+  const surfaceBackLabel = mobileBackLabel(surfaceBackEntry, 'Report', areas);
   const goSameTrack = useGoSameTrack(alias);
   const fileNavigation = useTrackFileNavigation(alias);
   const { openPanel, closePanel } = useTrackPanelNavigation(alias);
@@ -169,7 +170,7 @@ export function TrackRouteBody({
   const rawRequestedFilePath = useRouteFilePath();
   const requestedFilePath = requestedCardId === null ? rawRequestedFilePath : null;
   const requestedFileLine = useRouteFileLine();
-  const backFilePath = useRouteFileBackPath();
+  const backFilePath = useRouteFileBackPath(track.id, alias);
   const fileEntryKey = useRouterState({ select: (state) => state.location.state.__TSR_key
     ?? (state.location.state.__TSR_index === undefined ? undefined : `index:${state.location.state.__TSR_index}`) });
   const fileView = useTrackFileView(track.id, fileEntryKey, requestedFilePath);
@@ -454,7 +455,7 @@ export function TrackRouteBody({
   };
 
   const closeBoard = () => {
-    if (compactViewport && pop()) return;
+    if (compactViewport && surfaceBackEntry !== null && cardIdFromLocation(surfaceBackEntry) === null && pop()) return;
     go({ name: 'track', trackId: track.id }, { replace: true });
   };
   const closeFile = () => { fileNavigation.closeFile(track.id); };

@@ -16,7 +16,8 @@ import { useCompactViewport, useVisibleViewport } from '../../ui/viewport/public
 import { AreaEditorDialog } from './area-editor-dialog.tsx';
 import { DesktopShellChrome } from './desktop/public.tsx';
 import { MobileWorkspaceHeader } from './mobile/header.tsx';
-import { MobileWorkspaceRoutesProvider } from './mobile/workspace-routes.tsx';
+import { MobileWorkspaceRoute, type WorkspaceRoutes } from './mobile/workspace-routes.tsx';
+import { useRouteParam } from '../router/navigation.ts';
 import { SettingsOverlay } from './settings-overlay.tsx';
 import styles from './shell.module.css';
 import { SystemUpgradeBannerHost } from './system-upgrade-banner.tsx';
@@ -24,6 +25,19 @@ import { useShellController } from './use-shell-controller.ts';
 
 const CreateAreaContext = createContext<((origin: DialogOrigin) => void) | null>(null);
 export function useRequestCreateArea() { return useContext(CreateAreaContext); }
+
+const WorkspaceRoutesContext = createContext<WorkspaceRoutes | null>(null);
+
+export function WorkspaceRoute() {
+  const routes = useContext(WorkspaceRoutesContext);
+  return <MobileWorkspaceRoute routes={routes} />;
+}
+
+export function AreaRoute() {
+  const routes = useContext(WorkspaceRoutesContext);
+  const areaId = useRouteParam('/area/');
+  return <MobileWorkspaceRoute routes={routes} areaId={areaId} />;
+}
 
 export type AppShellProps = Readonly<{
   shareScope?: unknown;
@@ -132,10 +146,9 @@ export function AppShell({
           <CreateAreaContext.Provider value={controller.requestCreateArea}>
             <MobileHeaderActionsContext.Provider value={narrowRail && !mobileFullBleedRoute ? mobileHeaderActionsHost : null}>
               <MobileHeaderTitleContext.Provider value={narrowRail && !mobileFullBleedRoute ? mobileHeaderTitleHost : undefined}>
-                <MobileWorkspaceRoutesProvider controller={controller} onOpenSettings={onOpenSettings}
-                  onSignOut={onSignOut} onSetupAccount={onSetupAccount} userLabel={userLabel} nowMs={nowMs}>
+                <WorkspaceRoutesContext.Provider value={{ controller, onOpenSettings, onSignOut, onSetupAccount, userLabel, nowMs }}>
                   <DrawerResizeProvider value={controller.drawerWidth.resize}><Outlet /></DrawerResizeProvider>
-                </MobileWorkspaceRoutesProvider>
+                </WorkspaceRoutesContext.Provider>
               </MobileHeaderTitleContext.Provider>
             </MobileHeaderActionsContext.Provider>
           </CreateAreaContext.Provider>

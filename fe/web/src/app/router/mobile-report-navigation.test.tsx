@@ -195,6 +195,30 @@ describe('the mobile report panel is the URL (#1191 §2.4)', () => {
   });
 });
 
+describe('mobile Track surface Back', () => {
+  it.each(['panel=tasks', 'file=src%2Fa.ts', 'card=card-term'])('closes a saved %s resumed from Focus on the same Track', async (search) => {
+    const router = setup(`/track/w1?${search}`);
+    await screen.findByRole('button', { name: 'Back to Report' });
+    await act(() => router.navigate({ to: '/' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'All' }));
+    await userEvent.click(await screen.findByRole('button', { name: /^Responsive mobile UI\b/ }));
+    await waitFor(() => { expect(href(router)).toBe(`/track/w1?${search}`); });
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Back to Report' }));
+    await waitFor(() => { expect(href(router)).toBe('/track/w1'); });
+    expect(router.history.location.state.__TSR_index).toBe(2);
+  });
+
+  it('pops a card pushed from its own Report', async () => {
+    const router = setup('/track/w1');
+    await screen.findByRole('button', { name: 'Open area Product' });
+    await act(() => router.navigate({ to: '/track/w1', search: { card: 'card-term' } }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Back to Report' }));
+    await waitFor(() => { expect(href(router)).toBe('/track/w1'); });
+    expect(router.history.location.state.__TSR_index).toBe(0);
+  });
+});
+
 describe('workspace header navigation', () => {
   it('keeps one header in every commit between the report and Focus', async () => {
     const headerCounts = new Set<number>();
