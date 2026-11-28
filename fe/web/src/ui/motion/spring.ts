@@ -20,18 +20,43 @@ export type Playback<Value> = Readonly<{
 
 export type SpringPlayback = Playback<number>;
 export type PointPlayback = Playback<SpringPoint>;
+type SpringOptions = Readonly<{ stopAtTarget?: boolean }>;
+
+function firstCrossing(crossed: (time: number) => boolean, duration: number) {
+  for (let start = 0; start < duration; start += SAMPLE_MS) {
+    let low = start;
+    let high = Math.min(start + SAMPLE_MS, duration);
+    if (!crossed(high)) continue;
+    for (let iteration = 0; iteration < 16; iteration++) {
+      const mid = (low + high) / 2;
+      if (crossed(mid)) high = mid;
+      else low = mid;
+    }
+    return high;
+  }
+  return duration;
+}
 
 /** Motion owns the equation, analytical velocity and stopping criteria. */
-export function springTrajectory(from: number, to: number, velocity: number) {
+export function springTrajectory(from: number, to: number, velocity: number, { stopAtTarget = false }: SpringOptions = {}) {
   if (![from, to, velocity].every(Number.isFinite)) throw new Error('Invalid spring state');
-  const generator = spring({ stiffness: RESPONSE ** 2, damping: 2 * RESPONSE * DAMPING_RATIO, mass: 1, keyframes: [from, to], velocity });
+  const physics = { stiffness: RESPONSE ** 2, damping: 2 * RESPONSE * DAMPING_RATIO, mass: 1, keyframes: [from, to], velocity };
+  const natural = spring(physics);
+  let duration = calcGeneratorDuration(natural);
+  if (!Number.isFinite(duration)) throw new Error('Motion spring did not converge');
+  const stop = stopAtTarget && from !== to;
+  // Motion's normal rest thresholds can snap a short spring to target before crossing.
+  const generator = stop ? spring({ ...physics, restSpeed: Number.MIN_VALUE, restDelta: Number.MIN_VALUE }) : natural;
+  if (stop) {
+    const direction = Math.sign(to - from);
+    duration = firstCrossing(time => direction * (generator.next(time).value - to) >= 0, duration);
+  }
   const resolveVelocity = generator.velocity;
   if (resolveVelocity === undefined) throw new Error('Motion spring has no velocity contract');
-  const duration = calcGeneratorDuration(generator);
-  if (!Number.isFinite(duration)) throw new Error('Motion spring did not converge');
   const sample = (time: number): SpringSample => {
+    if (stop && time >= duration) return { value: to, velocity: 0 };
     const state = generator.next(time);
-    return { value: state.value, velocity: state.done ? 0 : resolveVelocity(time) };
+    return { value: state.value, velocity: !stop && state.done ? 0 : resolveVelocity(time) };
   };
   return { duration, sample };
 }
@@ -90,9 +115,9 @@ export function playTrajectory<Value>(
 
 export function playSpring(
   elements: readonly (HTMLElement | SVGElement)[], from: number, to: number, velocity: number,
-  paint: (value: number) => Keyframe,
+  paint: (value: number) => Keyframe, options?: SpringOptions,
 ): SpringPlayback {
-  return playTrajectory(elements, { ...springTrajectory(from, to, velocity), scaleVelocity: (value, rate) => value * rate }, paint);
+  return playTrajectory(elements, { ...springTrajectory(from, to, velocity, options), scaleVelocity: (value, rate) => value * rate }, paint);
 }
 
 export function playPointSpring(

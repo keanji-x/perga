@@ -33,6 +33,7 @@ export function Sheet(props: SheetProps) {
   const [host] = useState(() => document.createElement('div'));
   const [dialog, setDialog] = useState<HTMLDialogElement | null>(null);
   const [panel, setPanel] = useState<HTMLDivElement | null>(null);
+  const footerRef = useRef<HTMLDivElement>(null);
   const [present, setPresent] = useState(enabled && open);
   const [attached, setAttached] = useState(false);
   const latest = useRef(props); latest.current = props;
@@ -96,7 +97,7 @@ export function Sheet(props: SheetProps) {
   }, [panel, panelRef]);
   useLayoutEffect(() => {
     if (panel === null) return;
-    const motion = createSheetMotion(panel);
+    const motion = createSheetMotion(panel, () => footerRef.current);
     const gesture = createSheetGesture(motion, () => latest.current.enabled && latest.current.open && Number.isFinite(latest.current.frame.heightPx) && latest.current.frame.heightPx > 0 && panel.isConnected && dialog?.open === true,
       () => latest.current.frame.heightPx, settle, dismiss);
     const current = { motion, gesture }; owner.current = current; requested.current = null;
@@ -111,12 +112,16 @@ export function Sheet(props: SheetProps) {
   }, [panel, dialog, clearExitFocus]);
   useLayoutEffect(() => {
     const prior = requested.current;
-    if (prior?.enabled === enabled && prior.open === open && prior.height === frame.heightPx && prior.bottom === frame.bottomInsetPx && prior.panel === panel) return;
+    // A close with a usable frame already owns the retained layout and focus intent.
+    if (prior?.enabled === enabled && prior.open === open && prior.panel === panel
+      && (prior.height === frame.heightPx && prior.bottom === frame.bottomInsetPx
+        || enabled && !open && Number.isFinite(prior.height) && prior.height > 0)) return;
     requested.current = { enabled, open, height: frame.heightPx, bottom: frame.bottomInsetPx, panel };
     const token = {}; intent.current = token;
     if (open || !enabled) clearExitFocus();
     if (!enabled) {
       owner.current?.gesture.revoke();
+      owner.current?.motion.dispose();
       if (dialog?.open) dialog.close();
       setPresent(false); return;
     }
@@ -146,14 +151,15 @@ export function Sheet(props: SheetProps) {
     } else owner.current.gesture.revoke();
     // Frame rebase during a lease retains both q/v and its pointer anchor.
     if (open && owner.current.gesture.dragging()) { owner.current.motion.hold(); return; }
-    owner.current.motion.move(open ? 0 : panel.getBoundingClientRect().height, reduced(), () => { if (!open) finish(token, dialog); });
+    owner.current.motion.move(open ? 0 : panel.getBoundingClientRect().height, reduced(), () => { if (!open) finish(token, dialog); }, { exit: !open });
   }, [enabled, open, frame.heightPx, frame.bottomInsetPx, panel, dialog, setPresent, clearExitFocus]);
   useLayoutEffect(() => {
     const preference = window.matchMedia('(prefers-reduced-motion: reduce)');
     const change = () => {
       const current = owner.current;
+      const height = requested.current?.height ?? 0;
       if (!preference.matches || !latest.current.enabled || current === null || panel === null || dialog === null || !dialog.open
-        || !Number.isFinite(latest.current.frame.heightPx) || latest.current.frame.heightPx <= 0) return;
+        || !Number.isFinite(height) || height <= 0) return;
       current.gesture.revoke(); const token = intent.current;
       current.motion.move(latest.current.open ? 0 : panel.getBoundingClientRect().height, true, () => { if (!latest.current.open) finish(token, dialog); });
     };
@@ -217,7 +223,7 @@ export function Sheet(props: SheetProps) {
         <div className={styles.content} data-nc-drawer={open || present ? '' : undefined}>{open || present ? visible.children : null}</div>
       </div>
     </div>}
-  </dialog>{createPortal(<div className={enabled ? styles.footer : undefined} data-nc-sheet-footer=""
+  </dialog>{createPortal(<div ref={footerRef} className={enabled ? styles.footer : undefined} data-nc-sheet-footer=""
     inert={enabled && !open} aria-hidden={enabled && !open ? true : undefined}
     style={enabled ? { bottom: visible.frame.bottomInsetPx } : undefined}>{open || (enabled ? present : attached) ? visible.footer : null}</div>, host)}</LayerDepthProvider></>;
 }

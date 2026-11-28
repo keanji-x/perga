@@ -306,6 +306,98 @@ it('reverses from native paint and velocity and fences the superseded exit', asy
   } finally { opener.remove(); }
 });
 
+it('moves the stationary footer by only the remaining panel travel on drag dismissal', async () => {
+  const { panel, handle, footer, settle, update, props } = await mount();
+  await settle();
+  const footerTop = footer.getBoundingClientRect().top;
+  const down = await acquire(handle);
+  try {
+    event(handle, 'pointermove', down.y + 280, down.time + 200, down.id);
+    const panelTop = panel.getBoundingClientRect().top;
+    expect(getComputedStyle(footer).transform).toBe('none');
+    event(handle, 'pointerup', down.y + 280, down.time + 201, down.id);
+    expect(props.onCloseRequest).toHaveBeenCalledWith('handle');
+    update({ open: false });
+    const [exit] = panel.getAnimations();
+    const [footerExit] = footer.getAnimations();
+    exit.pause(); footerExit.pause();
+    await Promise.all([exit.ready, footerExit.ready]);
+    exit.currentTime = footerExit.currentTime = 0;
+    expect(footer.getBoundingClientRect().top).toBe(footerTop);
+    // The fixture accepts dismissal on a separate commit, so momentum may already have advanced.
+    const start = panel.getBoundingClientRect().top;
+    expect(start).toBeCloseTo(panelTop, 0);
+    exit.currentTime = footerExit.currentTime = 60;
+    const displacement = panel.getBoundingClientRect().top - start;
+    expect(displacement).toBeGreaterThan(20);
+    expect(footer.getBoundingClientRect().top - footerTop).toBeCloseTo(displacement, 2);
+  } finally { await releaseMouse(); }
+});
+
+it.each(['reopen', 'desktop'] as const)('releases the moving exit footer on %s', async mode => {
+  const destination = document.body.appendChild(document.createElement('div'));
+  const { panel, dialog, footer, settle, update } = await mount({ desktopFooterRef: { current: destination } });
+  try {
+    await settle();
+    const panelTop = panel.getBoundingClientRect().top;
+    const footerTop = footer.getBoundingClientRect().top;
+    update({ open: false });
+    const [exit] = panel.getAnimations();
+    const [footerExit] = footer.getAnimations();
+    exit.pause(); footerExit.pause();
+    await Promise.all([exit.ready, footerExit.ready]);
+    exit.currentTime = footerExit.currentTime = 60;
+    const held = footer.getBoundingClientRect().top;
+    expect(held - footerTop).toBeGreaterThan(20);
+
+    if (mode === 'desktop') {
+      update({ enabled: false });
+      expect(destination.contains(footer)).toBe(true);
+      expect(dialog.open).toBe(false);
+    } else {
+      update({ open: true });
+      const [entry] = panel.getAnimations();
+      const [footerEntry] = footer.getAnimations();
+      expect(footerEntry.startTime).toBe(entry.startTime);
+      entry.pause(); footerEntry.pause();
+      await Promise.all([entry.ready, footerEntry.ready]);
+      entry.currentTime = footerEntry.currentTime = 0;
+      expect(footer.getBoundingClientRect().top).toBeCloseTo(held, 2);
+      entry.currentTime = footerEntry.currentTime = 80;
+      expect(footer.getBoundingClientRect().top).toBeGreaterThan(footerTop);
+      expect(footer.getBoundingClientRect().top).toBeLessThan(held);
+      expect(Math.abs(footer.getBoundingClientRect().top - footerTop - (panel.getBoundingClientRect().top - panelTop))).toBeLessThan(1);
+      await act(async () => { entry.finish(); await entry.finished; });
+      expect(panel.getBoundingClientRect().top).toBe(panelTop);
+      expect(footer.getBoundingClientRect().top).toBe(footerTop);
+      expect(dialog.open).toBe(true);
+    }
+    expect(footerExit.playState).toBe('idle');
+    expect(footer.getAnimations()).toHaveLength(0);
+    expect(footer.style.transform).toBe('');
+  } finally { destination.remove(); }
+});
+
+it('keeps the active exit and retained frame when the keyboard dismisses', async () => {
+  const { panel, dialog, footer, frame, settle, update } = await mount({ frame: { heightPx: 480, bottomInsetPx: 300 } });
+  await settle();
+  update({ open: false });
+  const [exit] = panel.getAnimations();
+  const [footerExit] = footer.getAnimations();
+  exit.pause(); await exit.ready;
+  const calls = vi.mocked(spring.playSpring);
+  const count = calls.mock.calls.length;
+  update({ frame: { heightPx: 560, bottomInsetPx: 110 } });
+  update({ frame: { heightPx: 600, bottomInsetPx: 0 } });
+  expect(calls.mock.calls).toHaveLength(count);
+  expect(panel.getAnimations()).toEqual([exit]);
+  expect(footer.getAnimations()).toEqual([footerExit]);
+  expect(frame.getBoundingClientRect().height).toBe(480);
+  expect(frame.getBoundingClientRect().bottom).toBe(700);
+  await act(async () => { exit.finish(); await exit.finished; });
+  expect(dialog.open).toBe(false);
+});
+
 it('cleans grabbed and settling lifetimes and reduces synchronously, including StrictMode', async () => {
   const first = await mount({}, true); await first.settle();
   const down = await acquire(first.handle); event(first.handle, 'pointermove', down.y + 100, down.time + 100);
