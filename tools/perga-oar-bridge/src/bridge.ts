@@ -339,7 +339,7 @@ export class OarBridgeServer {
         id: m.id,
         name: m.displayName,
         reasoningEfforts: [...m.effortLevels],
-        defaultReasoningEffort: m.defaultEffort,
+        defaultReasoningEffort: (!effort && m.id === resolvedModel ? resolvedEffort : null) ?? m.defaultEffort,
       }));
       const listedDefaultModel = catalog.find((m) => m.isDefault)?.id ?? null;
       const resolvedModelInCatalog =
@@ -347,7 +347,8 @@ export class OarBridgeServer {
       const defaultModel = (!model && resolvedModelInCatalog ? resolvedModel : null) ?? listedDefaultModel;
       const defaultModelOption = defaultModel ? workerModels.find((entry) => entry.id === defaultModel) : undefined;
       const defaultReasoningEffort =
-        (!effort ? resolvedEffort : null) ?? (defaultModelOption?.defaultReasoningEffort ?? null);
+        (!effort && (defaultModel !== null ? resolvedModel === defaultModel : !model) ? resolvedEffort : null)
+        ?? defaultModelOption?.defaultReasoningEffort ?? null;
       if (workerModels.length > 0 || defaultModel !== null || defaultReasoningEffort !== null) {
         sessionConfiguration = { models: workerModels, defaultModel, defaultReasoningEffort };
       }
