@@ -388,8 +388,9 @@ export function TrackRouteBody({
     workbench.reveal(requestedCardId);
   }, [compactViewport, requestedCardId, workbench]);
   useEffect(() => {
-    if (!compactViewport && routePanel !== null) closePanel(track.id, { pushedOnly: true });
-  }, [closePanel, compactViewport, routePanel, track.id]);
+    if (compactViewport || routePanel === null) return;
+    goSameTrack(track.id, { panel: undefined }, { replace: true });
+  }, [compactViewport, goSameTrack, routePanel, track.id]);
   /* One confirm for both delete gestures. Nothing navigates on success: the
    * `knownCard` effect bounces `?card=<deleted>` off the URL, and a `go()` here
    * would race it. */

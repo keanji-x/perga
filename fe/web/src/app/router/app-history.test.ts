@@ -7,7 +7,7 @@ import { isNewTrackPath } from './navigation.ts';
 
 function setup(initialEntries: string[]) {
   const history = createMemoryHistory({ initialEntries });
-  const stack = createAppHistory(history, ({ pathname, search }) => ({ pathname, searchStr: search }));
+  const stack = createAppHistory(history, ({ pathname, search, hash }) => ({ pathname, searchStr: search, hash: hash.slice(1) }));
   const stop = stack.observe();
   return { history, stack, stop };
 }
@@ -15,20 +15,20 @@ function setup(initialEntries: string[]) {
 describe('App history', () => {
   it('observes pushes, replacements and both traversal directions by index', () => {
     const { history, stack, stop } = setup(['/']);
-    expect(stack.snapshot()).toEqual({ previousEntry: null, canGoBack: false, lastAction: null });
+    expect(stack.snapshot()).toEqual({ previousEntry: null, canGoBack: false, backSteps: 0, lastAction: null });
 
     history.push('/workspace');
-    expect(stack.snapshot()).toEqual({ previousEntry: { pathname: '/', searchStr: '' }, canGoBack: true, lastAction: 'PUSH' });
+    expect(stack.snapshot()).toEqual({ previousEntry: { pathname: '/', searchStr: '', hash: '' }, canGoBack: true, backSteps: 1, lastAction: 'PUSH' });
     history.push('/area/work/new');
     history.replace('/track/new');
-    expect(stack.snapshot()).toEqual({ previousEntry: { pathname: '/workspace', searchStr: '' }, canGoBack: true, lastAction: 'REPLACE' });
+    expect(stack.snapshot()).toEqual({ previousEntry: { pathname: '/workspace', searchStr: '', hash: '' }, canGoBack: true, backSteps: 1, lastAction: 'REPLACE' });
     history.back();
-    expect(stack.snapshot()).toEqual({ previousEntry: { pathname: '/', searchStr: '' }, canGoBack: true, lastAction: 'BACK' });
+    expect(stack.snapshot()).toEqual({ previousEntry: { pathname: '/', searchStr: '', hash: '' }, canGoBack: true, backSteps: 1, lastAction: 'BACK' });
     history.forward();
     expect(stack.snapshot().lastAction).toBe('FORWARD');
     expect(history.location.pathname).toBe('/track/new');
     history.go(-2);
-    expect(stack.snapshot()).toEqual({ previousEntry: null, canGoBack: false, lastAction: 'GO' });
+    expect(stack.snapshot()).toEqual({ previousEntry: null, canGoBack: false, backSteps: 0, lastAction: 'GO' });
     stop();
     history.forward();
     expect(stack.snapshot().lastAction).toBe('GO');
@@ -43,7 +43,42 @@ describe('App history', () => {
     history.back();
     expect(stack.snapshot()).toMatchObject({ previousEntry: null, canGoBack: false });
     history.forward();
-    expect(stack.snapshot()).toMatchObject({ previousEntry: { pathname: '/workspace', searchStr: '' }, canGoBack: true });
+    expect(stack.snapshot()).toMatchObject({ previousEntry: { pathname: '/workspace', searchStr: '', hash: '' }, canGoBack: true });
+  });
+
+  it('skips adjacent Reports with the same address after a panel is replaced', () => {
+    const { history, stack } = setup(['/area/work']);
+    history.push('/track/one');
+    history.push('/track/one?panel=conversations');
+    history.replace('/track/one');
+
+    expect(stack.snapshot()).toMatchObject({
+      canGoBack: true, backSteps: 2, previousEntry: { pathname: '/area/work' },
+    });
+    history.go(-stack.snapshot().backSteps);
+    expect(history.location.pathname).toBe('/area/work');
+  });
+
+  it('stops at the floor when all observed predecessors are identical', () => {
+    const { history, stack } = setup(['/outside', '/track/one']);
+    history.push('/track/one?panel=outline');
+    history.replace('/track/one');
+
+    expect(stack.snapshot()).toMatchObject({ canGoBack: false, backSteps: 0, previousEntry: null });
+  });
+
+  it('keeps a different Report anchor in the Back path', () => {
+    const { history, stack } = setup(['/track/one']);
+    history.push('/track/one?panel=outline');
+    history.replace('/track/one#heading');
+    history.push('/track/one#heading');
+    expect(stack.snapshot()).toMatchObject({
+      canGoBack: true, backSteps: 2, previousEntry: { pathname: '/track/one', hash: '' },
+    });
+    history.push('/track/one#another');
+    expect(stack.snapshot()).toMatchObject({
+      canGoBack: true, backSteps: 1, previousEntry: { pathname: '/track/one', hash: 'heading' },
+    });
   });
 
   it('exits only contiguous observed Settings entries', () => {
@@ -66,7 +101,7 @@ describe('App history', () => {
     history.push('/settings');
     history.push('/settings/about');
     history.go(-2);
-    const stack = createAppHistory(history, ({ pathname, search }) => ({ pathname, searchStr: search }));
+    const stack = createAppHistory(history, ({ pathname, search, hash }) => ({ pathname, searchStr: search, hash: hash.slice(1) }));
     stack.observe();
     history.go(2);
     expect(history.location.pathname).toBe('/settings/about');
@@ -112,7 +147,7 @@ describe('Mobile Back labels', () => {
     ['/memory', '', 'Memory'], ['/area/design/memory', '', 'Memory'], ['/settings/appearance', '', 'Settings'],
     ['/area/missing', '', 'Fallback'], ['/area/memory', '', 'Archive'],
   ])('labels %s%s as %s', (pathname, searchStr, label) => {
-    expect(mobileBackLabel({ pathname, searchStr }, 'Fallback', areas)).toBe(label);
+    expect(mobileBackLabel({ pathname, searchStr, hash: '' }, 'Fallback', areas)).toBe(label);
   });
 
   it('uses the logical parent when history has no predecessor', () => {

@@ -26,11 +26,19 @@ async function nativeFixture(initial: string, options: Parameters<typeof renderD
   await expect.poll(() => host.location.href.includes('native-history-fixture.html') && host.document.readyState === 'complete').toBe(true);
   host.history.replaceState({}, '', '/outside');
   host.history.pushState({ __TSR_index: 1, __TSR_key: 'cold-link', key: 'cold-link' }, '', initial);
-  const history = createBrowserHistory({ window: host });
-  const fixture = renderDailyFixture({ ...options, history });
+  let history = createBrowserHistory({ window: host });
+  let fixture = renderDailyFixture({ ...options, history });
   return {
-    ...fixture,
+    get router() { return fixture.router; },
+    get requests() { return fixture.requests; },
+    get client() { return fixture.client; },
     host,
+    remount: () => {
+      cleanup();
+      history.destroy();
+      history = createBrowserHistory({ window: host });
+      fixture = renderDailyFixture({ ...options, history });
+    },
     at: async (href: string) => {
       await expect.poll(() => host.location.pathname + host.location.search + host.location.hash).toBe(href);
       await expect.poll(() => fixture.router.state.resolvedLocation?.href).toBe(href);
@@ -382,13 +390,9 @@ it('restores scroll and disclosure when native Go skips between visits to the sa
   } finally { app.close(); }
 });
 
-it('pops an open Conversations entry on desktop resize and Forward', async () => {
+it('skips the duplicate Report on mobile Back after desktop clears Conversations', async () => {
   await page.viewport(390, 844);
   const app = await nativeFixture(area);
-  const arrivedOnPanel = vi.fn();
-  const stop = app.router.history.subscribe(({ action, location }) => {
-    if (action.type === 'FORWARD' && location.search === '?panel=conversations') arrivedOnPanel();
-  });
   try {
     await openProject();
     await app.at(track);
@@ -398,38 +402,69 @@ it('pops an open Conversations entry on desktop resize and Forward', async () =>
     await app.at(`${track}?panel=conversations`);
     await page.viewport(1280, 800);
     await app.at(track);
-    app.host.history.forward();
-    await expect.poll(() => arrivedOnPanel.mock.calls.length).toBe(1);
-    await app.at(track);
-    expect(app.router.history.location.state.__TSR_index).toBe(reportIndex);
+    expect(app.router.history.location.state.__TSR_index).toBe(reportIndex + 1);
     await page.viewport(390, 844);
-    await button(/^Back to (Project|Report)$/).click();
+    await back('Project').click();
     await app.at(area);
-  } finally { stop(); app.close(); }
+  } finally { app.close(); }
 });
 
-it('skips a mobile Outline on desktop Forward to reach its later Report anchor', async () => {
+const outline = `${track}?panel=outline`;
+const anchoredReport = `${track}#prose-h1`;
+
+async function openOutlineAnchor(app: Awaited<ReturnType<typeof nativeFixture>>) {
+  await openProject();
+  await app.at(track);
+  const reportIndex = app.router.history.location.state.__TSR_index;
+  await button('Track actions').click();
+  await page.getByRole('menuitem', { name: 'Outline', exact: true }).click();
+  await app.at(outline);
+  await button('Project result').click();
+  await app.at(anchoredReport);
+  expect(app.router.history.location.state.__TSR_index).toBe(reportIndex + 2);
+  return reportIndex;
+}
+
+it.each(['continuous', 'fresh'] as const)('reaches the Report anchor by desktop Forward after a %s mount', async (mount) => {
   await page.viewport(390, 844);
   const app = await nativeFixture(area);
   try {
-    await openProject();
-    await app.at(track);
-    const reportIndex = app.router.history.location.state.__TSR_index;
-    await button('Track actions').click();
-    await page.getByRole('menuitem', { name: 'Outline', exact: true }).click();
-    await app.at(`${track}?panel=outline`);
-    await button('Project result').click();
-    const anchoredReport = `${track}#prose-h1`;
-    await app.at(anchoredReport);
-    expect(app.router.history.location.state.__TSR_index).toBe(reportIndex + 2);
-
+    const reportIndex = await openOutlineAnchor(app);
     await page.viewport(1280, 800);
     await page.getByRole('navigation', { name: 'Workspace' }).findElement();
-    app.host.history.back();
+    // Return to the original Report without normalizing the Outline on the way.
+    app.host.history.go(-2);
     await app.at(track);
-    expect(app.router.history.location.state.__TSR_index).toBe(reportIndex);
+    if (mount === 'fresh') {
+      app.remount();
+      await app.at(track);
+    }
+
+    app.host.history.forward();
+    await expect.poll(() => app.router.state.resolvedLocation?.state.__TSR_index).toBe(reportIndex + 1);
+    await app.at(track);
+    expect(app.router.history.location.state.__TSR_index).toBe(reportIndex + 1);
     app.host.history.forward();
     await app.at(anchoredReport);
     expect(app.router.history.location.state.__TSR_index).toBe(reportIndex + 2);
+  } finally { app.close(); }
+});
+
+it('keeps the current Outline entry when widening after mobile Forward', async () => {
+  await page.viewport(390, 844);
+  const app = await nativeFixture(area);
+  try {
+    const reportIndex = await openOutlineAnchor(app);
+    app.host.history.go(-2);
+    await app.at(track);
+    app.host.history.forward();
+    await app.at(outline);
+    await expect.element(page.getByRole('heading', { name: 'Outline', exact: true })).toBeVisible();
+
+    await page.viewport(1280, 800);
+    await app.at(track);
+    expect(app.router.history.location.state.__TSR_index).toBe(reportIndex + 1);
+    app.host.history.forward();
+    await app.at(anchoredReport);
   } finally { app.close(); }
 });

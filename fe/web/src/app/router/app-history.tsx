@@ -2,18 +2,24 @@ import { useRouter, useRouterState, type RouterHistory } from '@tanstack/react-r
 import { createContext, useCallback, useContext, useLayoutEffect, useRef, useSyncExternalStore, type ReactNode } from 'react';
 import { useState } from '../../ui/state/public.ts';
 
-export type AppEntry = Readonly<{ pathname: string; searchStr: string }>;
+export type AppEntry = Readonly<{ pathname: string; searchStr: string; hash: string }>;
 type ObservedEntry = { location: AppEntry; scrollTop: number; view?: unknown; returnFocus?: string };
 type HistoryAction = Parameters<Parameters<RouterHistory['subscribe']>[0]>[0]['action']['type'];
 type Snapshot = Readonly<{
   canGoBack: boolean;
+  backSteps: number;
   previousEntry: AppEntry | null;
   lastAction: HistoryAction | null;
 }>;
 
-const INITIAL: Snapshot = Object.freeze({ canGoBack: false, previousEntry: null, lastAction: null });
+const INITIAL: Snapshot = Object.freeze({ canGoBack: false, backSteps: 0, previousEntry: null, lastAction: null });
 const emptySnapshot = () => INITIAL;
 const noSubscribe = () => () => {};
+
+function sameEntry(first: AppEntry | undefined, second: AppEntry): boolean {
+  return first !== undefined && first.pathname === second.pathname
+    && first.searchStr === second.searchStr && first.hash === second.hash;
+}
 
 /** The router owns navigation. This mount-local observer remembers which
  * entries the app has seen, along with their mobile scroll positions. */
@@ -34,15 +40,18 @@ export function createAppHistory(history: RouterHistory, readEntry: (location: R
         }
       }
       const observed = entries.get(index)?.location;
-      if (observed?.pathname !== entry.pathname || observed.searchStr !== entry.searchStr) {
+      if (!sameEntry(observed, entry)) {
         entries.set(index, { location: entry, scrollTop: 0 });
       }
       current = index;
       floor = Math.min(floor, current);
-      const canGoBack = current > floor && history.canGoBack();
+      let previous = current - 1;
+      while (previous >= floor && sameEntry(entries.get(previous)?.location, entry)) previous--;
+      const backSteps = previous >= floor && history.canGoBack() ? current - previous : 0;
       snapshot = {
-        canGoBack,
-        previousEntry: canGoBack ? entries.get(current - 1)?.location ?? null : null,
+        canGoBack: backSteps > 0,
+        backSteps,
+        previousEntry: backSteps > 0 ? entries.get(previous)?.location ?? null : null,
         lastAction: action.type,
       };
       for (const listener of listeners) listener();
@@ -52,12 +61,6 @@ export function createAppHistory(history: RouterHistory, readEntry: (location: R
       return () => { listeners.delete(listener); };
     },
     snapshot: () => snapshot,
-    continueForward: () => {
-      // Browser history length includes entries outside this mounted app.
-      if (snapshot.lastAction !== 'FORWARD' || ![...entries.keys()].some((index) => index > current)) return false;
-      history.forward();
-      return true;
-    },
     stepsBackOutOf: (predicate: (entry: AppEntry) => boolean) => {
       if (!snapshot.canGoBack) return 0;
       for (let index = current; index >= floor; index--) {
@@ -90,8 +93,8 @@ const AppHistoryContext = createContext<ReturnType<typeof createAppHistory> | nu
 export function AppHistoryProvider({ children }: { children: ReactNode }) {
   const router = useRouter();
   const [stack] = useState(() => createAppHistory(router.history as RouterHistory, (location) => {
-    const { pathname, searchStr } = router.parseLocation(location);
-    return { pathname, searchStr };
+    const { pathname, searchStr, hash } = router.parseLocation(location);
+    return { pathname, searchStr, hash };
   }));
   useLayoutEffect(() => stack.observe(), [stack]);
   return <AppHistoryContext.Provider value={stack}>{children}</AppHistoryContext.Provider>;
