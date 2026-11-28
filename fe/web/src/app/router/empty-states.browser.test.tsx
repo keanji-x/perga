@@ -121,6 +121,30 @@ it.each(['report', 'flow'] as const)('hands the centered Lead conversation to th
   await expect.element(drawer.getByRole('combobox', { name: 'Message', exact: true })).toHaveTextContent(followUp);
 });
 
+it('wraps an unbroken empty Track title within the centered composer column', async () => {
+  await page.viewport(1440, 900);
+  const title = '0123456789abcdef'.repeat(6);
+  const lead = fixtureSession('project-lead', 'project', { title: 'Lead', isLead: true });
+  const track = fixtureTrack('project', { areaId: 'project-area', title, leadSessionId: lead.id });
+  renderDailyFixture({ initial: '/track/project', reply: request => {
+    if (request.path === '/api/v1/tracks/project') return sessionReply(fixtureSnapshot(track, [lead]));
+    if (request.path.startsWith('/api/v1/sessions/project-lead/items?')) return sessionReply(sessionPage(lead));
+    return undefined;
+  } });
+
+  const stage = page.getByRole('region', { name: 'Lead', exact: true });
+  const heading = stage.getByRole('heading', { name: title, exact: true });
+  const message = stage.getByRole('combobox', { name: 'Message', exact: true });
+  await expect.element(heading).toBeVisible();
+  await expect.element(message).toBeVisible();
+  await settle();
+
+  const headingElement = heading.element();
+  const composer = message.element().closest('[data-nc-composer]')!;
+  expect(headingElement.getBoundingClientRect().right).toBeLessThanOrEqual(composer.getBoundingClientRect().right);
+  expect(headingElement.scrollWidth).toBeLessThanOrEqual(headingElement.clientWidth);
+});
+
 it('opens secondary conversations in a closable drawer on an empty Track', async () => {
   await page.viewport(1440, 900);
   const lead = fixtureSession('project-lead', 'project', { title: 'Lead', isLead: true });

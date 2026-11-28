@@ -41,16 +41,20 @@ it('places the Area in the desktop page header while keeping the composer masthe
   expect(getComputedStyle(send).backgroundColor).not.toBe(neutral);
   for (const size of [22, 30]) {
     heading.style.fontSize = `${size}px`;
-    expect(mark.getBoundingClientRect().height).toBeCloseTo(size, 1);
-    expect(mark.getBoundingClientRect().width).toBeCloseTo(size, 1);
+    expect(mark.getBoundingClientRect().height).toBeCloseTo(1.35 * size, 1);
+    expect(mark.getBoundingClientRect().width).toBeCloseTo(1.35 * size, 1);
   }
+  heading.style.removeProperty('font-size');
   heading.style.inlineSize = '180px';
   const iconBox = mark.getBoundingClientRect();
   const range = document.createRange();
   range.selectNode(heading.lastChild!);
-  const textBox = range.getClientRects()[0];
+  const textBoxes = range.getClientRects();
+  expect(textBoxes.length).toBeGreaterThan(1);
+  const textBox = textBoxes[0];
   expect(iconBox.top).toBeLessThan(textBox.bottom);
   expect(iconBox.bottom).toBeGreaterThan(textBox.top);
+  heading.style.removeProperty('inline-size');
   await page.viewport(390, 800);
   expect(getComputedStyle(header!).display).toBe('none');
   expect(screen.queryByRole('button', { name: 'Area: Work' })).toBeNull();
