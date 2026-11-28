@@ -19,14 +19,6 @@
     border-block-start-color: currentColor;
     border-inline-end-color: currentColor;
   }
-  /* Approved contextual motion is opt-in; ordinary running markers keep the ring. */
-  .motion {
-    inline-size: var(--glyph);
-    block-size: var(--glyph);
-    border: 0;
-    animation: none;
-    color: var(--text-3);
-  }
   @keyframes activity-turn { to { rotate: 360deg; } }
   @media (prefers-reduced-motion: reduce) {
     .working { animation: none; }

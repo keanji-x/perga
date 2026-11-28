@@ -51,10 +51,6 @@
     color: var(--text-3);
   }
 
-  /* Preserve the vendor's spinner slot and dimensions; hide its internal track/rotor
-     nodes while keeping our portalled execution mark painted. */
-  .group [role='progressbar'] > :not([data-nc-motion]) { display: none; }
-
   /* Summary and detail disclosures share the column's trailing edge. The
      vendor's expanded summary label otherwise wraps beside its fixed icons. */
   .group[role='group'] > [aria-expanded] > span:last-child {

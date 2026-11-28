@@ -1,6 +1,5 @@
 import { VisuallyHidden } from '@astryxdesign/core/VisuallyHidden';
 
-import { BrandMotion, type BrandMotionKind } from '../brand/motion.tsx';
 import styles from './activity-indicator.module.css';
 
 export type ActivityState = 'failed' | 'attention' | 'working' | 'unread' | 'quiet';
@@ -10,14 +9,11 @@ export type ActivityState = 'failed' | 'attention' | 'working' | 'unread' | 'qui
  * label and the marker is decorative. `spoken` is rendered visually hidden after the marker where no
  * owning control names the fact; this primitive is domain-free and may not import the vocabulary.
  */
-export function ActivityIndicator({ state, spoken = null, motion }: Readonly<{ state: ActivityState; spoken?: string | null; motion?: Exclude<BrandMotionKind, 'creation'> }>) {
+export function ActivityIndicator({ state, spoken = null }: Readonly<{ state: ActivityState; spoken?: string | null }>) {
   if (state === 'quiet') return null;
-  const hasMotion = state === 'working' && motion !== undefined;
   return (
     <>
-      <span className={`${styles.indicator} ${styles[state]} ${hasMotion ? styles.motion : ''}`} data-nc-activity={state} aria-hidden="true">
-        {hasMotion && <BrandMotion kind={motion} />}
-      </span>
+      <span className={`${styles.indicator} ${styles[state]}`} data-nc-activity={state} aria-hidden="true" />
       {spoken !== null && <VisuallyHidden>{spoken}</VisuallyHidden>}
     </>
   );

@@ -1,27 +1,18 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Perga">
-  <defs>
-    <linearGradient id="app-background" x1="0" y1="0" x2="1" y2="1">
-      <stop stop-color="#3c528d" />
-      <stop offset="1" stop-color="#6260aa" />
-    </linearGradient>
-  </defs>
-  <path d="M128 0H384C472 0 512 40 512 128V384C512 472 472 512 384 512H128C40 512 0 472 0 384V128C0 40 40 0 128 0Z" fill="#ffffff" />
-  <circle cx="256" cy="256" r="190" fill="url(#app-background)" />
-  <svg x="116" y="116" width="280" height="280" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 384 384" role="img" aria-labelledby="title description">
+  <rect x="2" y="2" width="508" height="508" rx="116" fill="#EFECE3" stroke="#D8D2C5" stroke-width="4" />
+  <svg x="48" y="48" width="416" height="416" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 384 384" role="img" aria-labelledby="title description">
   <title id="title">Perga mark</title>
-  <desc id="description">Three geometric tracks form a quiet, simplified snow crystal.</desc>
-
-  <g
-    fill="none"
-    stroke="#ffffff"
-    stroke-width="34"
-    stroke-linecap="round"
-    stroke-linejoin="round"
-  >
-    <path d="M 192 36 L 192 158 L 88 98" />
-    <path d="M 192 36 L 192 158 L 88 98" transform="rotate(120 192 192)" />
-    <path d="M 192 36 L 192 158 L 88 98" transform="rotate(240 192 192)" />
+  <desc id="description">A classical twin-columned Roman gateway with continuous double cornice evoking the ancient city of Perga.</desc>
+  <g fill="#1A1D24">
+    <path d="M50 54 H334 V70 H50 Z" />
+    <path d="M58 80 H326 V100 H58 Z" />
+    <path d="M62 110 H114 V122 H62 Z M270 110 H322 V122 H270 Z" />
+    <path d="M122 110 H262 V200 H252 A60 60 0 0 0 132 200 H122 Z" />
+    <path d="M114 208 H140 V218 H114 Z M244 208 H270 V218 H244 Z" />
+    <path d="M118 226 H136 V330 H118 Z M248 226 H266 V330 H248 Z" />
+    <path d="M72 132 H104 L110 256 H66 Z M280 132 H312 L318 256 H274 Z" />
+    <path d="M62 266 H112 V308 H62 Z M272 266 H322 V308 H272 Z" />
+    <path d="M52 318 H120 V330 H52 Z M264 318 H332 V330 H264 Z" />
   </g>
 </svg>
-
 </svg>

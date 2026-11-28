@@ -6,6 +6,8 @@ import '../../styles/entry.css';
 
 import { ActivityIndicator } from './public.tsx';
 
+declare module 'vitest/browser' { interface BrowserCommands { emulateReducedMotion(reduce: boolean): Promise<void> } }
+
 afterEach(() => {
   cleanup(); document.body.replaceChildren();
   delete document.documentElement.dataset.theme;
@@ -80,7 +82,6 @@ describe('activity indicator colours', () => {
 it('keeps the default working indicator as the original compact rotating ring', () => {
   const { container, unmount } = render(<ActivityIndicator state="working" />);
   const marker = container.querySelector<HTMLElement>('[data-nc-activity="working"]')!;
-  expect(marker.querySelector('[data-nc-motion]')).toBeNull();
   const style = getComputedStyle(marker);
   expect(marker.getBoundingClientRect().width).toBe(10);
   expect(marker.getBoundingClientRect().height).toBe(10);
@@ -91,16 +92,6 @@ it('keeps the default working indicator as the original compact rotating ring', 
   expect(marker.getAnimations()).toHaveLength(1);
   unmount();
   expect(marker.getAnimations()).toHaveLength(0);
-});
-
-it('uses a contextual motion only when explicitly requested', () => {
-  const { container } = render(<ActivityIndicator state="working" motion="thinking" />);
-  const marker = container.querySelector<HTMLElement>('[data-nc-activity="working"]')!;
-  expect(marker.querySelector('[data-nc-motion="thinking"]')).not.toBeNull();
-  const style = getComputedStyle(marker);
-  expect(style.animationName).toBe('none');
-  expect(style.borderTopWidth).toBe('0px');
-  expect(marker.getBoundingClientRect().width).toBe(Number.parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--glyph')));
 });
 
 it('keeps a visible static working mark and disposes the loop under reduced motion', async () => {
