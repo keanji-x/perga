@@ -707,10 +707,12 @@ describe('ChatThread’s exchange rail', () => {
     outer.remove();
   });
 
-  it('shows the first exchange immediately in the drawer seam', () => {
+  it('shows the drawer rail when a second exchange arrives', () => {
     const { outer, pane, seam } = drawerPane();
-    render(<ChatThread hasPendingMessages={false} canContinue={false} cards={{}} stalled={false} conversation={conversation()} turns={exchangeTurns(1)} />, { container: pane });
-    expect(railDots()).toHaveLength(1);
+    const { rerender } = render(<ChatThread hasPendingMessages={false} canContinue={false} cards={{}} stalled={false} conversation={conversation()} turns={exchangeTurns(1)} />, { container: pane });
+    expect(railDots()).toHaveLength(0);
+    rerender(<ChatThread hasPendingMessages={false} canContinue={false} cards={{}} stalled={false} conversation={conversation()} turns={exchangeTurns(2)} />);
+    expect(railDots()).toHaveLength(2);
     expect(seam.contains(railDots()[0])).toBe(true);
     expect(pane.querySelector('[data-nc-rail-track]')).toBeNull();
     outer.remove();
@@ -924,6 +926,17 @@ function fieldText(field: HTMLElement): string {
 }
 
 describe('ChatComposer', () => {
+  it('uses a placeholder for the available desktop hints and keeps the short mobile prompt', () => {
+    const onSend = vi.fn();
+    const mentionTrigger = { character: '@', searchSource: { search: () => [], bootstrap: () => [] }, onSelect: () => '' };
+    const { rerender } = render(<ChatComposer onSend={onSend} />);
+    expect(screen.getByText('Write a message, or type / for commands…')).toBeTruthy();
+    rerender(<ChatComposer onSend={onSend} mentionTrigger={mentionTrigger} />);
+    expect(screen.getByText('Write a message, @ to mention, or / for commands…')).toBeTruthy();
+    rerender(<ChatComposer onSend={onSend} mentionTrigger={mentionTrigger} layout="mobile" />);
+    expect(screen.getByText('Write a message…')).toBeTruthy();
+  });
+
   it('uses valid field ARIA when command triggers are added and removed', () => {
     const onSend = vi.fn();
     const onNewConversation = vi.fn();

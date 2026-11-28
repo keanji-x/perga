@@ -67,7 +67,7 @@ export function ChatEmpty({ working = false, children }: Readonly<{ working?: bo
 }
 
 function emptyConversationContent(working: boolean): EmptyStateSchema {
-  return { icon: working ? <ActivityIndicator state="working" /> : <Icon name="chat" />, title: working ? 'Organizing your thoughts' : 'Start a conversation', description: working ? 'Replies will appear here.' : 'Begin with a question, task, or idea.' };
+  return { icon: working ? <ActivityIndicator state="working" /> : <Icon name="chat" />, title: working ? 'Organizing your thoughts' : 'Start a conversation', description: working ? 'Replies will appear here.' : 'Describe a goal, type @ for templates or tracks, or / for commands.' };
 }
 
 export type ChatThreadProps = Readonly<{
@@ -559,6 +559,9 @@ export function ChatComposer({
     ...(hasCommands ? [commandTrigger] : []),
     ...(mentionTrigger === undefined ? [] : [mentionTrigger]),
   ], [hasCommands, commandTrigger, mentionTrigger]);
+  const composerPlaceholder = layout === 'mobile' ? 'Write a message…'
+    : mentionTrigger !== undefined ? 'Write a message, @ to mention, or / for commands…'
+    : 'Write a message, or type / for commands…';
 
   /** Hand one message to the caller. `stopShown` is not a reason to refuse: `POST /planner/input` queues the text behind the turn in flight. `disabled` is the router's "last POST has not settled". */
   const submit = () => {
@@ -662,7 +665,7 @@ export function ChatComposer({
           elevation="none"
           value={draft}
           onChange={setDraft}
-          placeholder={layout === 'mobile' ? 'Write a message…' : 'Write a message, or type / for commands…'}
+          placeholder={composerPlaceholder}
           isDisabled={disabled}
           isStopShown={stopShown}
           footerActions={layout === 'mobile'
@@ -712,7 +715,7 @@ export function ChatComposer({
               disabled={disabled}
               onFiles={onFiles}
               label="Message"
-              placeholder={layout === 'mobile' ? 'Write a message…' : 'Write a message, or type / for commands…'}
+              placeholder={composerPlaceholder}
               /* No triggers where there is neither a command nor a mention: otherwise the field becomes an `aria-expanded="false"` combobox that can never expand. */
               triggers={triggers.length === 0 ? undefined : triggers}
               /* The `@` source waits out keystrokes itself (`MENTION_SEARCH_DELAY_MS` says why Astryx's own delay must be off); the `/` source is synchronous and never delayed. */

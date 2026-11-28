@@ -1,7 +1,8 @@
 import { prepareReportDocument } from '../../features/report/document/preparation.ts';
 import { conversationCardId } from './conversation-read-data.ts';
 import { sessionInput,sessionPage } from './conversation-session-data.ts';
-import { fixtureBootstrap,fixtureSession,fixtureSnapshot,fixtureTrack } from './session-contract-fixture.ts';
+import { fixtureBootstrap,fixtureReport,fixtureSession,fixtureSnapshot,fixtureTrack } from './session-contract-fixture.ts';
+import { queryKeys } from '../providers/query-keys.ts';
 // @vitest-environment jsdom
 // A track that starts with no name and no words in it: creating lands in the planner
 // conversation with the caret in it, and clearing the title is a request, not a cancel.
@@ -53,6 +54,7 @@ function setup(options: Options = {}) {
   const created = options.created ?? track;
   const createdSessions = options.createdSessions ?? sessions;
   const gate = { createdDetailFails: options.createdDetailFails ?? false };
+  const published = new Set<string>();
   const details = new Map<string, { track: typeof TRACK; sessions: readonly ReturnType<typeof fixtureSession>[] }>([
     [track.id, { track, sessions }],
     [created.id, { track: created, sessions: createdSessions }],
@@ -80,7 +82,8 @@ function setup(options: Options = {}) {
         if (detail.track.id === created.id && created.id !== track.id && gate.createdDetailFails) {
           return Promise.resolve({ status: 500, statusText: 'Server Error', body: {} });
         }
-        return Promise.resolve(ok(fixtureSnapshot(detail.track, [...detail.sessions])));
+        return Promise.resolve(ok(fixtureSnapshot(detail.track, [...detail.sessions],
+          published.has(detail.track.id) ? fixtureReport('# Initial plan', 2) : fixtureReport())));
       }
       if (request.path.startsWith('/api/v1/bootstrap')) return Promise.resolve(ok(fixtureBootstrap()));
       if (request.method === 'POST' && request.path.endsWith('/messages')) {
@@ -115,6 +118,11 @@ function setup(options: Options = {}) {
       if (detail !== undefined) details.set(trackId, { track: detail.track, sessions: next });
     },
     client,
+    publishReport: async (trackId: string) => {
+      published.add(trackId);
+      await act(() => client.invalidateQueries({ queryKey: queryKeys.trackDetail(trackId) }));
+      await screen.findByRole('heading', { name: 'Initial plan' });
+    },
   };
 }
 
@@ -164,7 +172,7 @@ describe('creating a track lands in its planner conversation', () => {
   it('opens the planner conversation with the caret in the composer', async () => {
     setup();
     await createATrack();
-    await screen.findByRole('complementary', { name: 'Planner chat' });
+    await screen.findByRole('region', { name: 'Lead' });
     await waitFor(() => { expect(document.activeElement).toBe(messageField()); });
   });
 
@@ -178,16 +186,14 @@ describe('creating a track lands in its planner conversation', () => {
     await createATrackFromTheRail();
 
     await waitFor(() => { expect(router.state.location.pathname.endsWith('/track/w2')).toBe(true); });
-    /* The drawer lives in `TrackRouteBody`, keyed by track, so a drawer open on this
-           page is this track's own. */
-    await screen.findByRole('complementary', { name: 'Planner chat' });
+    await screen.findByRole('region', { name: 'Lead' });
     await waitFor(() => { expect(document.activeElement).toBe(messageField()); });
   });
 
   /* The detail read fails, so the body that would redeem the intent never mounts;
    * a later visit is a new history entry and the mark is not on it. */
   it('does not open on a later visit when the landing never reached the track', async () => {
-    const { router, gate } = setup({
+    const { router, gate, publishReport } = setup({
       created: OTHER_TRACK, createdSessions: [OTHER_PLANNER_SESSION], createdDetailFails: true,
     });
     await createATrack();
@@ -198,7 +204,8 @@ describe('creating a track lands in its planner conversation', () => {
 
     gate.createdDetailFails = false;
     await goToTrack(router, 'w2');
-    await screen.findByRole('button', { name: 'Rename track' });
+    await screen.findByRole('region', { name: 'Lead' });
+    await publishReport('w2');
     expect(screen.queryByRole('complementary', { name: 'Planner chat' })).toBeNull();
   });
 
@@ -206,7 +213,7 @@ describe('creating a track lands in its planner conversation', () => {
    * never redeemed, so this time the conversation opens. Chosen semantics: the
    * mark belongs to the entry and expires only by being redeemed. */
   it('opens the conversation when Back returns to the entry whose landing had failed', async () => {
-    const { router, gate } = setup({
+    const { router, gate, publishReport } = setup({
       created: OTHER_TRACK, createdSessions: [OTHER_PLANNER_SESSION], createdDetailFails: true,
     });
     await createATrack();
@@ -223,14 +230,18 @@ describe('creating a track lands in its planner conversation', () => {
     });
 
     await waitFor(() => { expect(router.state.location.pathname.endsWith('/track/w2')).toBe(true); });
+    await screen.findByRole('region', { name: 'Lead' });
+    await publishReport('w2');
     await screen.findByRole('complementary', { name: 'Planner chat' });
   });
 
   /* One-shot: the intent is cleared as it is redeemed, so walking back into the
    * same track later is an ordinary visit. */
   it('does not re-open an explicitly closed conversation on a later visit to the same track', async () => {
-    const { router } = setup();
+    const { router, publishReport } = setup();
     await createATrack();
+    await screen.findByRole('region', { name: 'Lead' });
+    await publishReport('w1');
     await screen.findByRole('complementary', { name: 'Planner chat' });
 
     // Navigation remembers open drawers; an explicit close must still win on a later visit.
@@ -248,16 +259,15 @@ describe('creating a track lands in its planner conversation', () => {
    * mark does: the card arrives on a later read of the same entry, and the drawer
    * must still be shut. */
   it('opens nothing, and arms nothing, when the track has no planner card', async () => {
-    const { client, setSessionsOf } = setup({ sessions: [] });
+    const { client, publishReport, setSessionsOf } = setup({ sessions: [] });
     await createATrack();
     await screen.findByRole('button', { name: 'Rename track' });
     expect(screen.queryByRole('complementary', { name: 'Planner chat' })).toBeNull();
 
     setSessionsOf('w1', [PLANNER_SESSION]);
     await act(async () => { await client.invalidateQueries(); });
-    /* The row for the planner card is proof the second read landed, and the only
-           place `Planner chat` may appear. */
-    await screen.findByText('Planner chat');
+    await screen.findByRole('region', { name: 'Lead' });
+    await publishReport('w1');
     expect(screen.queryByRole('complementary', { name: 'Planner chat' })).toBeNull();
   });
 });

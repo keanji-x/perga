@@ -63,6 +63,7 @@
   }
 
   .addTargetPill {
+    white-space: nowrap;
     border: var(--space-px) dashed var(--hairline-strong);
     background: transparent;
     color: var(--text-2);

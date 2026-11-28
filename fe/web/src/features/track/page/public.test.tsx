@@ -619,8 +619,12 @@ describe('TrackPage card inventory', () => {
     expect(container.querySelector('[data-nc-mobile-page]')?.getAttribute('data-nc-mobile-page')).toBe('closed');
   });
 
-  it('says the track has no cards yet when the list is empty', () => {
+  it('folds the empty Workbench and describes it when expanded', async () => {
     renderPage({ cards: [] });
+    const workbench = screen.getByRole('button', { name: 'Workbench' });
+    expect(workbench.getAttribute('aria-expanded')).toBe('false');
+    expect(screen.queryByText('No tools yet')).toBeNull();
+    await userEvent.click(workbench);
     expect(screen.getByText('No tools yet')).toBeTruthy();
   });
 

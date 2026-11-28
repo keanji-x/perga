@@ -19,7 +19,7 @@ function Form({ search, onSubmit, submitBlocked = false }: {
   submitBlocked?: boolean;
 }) {
   const mentionTrigger = useMentionTrigger(search);
-  return <NewTrackForm mentionTrigger={mentionTrigger} submitting={false} error={null}
+  return <NewTrackForm area={{ id: 'work', name: 'Work' }} mentionTrigger={mentionTrigger} submitting={false} error={null}
     initialCwd={null} submitBlocked={submitBlocked}
     listDirectory={vi.fn(() => Promise.resolve({ path: '/', parent: null, entries: [] }))} onSubmit={onSubmit} />;
 }

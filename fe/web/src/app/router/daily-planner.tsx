@@ -22,23 +22,15 @@ import { PanelCard } from '../../ui/panel-card/public.tsx';
 import { useState } from '../../ui/state/public.ts';
 import { runOperation } from '../providers/query-operation.ts';
 import { trackDetailQueryOptions } from '../providers/track-queries.ts';
+import type { CenteredStagePresentation } from './centered-stage.tsx';
 
 type DailyCenterView = 'assistant' | 'changes' | 'supervisor';
-
-export type DailyCenterPresentation = Readonly<{
-  title: string;
-  presented: boolean;
-  onOpenAssistant: () => void;
-  footerPrefix: ReactNode;
-  emptyIntroduction?: ReactNode;
-  render: (assistant: ReactNode) => ReactNode;
-}>;
 
 export function DailyTodayRoute({ transport, unauthorized, selectedDate, onOpenTrack, onSelectDate, renderTrack, }: Readonly<{
   transport: ApiTransportPort; unauthorized: UnauthorizedChannel; selectedDate?: string;
   onOpenTrack: (trackId: string) => void;
   onSelectDate?: (date: string | undefined) => void;
-  renderTrack: (detail: TrackAggregateSnapshotDto, evidence: ReactNode, panelContent: ReactNode, intro: ReactNode, supervisor: ReactNode, center?: DailyCenterPresentation) => ReactNode;
+  renderTrack: (detail: TrackAggregateSnapshotDto, evidence: ReactNode, panelContent: ReactNode, intro: ReactNode, supervisor: ReactNode, center?: CenteredStagePresentation) => ReactNode;
 }>) {
   const [view, setView] = useState<DailyCenterView>('assistant');
   const previousView = useRef(view);

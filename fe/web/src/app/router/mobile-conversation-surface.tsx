@@ -17,6 +17,8 @@ export type EmbeddedConversationPresentation = Readonly<{
   footerPrefix?: ReactNode;
   emptyIntroduction?: ReactNode;
   label: string;
+  defaultRowOnly?: boolean;
+  retainDefaultOnSend?: boolean;
 }>;
 
 export function ConversationSurface({ embedded, centerEmptyComposer = false, mobileSheet, contextTitle, mobileSubtitle, titleActions, sessionHeader, focusInput = false, ...props }: ComponentProps<typeof Drawer> & Readonly<{ embedded?: EmbeddedConversationPresentation; centerEmptyComposer?: boolean; mobileSheet: boolean; contextTitle?: string; mobileSubtitle?: string; sessionHeader?: ReactNode; focusInput?: boolean }>) {

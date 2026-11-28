@@ -105,7 +105,7 @@ export function useConversationPane(
   unauthorized: UnauthorizedChannel,
   source: ConversationPanelSource,
   target: ReturnType<typeof useConversationPaneTarget>,
-  options?: { onPresent?: () => void; embedded?: EmbeddedConversationPresentation; onArchive?: (cardId: string, archived: boolean) => Promise<void>; onTerminal?: () => void; retainCompanion?: boolean; companionVisible?: boolean; reportComposer?: Readonly<{ ready: boolean; returnLabel: string; conversationId: string | null }>; showSideCommand?: boolean; stacked?: boolean; ownedCardIds?: readonly string[]; showTrack?: boolean; resizable?: boolean; inline?: boolean; slotId?: string; enabled?: boolean; presented?: boolean;
+  options?: { onPresent?: () => void; onAdmittedMessage?: (id: string) => void; embedded?: EmbeddedConversationPresentation; onArchive?: (cardId: string, archived: boolean) => Promise<void>; onTerminal?: () => void; retainCompanion?: boolean; companionVisible?: boolean; reportComposer?: Readonly<{ ready: boolean; returnLabel: string; conversationId: string | null }>; showSideCommand?: boolean; stacked?: boolean; ownedCardIds?: readonly string[]; showTrack?: boolean; resizable?: boolean; inline?: boolean; slotId?: string; enabled?: boolean; presented?: boolean;
     workspace?: ConversationPanelOptions['workspace']; mobileSheet?: boolean; allowNewConversation?: boolean; title?: string;
     companion?: (group: PaneResizeGroup) => React.ReactNode; onSide?: (source: Conversation, entries: readonly TranscriptEntry[], question: string) => void | boolean },
 ) {
@@ -349,8 +349,11 @@ export function useConversationPane(
     if (sent !== null) setSubmission((previous) => ({ conversationId: args[0], request: (previous?.request ?? 0) + 1 }));
     return sent;
   });
-  const sendText = useCommittedCallback(existingId, (text: string) => open !== null
-    && (submitMessage(open.id, text, attachments.items, true) !== null));
+  const sendText = useCommittedCallback(existingId, (text: string) => {
+    if (open === null || submitMessage(open.id, text, attachments.items, true) === null) return false;
+    options?.onAdmittedMessage?.(open.id);
+    return true;
+  });
   const regenerateMessage = useCommittedCallback(existingId, async (message: ConversationTurn) => {
     if (open !== null) await submitMessage(open.id, message.text, message.attachments ?? [], false);
   });

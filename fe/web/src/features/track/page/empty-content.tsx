@@ -7,7 +7,7 @@ export function inventoryEmptyContent(key: RowModuleView['key'], title: string):
   switch (key) {
     case 'work':
     case 'tasks':
-      return { icon: <Icon name="tasks" />, title, description: 'Tasks declared in the report appear here.' };
+      return { icon: <Icon name="tasks" />, title, description: 'Tasks scheduled in Flow appear here.' };
     case 'temporary':
       return { icon: <Icon name="terminal" />, title, description: 'Temporary terminals appear here.' };
     case 'cards':

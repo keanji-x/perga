@@ -93,7 +93,7 @@ it.each([
       const moreElement = width === 390 ? more.element() : null;
       if (keyboard) { folder.element().focus(); await userEvent.keyboard('{Enter}'); }
       else await folder.click();
-      await page.getByRole('menuitem', { name: /^Others…/ }).click();
+      await page.getByRole('menuitem', { name: /^Change folder…/ }).click();
       await expect.element(dialog).toBeVisible();
       // A visible body portal alone proves nothing about native top-layer hits.
       await expect.poll(() => document.querySelectorAll(':popover-open').length).toBe(0);
@@ -131,7 +131,7 @@ it.each([
     }
     if (width === 390) await more.click();
     await folder.click();
-    await page.getByRole('menuitem', { name: /^Others…/ }).click();
+    await page.getByRole('menuitem', { name: /^Change folder…/ }).click();
     await expect.element(field).toHaveFocus();
     // Closing after a layout transition must choose the currently reachable control.
     await page.viewport(width === 390 ? 1280 : 390, 844);
@@ -174,7 +174,7 @@ it.each([1440, 390].flatMap(width => ['Cancel', 'Select this directory'].flatMap
   await expect.element(editor).toHaveFocus();
   if (width === 390) await more.click();
   await page.getByRole('button', { name: /^Repo:/ }).click();
-  await page.getByRole('menuitem', { name: /^Others…/ }).click();
+  await page.getByRole('menuitem', { name: /^Change folder…/ }).click();
   await expect.element(page.getByRole('combobox', { name: 'Directory path' })).toHaveValue('/repo/');
   await expect.element(page.getByRole('combobox', { name: 'Directory path' })).toHaveFocus();
   await new Promise(requestAnimationFrame);
@@ -207,7 +207,7 @@ it.each([1440, 390].flatMap(width => ['refold', 'reopen', 'route', 'modal', 'unm
     const field = page.getByRole('combobox', { name: 'Directory path' });
     if (width === 390) await more.click();
     await folder.click();
-    await page.getByRole('menuitem', { name: /^Others…/ }).click();
+    await page.getByRole('menuitem', { name: /^Change folder…/ }).click();
     await expect.element(field).toHaveValue('/repo/');
     await expect.element(field).toHaveFocus();
     await new Promise(requestAnimationFrame);
@@ -223,7 +223,7 @@ it.each([1440, 390].flatMap(width => ['refold', 'reopen', 'route', 'modal', 'unm
       } else if (edge === 'reopen') {
         if (width === 390) await more.click();
         await folder.click();
-        await page.getByRole('menuitem', { name: /^Others…/ }).click();
+        await page.getByRole('menuitem', { name: /^Change folder…/ }).click();
         // Opening focus itself is frame-scheduled; explicitly choose the new
         // modal's input before releasing either presentation's pending work.
         field.element().focus();

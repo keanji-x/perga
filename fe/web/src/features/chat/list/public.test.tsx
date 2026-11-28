@@ -83,7 +83,7 @@ describe('conversation rows read activity.cards, not session state', () => {
 });
 
 
-it('distinguishes Planner and Assistant by their declared role even when their names are swapped', () => {
+it('distinguishes Lead and Assistant by their declared role even when their names are swapped', () => {
   const onOpen = vi.fn();
   const planner = conversation({ id: 'planner', title: 'Assistant', kind: 'agent', isLead: true });
   const assistant = conversation({ id: 'assistant', title: 'Planner', kind: 'agent' });
@@ -91,8 +91,8 @@ it('distinguishes Planner and Assistant by their declared role even when their n
   const plannerRow = screen.getByRole('button', { name: 'Conversation Assistant' });
   const assistantRow = screen.getByRole('button', { name: 'Conversation Planner' });
   const description = (row: HTMLElement) => document.getElementById(row.getAttribute('aria-describedby') ?? '')?.textContent;
-  expect(description(plannerRow)).toBe('Planner');
-  expect(plannerRow.title).toBe('Planner: Assistant');
+  expect(description(plannerRow)).toBe('Lead');
+  expect(plannerRow.title).toBe('Lead: Assistant');
   expect(assistantRow.title).toBe('Assistant: Planner');
   expect(description(assistantRow)).toBe('Assistant');
   expect(plannerRow.querySelector('svg')?.innerHTML).not.toBe(assistantRow.querySelector('svg')?.innerHTML);

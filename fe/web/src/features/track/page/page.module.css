@@ -291,6 +291,8 @@
     min-block-size: 0;
   }
 
+  .contentWithoutPanel { grid-template-columns: minmax(0, 1fr); }
+
   .fileSurface {
     position: absolute;
     inset: 0;
@@ -322,6 +324,7 @@
     flex-direction: column;
   }
 
+  .contentWithoutPanel ~ .fileSurface { inset-inline-end: 0; }
 
   /*
    * The panel **stays** while the document scrolls under it.
@@ -352,6 +355,7 @@
     overflow: auto;
   }
 
+  .contentWithoutPanel > .panel { display: none; }
   .compactPanelContent {
     flex: 0 0 auto;
     min-inline-size: 0;

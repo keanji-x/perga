@@ -180,7 +180,7 @@ it.each([900, 600])('optically centers the empty perga Today composer and pins i
   // Compare against the real New Track surface under the same production tokens.
   const referenceProps = { submitting: false, error: null, initialCwd: null,
     listDirectory: vi.fn(() => Promise.resolve({ path: '/', parent: null, entries: [] })), onSubmit: vi.fn() };
-  const reference = render(<NewTrackForm {...referenceProps} />);
+  const reference = render(<NewTrackForm area={{ id: 'work', name: 'Work' }} {...referenceProps} />);
   const referenceField = page.getByRole('textbox', { name: 'What this track should do', exact: true }).element() as HTMLElement;
   const referenceBody = referenceField.closest('[data-density] > *')!;
   referenceField.blur();
@@ -195,7 +195,7 @@ it.each([900, 600])('optically centers the empty perga Today composer and pins i
   await expect.poll(() => getComputedStyle(referenceBody).boxShadow).toMatch(/^oklch.*0px 0px 0px 2px$/);
   const referenceFocus = getComputedStyle(referenceBody).boxShadow;
   expect(referenceFocus).not.toBe(referenceShadow);
-  reference.rerender(<NewTrackForm {...referenceProps} submitting />);
+  reference.rerender(<NewTrackForm area={{ id: 'work', name: 'Work' }} {...referenceProps} submitting />);
   expect(referenceField.getAttribute('contenteditable')).toBe('false');
   await expect.poll(() => getComputedStyle(referenceBody).boxShadow).toBe(referenceShadow);
   reference.unmount();
@@ -208,7 +208,7 @@ it.each([900, 600])('optically centers the empty perga Today composer and pins i
   await expect.element(field).toBeVisible();
   await expect.poll(() => assistant.element().hasAttribute('data-nc-centered-footer')).toBe(true);
   expect(assistant.getByText('Start a conversation', { exact: true }).query()).toBeNull();
-  expect(assistant.getByText('Begin with a question, task, or idea.', { exact: true }).query()).toBeNull();
+  expect(assistant.getByText('Describe a goal, type @ for templates or tracks, or / for commands.', { exact: true }).query()).toBeNull();
   const host = assistant.element();
   const footer = host.children[2]; // EmbeddedReadingHost's masthead and composer.
   const box = host.getBoundingClientRect();
@@ -399,9 +399,10 @@ it.each(['', '   \n  ', '# 今日计划\n\nA populated daily report.'])('shows p
     await expect.poll(() => document.querySelector('[data-nc-centered-footer]') !== null).toBe(true);
     await expect.poll(() => page.getByRole('region', { name: 'Track report' }).query()?.getAttribute('aria-busy')).not.toBe('true');
     expect(report.query()).toBeNull();
-    expect(page.getByText('Progress lives here', { exact: true }).query()).toBeNull();
+    expect(page.getByText('This page becomes your living report', { exact: true }).query()).toBeNull();
     expect(page.getByRole('region', { name: 'Track report' }).query()).toBeNull();
     expect(page.getByRole('region', { name: 'Blank daily report' }).query()).toBeNull();
+    await expect.element(page.getByRole('heading', { name: 'No tasks yet', exact: true })).not.toBeInTheDocument();
   }
 });
 

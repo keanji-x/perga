@@ -26,7 +26,7 @@ export const ExchangeNavigation = memo(function ExchangeNavigation({ turns, fram
     const next = exchanges.map(exchange => exchange.id);
     setExchangeIds(previous => previous.length === next.length && previous.every((id, index) => id === next[index]) ? previous : next);
   }, [exchanges]);
-  const shown = exchanges.length > 0 && seam !== null;
+  const shown = exchanges.length > 1 && seam !== null;
   const [active, setActive] = useState<string | null>(null);
   const readActive = useRef<() => void>(() => {});
 

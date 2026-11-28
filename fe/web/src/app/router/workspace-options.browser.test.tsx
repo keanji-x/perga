@@ -49,7 +49,7 @@ it('renders Host workspace choices and requires a new choice when the selected m
   await page.getByRole('menuitem', { name: /Git from Host/ }).click();
 
   await repo.click();
-  await page.getByRole('menuitem', { name: /^Others…/ }).click();
+  await page.getByRole('menuitem', { name: /^Change folder…/ }).click();
   await page.getByRole('option', { name: 'other' }).click();
   await page.getByRole('button', { name: 'Select this directory' }).click();
   await expect.element(create).toBeDisabled();

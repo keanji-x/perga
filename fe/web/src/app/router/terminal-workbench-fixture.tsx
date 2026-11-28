@@ -13,7 +13,7 @@ import { ThemeProvider } from '../theme/public.tsx';
 import { conversationCardId } from './conversation-read-data.ts';
 import { sessionItem,sessionPage } from './conversation-session-data.ts';
 import { createAppRouter } from './public.tsx';
-import { fixtureBootstrap,fixtureSession,fixtureSnapshot,fixtureTrack } from './session-contract-fixture.ts';
+import { fixtureBootstrap,fixtureReport,fixtureSession,fixtureSnapshot,fixtureTrack } from './session-contract-fixture.ts';
 import { bootTestCardRuntime } from './test-card-runtime.ts';
 
 export function terminalCard(id: string, presentation: TerminalPresentation, trackId = 'workbench'): TerminalPanelItem {
@@ -46,7 +46,7 @@ export function setupWorkbench({ cards: initial = [] as PanelItem[], defer = fal
     if (path === '/api/v1/areas/area/tracks?includeClosed=true') return ok([track]);
     if (path === '/api/settings') return ok({});
     if (path === '/api/v1/tracks/other') return ok(fixtureSnapshot({ ...track, id: 'other', title: 'Other track' }));
-    if (path === '/api/v1/tracks/workbench') return ok(fixtureSnapshot(track, rows));
+    if (path === '/api/v1/tracks/workbench') return ok(fixtureSnapshot(track, rows, fixtureReport('# Workbench notes')));
     if (secondaryReads !== null && ['/api/v1/tracks/workbench/report', '/api/v1/tracks/workbench/sessions', '/api/tracks/workbench/backlinks'].includes(path)) await secondaryReads;
     if (path === '/api/v1/tracks/workbench/report') return ok({ taskDiagnostics: [] });
     if (path === '/api/v1/tracks/workbench/sessions') return ok(rows);

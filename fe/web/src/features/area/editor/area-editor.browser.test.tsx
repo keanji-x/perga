@@ -8,7 +8,7 @@ import { AreaEditorForm } from './public.tsx';
 
 afterEach(cleanup);
 
-it('renders the creation folder and both actions as one compact borderless row', async () => {
+it('uses a quiet caption and a full-width folder row above the creation actions', async () => {
   await page.viewport(800, 600);
   render(
     <Dialog purpose="form" origin={{ kind: 'surface-center' }} open title="New area" onClose={vi.fn()}>
@@ -29,20 +29,21 @@ it('renders the creation folder and both actions as one compact borderless row',
   expect(screen.queryByRole('button', { name: /template|isolation/i })).toBeNull();
   const input = screen.getByRole<HTMLInputElement>('textbox', { name: 'Name' });
   expect(input.placeholder).toBe('Area name');
-  const titleRect = screen.getByText('New area').getBoundingClientRect();
-  const inputRect = input.getBoundingClientRect();
-  expect(inputRect.top - titleRect.bottom).toBeLessThan(24);
+  const subtitle = screen.getByText('Group related tracks under a shared workspace.');
+  const title = screen.getByText('New area', { exact: true });
+  expect(parseFloat(getComputedStyle(subtitle).fontSize)).toBeLessThan(parseFloat(getComputedStyle(title).fontSize));
+  expect(subtitle.getBoundingClientRect().bottom).toBeLessThan(input.getBoundingClientRect().top);
   const folder = screen.getByRole('button', { name: 'Default folder: Perga workspace' });
-  for (const pill of [folder]) {
-    const style = getComputedStyle(pill);
-    expect(style.borderStyle).toBe('none');
-    expect(style.borderWidth).toBe('0px');
-    expect(style.outlineStyle).toBe('none');
-  }
+  expect(getComputedStyle(folder).borderWidth).toBe('1px');
+  expect(folder.textContent).toContain('Default folder · Managed by Perga');
+  expect(folder.textContent).toContain('Choose');
   const folderBox = folder.getBoundingClientRect();
   const cancelBox = screen.getByRole('button', { name: 'Cancel' }).getBoundingClientRect();
   const createBox = screen.getByRole('button', { name: 'Create area' }).getBoundingClientRect();
-  const centers = [folderBox, cancelBox, createBox]
+  expect(folderBox.left).toBeCloseTo(input.form!.getBoundingClientRect().left);
+  expect(folderBox.right).toBeCloseTo(createBox.right);
+  expect(folderBox.bottom).toBeLessThan(cancelBox.top);
+  const centers = [cancelBox, createBox]
     .map((box) => box.top + box.height / 2);
   expect(Math.max(...centers) - Math.min(...centers)).toBeLessThan(1);
 });

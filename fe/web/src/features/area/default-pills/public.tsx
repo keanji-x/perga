@@ -5,7 +5,7 @@ import { Icon as AstryxIcon } from '@astryxdesign/core/Icon';
 import { Icon } from '../../../ui/icon/public.tsx';
 import styles from './default-pills.module.css';
 
-function basenameOf(path: string): string {
+export function basenameOf(path: string): string {
   const trimmed = path.replace(/\/+$/, '');
   return trimmed === '' ? '/' : trimmed.slice(trimmed.lastIndexOf('/') + 1);
 }

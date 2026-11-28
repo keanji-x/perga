@@ -1,20 +1,44 @@
+import '../../../styles/entry.css';
 import { cleanup, render, screen } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
 import { page } from 'vitest/browser';
 
-import '../../../styles/entry.css';
 import { NewTrackForm } from './public.tsx';
 
 afterEach(cleanup);
 
-it('sizes the homepage mark with the title font and keeps it on the first text line', async () => {
+it('places the Area in the desktop page header while keeping the composer masthead aligned', async () => {
   await page.viewport(1100, 800);
-  const { container } = render(<NewTrackForm submitting={false} error={null}
+  const work = { id: 'work', name: 'Work' };
+  const { container } = render(<NewTrackForm area={work} areas={[work, { id: 'other', name: 'Other' }]} onSelectArea={vi.fn()}
+    submitting={false} error={null}
     initialCwd={null}
     onSubmit={vi.fn()}
     listDirectory={vi.fn(() => Promise.resolve({ path: '/', parent: null, entries: [] }))} />);
   const heading = screen.getByRole('heading', { name: 'What would you like to work on?' });
+  const switcher = screen.getByRole('button', { name: 'Area: Work' });
+  const header = switcher.closest('header');
+  expect(header).not.toBeNull();
+  expect(container.firstElementChild!.firstElementChild).toBe(header);
+  expect(header!.matches('[data-nc-header-rows="1"]')).toBe(true);
+  const headerBox = header!.getBoundingClientRect();
+  expect(headerBox.bottom).toBeLessThan(heading.getBoundingClientRect().top);
+  expect(switcher.getBoundingClientRect().right).toBeLessThan(heading.getBoundingClientRect().left);
+  expect(Math.abs(switcher.querySelector('svg')!.getBoundingClientRect().left - header!.firstElementChild!.getBoundingClientRect().left)).toBeLessThanOrEqual(1);
   const mark = container.querySelector<SVGSVGElement>('[data-nc-brand-mark]')!.parentElement!;
+  const composer = container.querySelector('[data-nc-new-track-message]')!;
+  const left = mark.getBoundingClientRect().left;
+  expect(Math.abs(composer.getBoundingClientRect().left - left)).toBeLessThan(1);
+  const send = screen.getByRole('button', { name: 'Create track' });
+  const chip = document.createElement('span');
+  chip.style.backgroundColor = 'var(--surface-chip)';
+  container.append(chip);
+  const neutral = getComputedStyle(chip).backgroundColor;
+  chip.remove();
+  expect(getComputedStyle(send).backgroundColor).toBe(neutral);
+  await page.getByRole('textbox', { name: 'What this track should do' }).fill('Plan the work');
+  await expect.element(page.elementLocator(send)).toBeEnabled();
+  expect(getComputedStyle(send).backgroundColor).not.toBe(neutral);
   for (const size of [22, 30]) {
     heading.style.fontSize = `${size}px`;
     expect(mark.getBoundingClientRect().height).toBeCloseTo(size, 1);
@@ -28,5 +52,8 @@ it('sizes the homepage mark with the title font and keeps it on the first text l
   expect(iconBox.top).toBeLessThan(textBox.bottom);
   expect(iconBox.bottom).toBeGreaterThan(textBox.top);
   await page.viewport(390, 800);
+  expect(getComputedStyle(header!).display).toBe('none');
+  expect(screen.queryByRole('button', { name: 'Area: Work' })).toBeNull();
   expect(mark.getBoundingClientRect().height).toBe(0);
+  expect(Math.abs(composer.getBoundingClientRect().left - heading.getBoundingClientRect().left)).toBeLessThan(1);
 });

@@ -55,8 +55,11 @@ export type TrackPageProps = Readonly<{
   onOpenOriginTrack?: (trackId: string) => void;
   /** Fill the reading column with an app-owned interactive surface. */
   fillReading?: boolean;
+  /** Give a standalone reading surface the complete workspace width. */
+  hideEmptyPanel?: boolean;
   /** Render the desktop title as an editorial masthead in the reading column (viewport-invariant). */
   articleMasthead?: boolean;
+  isReportEmpty?: boolean;
   /** Daily planning surfaces have no checkout isolation to explain. */
   showWorkspaceIsolation?: boolean;
   /** Visit-scoped choice supplied by the route owner, independently for each Track. */
@@ -165,7 +168,7 @@ function rowModule(view: TrackPageView, key: RowModuleView['key']): RowModuleVie
   return found;
 }
 
-export function TrackPage({ fillReading = false, articleMasthead = !fillReading, showWorkspaceIsolation = true, mobileReportIntro, mobileChatComposer,
+export function TrackPage({ isReportEmpty = false, fillReading = false, hideEmptyPanel = false, articleMasthead = !fillReading, showWorkspaceIsolation = true, mobileReportIntro, mobileChatComposer,
   panelHeader, panelContent, progressDisclosure, track, cards, existingCardIds, tasks, openableCards, outlineItems = [], report, conversationList, conversationContextList,
   shareLinks, onShareTrack, onStartConversation, onMarkAllConversationsRead, conversationOpen = false, mobilePanelObscured, unread = false, onReply,
   cardsAction, recentFiles, onOpenCard, onDeleteCard, onSetWorkbench, onOpenTask, onOpenOutline, board, onCloseBoard, fileViewer,
@@ -262,8 +265,10 @@ export function TrackPage({ fillReading = false, articleMasthead = !fillReading,
   const panelView = deriveTrackPageView({ cards, existingCardIds, tasks, activity: track, openableCards });
   const desktopConversations = conversationContextList ?? conversationList;
   const hasDesktopConversations = desktopConversations !== undefined || onStartConversation !== undefined;
+  const [workbenchOpen, setWorkbenchOpen] = useState<boolean>();
   const desktopPainter = makeDesktopPainter({ cardsAction, onOpenCard, onOpenTask, onDeleteCard, onSetWorkbench, progressDisclosure,
-    suppressEmpty: desktopConversations !== undefined || onStartConversation !== undefined || recentFiles !== undefined,
+    workbenchDisclosure: { open: workbenchOpen, onOpenChange: setWorkbenchOpen },
+    suppressEmpty: hasDesktopConversations || recentFiles !== undefined || panelHeader !== undefined,
   });
   const [desktopActionsOpen, setDesktopActionsOpen] = useState(false);
   const [pageScrolled, setPageScrolled] = useState(false);
@@ -372,7 +377,7 @@ export function TrackPage({ fillReading = false, articleMasthead = !fillReading,
   const usesMastheadHost = articleMasthead;
   const showArticleMasthead = !compactViewport && usesMastheadHost;
   const isDirectFolder = showWorkspaceIsolation && track.isolation === 'none';
-  const folioDate = formatFolioDate(track.updatedAt);
+  const folioDate = isReportEmpty ? null : formatFolioDate(track.updatedAt);
   const folioDir = directoryLeafOf(track.cwd, track.id);
   const folioParts = [
     ...(isDirectFolder ? [folioDir ?? NO_ISOLATION_LABEL] : folioDir !== null ? [folioDir] : []),
@@ -553,7 +558,7 @@ export function TrackPage({ fillReading = false, articleMasthead = !fillReading,
 
       <div className={styles.workspace}>
       <div
-        className={styles.content}
+        className={hideEmptyPanel ? `${styles.content} ${styles.contentWithoutPanel}` : styles.content}
         aria-hidden={boardOpen ? true : undefined}
         inert={boardOpen}
       >

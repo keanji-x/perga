@@ -1,20 +1,27 @@
 @layer features {
-  .guide {
+  .sheet {
+    max-inline-size: var(--document-measure);
+    margin-inline-start: var(--document-start);
+    padding-block: var(--space-6) var(--space-8);
+    overflow-wrap: anywhere;
+  }
+
+  .title {
     display: flex;
-    flex-direction: column;
-    flex: 1 1 auto;
-    min-block-size: 0;
-    inline-size: 100%;
-    padding-block: var(--space-4) var(--space-8);
-    text-align: start;
+    align-items: center;
+    gap: var(--space-2);
+    margin: 0;
+    color: var(--text);
+    font: var(--type-chapter);
+    letter-spacing: var(--type-chapter-tracking);
   }
 
-  /* Airier vertical rhythm for the static blank-track intro and Flow sample. */
-  .guide > article {
-    row-gap: var(--space-6);
+  .description {
+    max-inline-size: var(--measure-prose);
+    margin: var(--space-2) 0 0;
+    color: var(--text-2);
+    font: var(--type-reading);
   }
 
-  .guide > article li + li {
-    margin-block-start: var(--space-3);
-  }
+  .start { margin-block-start: var(--space-4); }
 }

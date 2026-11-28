@@ -31,6 +31,11 @@ export function useConversationPanel(
   const declaredDefault = options.defaultRowId === null ? null : { kind: 'row' as const, id: options.defaultRowId };
   const logicalTarget = savedTarget[0] ?? declaredDefault;
   const surfaceTarget = savedTarget[0] ?? (options.embedded?.active ? logicalTarget : null);
+  const embedded = options.embedded === undefined ? undefined : {
+    ...options.embedded,
+    active: options.embedded.active && (!options.embedded.defaultRowOnly
+      || (surfaceTarget?.kind === 'row' && surfaceTarget.id === options.defaultRowId)),
+  };
   const mainTarget = [surfaceTarget, savedTarget[1]] as const;
   const parentId = logicalTarget?.kind === 'row' ? logicalTarget.id : null;
   const lastMainRow = useRef<string | null>(null);
@@ -64,8 +69,11 @@ export function useConversationPanel(
   const sidePresented = sideAvailable && !terminalVisible;
   const side = useConversationPane(transport, unauthorized, source, sideTarget,
     { ...options, embedded: undefined, reportComposer: undefined, ownedCardIds, onTerminal: options.terminal?.workbench.reveal, inline: true, slotId: sideSlot, enabled: sideAvailable, presented: sidePresented });
+  // The first turn from the empty Track stage should follow its report into the drawer.
+  const onAdmittedMessage = embedded?.retainDefaultOnSend && savedTarget[0] === null
+    ? (id: string) => savedTarget[1]({ kind: 'row', id }) : undefined;
   const main = useConversationPane(transport, unauthorized, source, mainTarget,
-    { ...options, reportComposer: mainReportComposer, ownedCardIds, stacked: true, showSideCommand: !compact, retainCompanion: options.terminal !== undefined, onTerminal: options.terminal?.workbench.reveal,
+    { ...options, embedded, onAdmittedMessage, reportComposer: mainReportComposer, ownedCardIds, stacked: true, showSideCommand: !compact, retainCompanion: options.terminal !== undefined, onTerminal: options.terminal?.workbench.reveal,
       companionVisible: terminalVisible || (sidePresented && side.isOpen),
       companion: options.terminal !== undefined
         ? (group) => <TerminalCompanion workbench={options.terminal!.workbench} visible={companionVisible}
@@ -90,5 +98,5 @@ export function useConversationPanel(
         sideTarget[1]({ kind: 'draft' });
       },
     });
-  return main;
+  return { ...main, embeddedActive: embedded?.active === true };
 }

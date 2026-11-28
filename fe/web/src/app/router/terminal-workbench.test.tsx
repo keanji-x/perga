@@ -63,7 +63,7 @@ it('deduplicates pending commands and retains the host when hidden', async () =>
   const fixture = setupWorkbench({ defer: true });
   const mount = mountedHost;
   const entry = await terminalCommandInput();
-  expect(screen.getByRole('region', { name: 'Workbench' }).textContent).toContain('No tools yet');
+  expect(screen.getByRole('button', { name: 'Workbench' }).getAttribute('aria-expanded')).toBe('false');
   expect(screen.getByRole('region', { name: 'Conversations' }).contains(entry)).toBe(false);
   await openTerminalCommand(); await openTerminalCommand();
   await waitFor(() => expect(fixture.posts()).toHaveLength(1));

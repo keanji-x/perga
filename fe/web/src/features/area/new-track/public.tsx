@@ -7,7 +7,10 @@ import { useEffect, useMemo, useRef, useId, type ReactNode } from 'react';
 import { Banner } from '@astryxdesign/core/Banner';
 import { Button } from '@astryxdesign/core/Button';
 import { ChatComposer, type ChatComposerTrigger } from '@astryxdesign/core/Chat';
+import { DropdownMenu, DropdownMenuItem } from '@astryxdesign/core/DropdownMenu';
 import { Icon } from '@astryxdesign/core/Icon';
+import { Text } from '@astryxdesign/core/Text';
+import { Icon as PergaIcon } from '../../../ui/icon/public.tsx';
 import { VStack } from '@astryxdesign/core/VStack';
 import { ComposerInputField } from '../../../ui/composer-attachments/public.tsx';
 
@@ -15,6 +18,7 @@ import type { CreateExecutionTargetBody, ExecutionTargetDto } from '../../../../
 import { isBlankForKernel } from '../../../../../core/domain/track.ts';
 import { DirectoryPicker } from '../directory-picker.tsx';
 import type { ListDirectory } from '../../../ui/directory-browser/public.tsx';
+import { PageHeader } from '../../../ui/page-header/public.tsx';
 import { useState } from '../../../ui/state/public.ts';
 import { triggerMenuKeyRoute } from '../../../ui/trigger-menu-keys/public.ts';
 import { CenteredComposerIntroduction } from '../../../ui/drawer/centered-composer-introduction.tsx';
@@ -38,7 +42,12 @@ export type NewTrackDraft = Readonly<{
   workspaceOptionId?: string;
 }>;
 
+type AreaIdentity = Readonly<{ id: string; name: string }>;
+
 export type NewTrackFormProps = Readonly<{
+  area: AreaIdentity;
+  areas?: readonly AreaIdentity[];
+  onSelectArea?: (areaId: string) => void;
   workspaceOptions?: Readonly<{
     cwd: string;
     targetId?: string;
@@ -86,8 +95,6 @@ export type NewTrackFormProps = Readonly<{
 /** The composer field's accessible name; hidden, not absent, since an unnamed textbox is unusable by screen reader. */
 const TASK_LABEL = 'What this track should do';
 
-const TASK_PLACEHOLDER = 'What should this track do?';
-
 export type NewTrackFormState = Readonly<{
   message: string;
   cwd: string;
@@ -98,7 +105,7 @@ export type NewTrackFormState = Readonly<{
 }>;
 
 export function NewTrackForm({
-  modelControls, attachButton, drawer, allowEmptyText = false, onFiles,
+  area, areas, onSelectArea, modelControls, attachButton, drawer, allowEmptyText = false, onFiles,
   submitting, error, readNotice, initialCwd,
   initialExecutionTargetId, executionTargets, listDirectory, listDirectoryForTarget, onCreateExecutionTarget, onSubmit,
   errorAction, initialDraft, onDraftChange, submitBlocked = false, locked = false, mentionTrigger,
@@ -117,6 +124,7 @@ export function NewTrackForm({
   const composerHostRef = useRef<HTMLDivElement | null>(null);
   /* One array per trigger: `useTriggerMenu` drops an open menu when the list changes identity. */
   const triggers = useMemo(() => mentionTrigger === undefined ? undefined : [mentionTrigger], [mentionTrigger]);
+  const placeholder = triggers === undefined ? 'What should this track do?' : 'What should this track do? Type @ for templates or tracks…';
   const folderId = `${fieldId}-folder`;
   const hasTargetPicker = executionTargets !== undefined || onCreateExecutionTarget !== undefined;
   const resolvedTargetLabel = executionTargetId !== 'local'
@@ -175,10 +183,31 @@ export function NewTrackForm({
     ? errorAction
     : undefined;
 
-  return (
-    <div className={centeredComposerPageClassName}>
-      <VStack gap={2} className={centeredComposerColumnClassName}>
+  const areaControl = areas !== undefined && areas.length > 1 && onSelectArea !== undefined ? (
+    <div className={styles.areaSwitcher}>
+      <DropdownMenu button={{
+        label: `Area: ${area.name}`,
+        children: <Text type="inherit" color="inherit" maxLines={1}>{area.name}</Text>,
+        variant: 'ghost',
+        size: 'sm',
+        icon: <PergaIcon name="folder" size="sm" />,
+      }}>
+        {areas.map(({ id, name }) => (
+          <DropdownMenuItem key={id} label={name}
+            endContent={id === area.id ? <Icon icon="check" size="sm" /> : undefined}
+            onClick={() => { if (id !== area.id) onSelectArea(id); }} />
+        ))}
+      </DropdownMenu>
+    </div>
+  ) : (
+    <span className={styles.areaLabel}>
+      <PergaIcon name="folder" size="sm" /><span>{area.name}</span>
+    </span>
+  );
 
+  const stage = (
+    <div className={`${centeredComposerPageClassName} ${styles.stage}`}>
+      <VStack gap={2} className={centeredComposerColumnClassName}>
         <CenteredComposerIntroduction title="What would you like to work on?" />
 
         <div
@@ -215,7 +244,7 @@ export function NewTrackForm({
             density="spacious"
             value={message}
             onChange={setMessage}
-            placeholder={TASK_PLACEHOLDER}
+            placeholder={placeholder}
             isDisabled={submitting}
             onSubmit={submit}
             {...(drawer === undefined ? {} : { drawer })}
@@ -224,7 +253,7 @@ export function NewTrackForm({
                 className={styles.editor}
                 inputClassName={styles.input}
                 label={TASK_LABEL}
-                placeholder={TASK_PLACEHOLDER}
+                placeholder={placeholder}
                 disabled={submitting || locked}
                 onFiles={onFiles}
                 /* The `@` source delays its own requests; Astryx's delay would let its per-keystroke probe search fire. */
@@ -300,6 +329,13 @@ export function NewTrackForm({
         )}
 
       </VStack>
+    </div>
+  );
+
+  return (
+    <div className={styles.page}>
+      <PageHeader className={styles.header} title={areaControl} />
+      {stage}
 
       {/* The picker as a real modal: shared `DirectoryPicker` owns the Dialog,
                 focus trap, Escape and click-outside. */}

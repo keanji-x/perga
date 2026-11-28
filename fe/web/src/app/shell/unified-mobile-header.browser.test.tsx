@@ -1,5 +1,6 @@
 import { fixtureBootstrap, fixtureReport, fixtureSession, fixtureSnapshot, fixtureTrack } from '../router/session-contract-fixture.ts';
 import { sessionPage } from '../router/conversation-session-data.ts';
+import { renderDailyFixture } from '../router/daily-planner-fixture.tsx';
 import { prepareReportDocument } from '../../features/report/document/preparation.ts';
 import '../../styles/entry.css';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -634,6 +635,43 @@ it.each(['outside', 'blur'])('does not reclaim title focus after it has moved %s
 
 
 describe('shared desktop primary header', () => {
+  it('aligns New Track with an empty Track and Today and uses the shell selector on mobile', async () => {
+    await page.viewport(1440, 900);
+    const lead = fixtureSession('project-lead', 'project', { title: 'Lead', isLead: true });
+    const project = fixtureTrack('project', { areaId: 'project-area', title: '', leadSessionId: lead.id });
+    const { router } = renderDailyFixture({
+      initial: '/area/project-area/new',
+      reply: (request) => {
+        if (request.path === '/api/v1/areas') return ok([
+          { ...AREA, id: 'project-area', name: 'Project' }, { ...AREA, id: 'other-area', name: 'Other', sortOrder: 2 },
+        ]);
+        if (request.path === '/api/v1/tracks/project') return ok(fixtureSnapshot(project, [lead]));
+        return undefined;
+      },
+    });
+    const titleRowPosition = () => {
+      const box = document.querySelector('main [data-nc-header-rows] > :first-child')!.getBoundingClientRect();
+      return { left: box.left, centerline: box.top + box.height / 2 };
+    };
+    const desktopSelector = page.getByRole('button', { name: 'Area: Project', exact: true });
+    await expect.element(desktopSelector).toBeVisible();
+    const newTrackPosition = titleRowPosition();
+
+    await router.navigate({ to: '/track/$trackId', params: { trackId: project.id } });
+    await expect.element(page.getByRole('region', { name: 'Lead', exact: true })).toBeVisible();
+    expect(titleRowPosition()).toEqual(newTrackPosition);
+
+    await router.navigate({ to: '/' });
+    await expect.element(page.getByRole('region', { name: 'Today Assistant', exact: true })).toBeVisible();
+    expect(titleRowPosition()).toEqual(newTrackPosition);
+
+    await page.viewport(390, 844);
+    await router.navigate({ to: '/area/$areaId/new', params: { areaId: 'project-area' } });
+    const mobileSelector = await page.getByRole('button', { name: 'Switch area, Project', exact: true }).findElement();
+    expect(mobileSelector.closest('[data-nc-workspace-header]')).not.toBeNull();
+    await expect.element(desktopSelector).not.toBeInTheDocument();
+  });
+
   it('keeps configured sidebar and page headers fixed during scrolling', async () => {
     await page.viewport(1440, 600);
     setup('/track/w1', AREA.name, () => undefined, 'Responsive mobile UI', { longLists: true, longReport: true, viewportRoot: true });

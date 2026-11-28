@@ -14,6 +14,7 @@ activeTracksOn,
 createTerminalOperation,
 createTrackOperation,
 hasFailed,isBlankForKernel,isClosed,
+isUntitledTrackTitle,
 isWorking,
 limitAreaTracks,
 needsUserAttention,
@@ -153,6 +154,14 @@ describe('open and closed', () => {
   it('falls back to a single untitled label', () => {
     expect(trackDisplayTitle('   ')).toBe(UNTITLED_TRACK_LABEL);
     expect(trackDisplayTitle(' Ship ')).toBe('Ship');
+  });
+
+  it('recognizes blank titles and the persisted untitled label', () => {
+    expect(isUntitledTrackTitle('')).toBe(true);
+    expect(isUntitledTrackTitle(' \t ')).toBe(true);
+    expect(isUntitledTrackTitle('Untitled Track')).toBe(true);
+    expect(isUntitledTrackTitle('  UNTITLED TRACK  ')).toBe(true);
+    expect(isUntitledTrackTitle('Untitled Track investigation')).toBe(false);
   });
 });
 

@@ -378,6 +378,7 @@
     opacity: 0;
   }
 
+  .areaNew.emptyAreaNew,
   .areaActions:has([aria-expanded='true']),
   .areaRowWrap:hover .areaActions,
   .areaRowWrap:focus-within .areaActions,

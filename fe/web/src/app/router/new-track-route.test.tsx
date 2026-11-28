@@ -2,7 +2,7 @@ import type { SessionItemDto } from '../../../../core/api/perga-v1.ts';
 import { prepareReportDocument } from '../../features/report/document/preparation.ts';
 import { conversationCardId } from './conversation-read-data.ts';
 import { sessionItem,sessionPage } from './conversation-session-data.ts';
-import { fixtureSession,fixtureSnapshot,fixtureTrack } from './session-contract-fixture.ts';
+import { fixtureReport,fixtureSession,fixtureSnapshot,fixtureTrack } from './session-contract-fixture.ts';
 // @vitest-environment jsdom
 // The new-track page: `/area/{id}/new`, reached from each Area group's `+`.
 import { onlineManager,QueryClient,QueryClientProvider } from '@tanstack/react-query';
@@ -43,8 +43,7 @@ function memoryStorage() {
 /* astryx puts `label` on the `contenteditable` as `aria-label`, so the composer resolves by label query. */
 const TASK_LABEL = 'What this track should do';
 
-const FOLDER_PLACEHOLDER = 'Perga workspace';
-const FOLDER_CHIP_NAME = `Repo: ${FOLDER_PLACEHOLDER}`;
+const FOLDER_CHIP_NAME = 'Workspace: Managed';
 
 
 const AREA = { id: 'c1', name: 'Work', color: '#5B8DEF', sortOrder: 1, kind: 'user', createdAtMs: 1, updatedAtMs: 1 };
@@ -433,8 +432,8 @@ describe('New track model selection', () => {
     await userEvent.type(screen.getByLabelText(TASK_LABEL), 'Plan with Claude');
     await userEvent.click(screen.getByRole('button', { name: 'Create track' }));
     await waitFor(() => expect(window.location.pathname).toBe(`/track/w-new`));
-    const drawer = await screen.findByRole('complementary', { name: 'Planner' });
-    const trigger = await within(drawer).findByRole('button', { name: 'Model: Default' });
+    const stage = await screen.findByRole('region', { name: 'Lead' });
+    const trigger = await within(stage).findByRole('button', { name: 'Model: Default' });
     await waitFor(() => expect(trigger.getAttribute('aria-disabled')).toBeNull());
     await userEvent.click(trigger);
     const dialog = await screen.findByRole('dialog');
@@ -526,14 +525,17 @@ describe('Track creation drafts survive navigation', () => {
     await findComposer();
     await userEvent.type(screen.getByLabelText(TASK_LABEL), 'Unsent intent');
 
-    await userEvent.click(screen.getByRole('button', { name: 'New track in Reading' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Area: Work' }));
+    await userEvent.click(await screen.findByRole('menuitem', { name: 'Reading' }));
     await findComposer();
     expect(composerText()).toBe('');
     await userEvent.type(screen.getByLabelText(TASK_LABEL), 'Other draft');
-    await userEvent.click(screen.getByRole('button', { name: 'New track in Work' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Area: Reading' }));
+    await userEvent.click(await screen.findByRole('menuitem', { name: 'Work' }));
     await findComposer();
     expect(composerText()).toBe('Unsent intent');
-    await userEvent.click(screen.getByRole('button', { name: 'New track in Reading' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Area: Work' }));
+    await userEvent.click(await screen.findByRole('menuitem', { name: 'Reading' }));
     await findComposer();
     expect(composerText()).toBe('Other draft');
   }, 15_000);
@@ -628,7 +630,7 @@ it.each([false, true])('opens the confirmed draft after reload with initial mess
   expect(screen.queryByText(UNCONFIRMED_TRACK)).toBeNull();
   await userEvent.click(openTrack);
   await waitFor(() => expect(window.location.pathname).toBe(`/track/w-new`));
-  await screen.findByRole('complementary', { name: 'Planner' });
+  await screen.findByRole('region', { name: 'Lead' });
   expect(submittedStorage.getItem(DRAFT_KEY)).toBeNull();
   await waitFor(() => expect(submittedStorage.getItem(FIRST_SEND_KEY)).toBeNull());
   expect(plannerInputTexts(reopened.sent)).toEqual(deliveredBeforeReload ? [] : [message]);
@@ -669,7 +671,7 @@ it.each([false, true])('recovers an unread first message after reload (still unr
 
   unreadable = false;
   await userEvent.click(screen.getByRole('button', { name: 'Open track' }));
-  await screen.findByRole('complementary', { name: 'Planner' });
+  await screen.findByRole('region', { name: 'Lead' });
   expect(window.location.pathname).toBe(`/track/w-new`);
   await waitFor(() => expect(plannerInputTexts(sent)).toEqual([message]));
   await waitFor(() => expect(getItem(FIRST_SEND_KEY)).toBeNull());
@@ -717,7 +719,7 @@ it('replays the create after reload when the first message could not be saved', 
   await screen.findByText(UNCONFIRMED_TRACK);
   expect(submittedStorage.getItem(DRAFT_KEY)).toBe(savedRequest);
   await userEvent.click(screen.getByRole('button', { name: 'Create track' }));
-  await screen.findByRole('complementary', { name: 'Planner' });
+  await screen.findByRole('region', { name: 'Lead' });
   expect(createdTrackRequests(reopened.sent)).toEqual([first]);
   await waitFor(() => expect(submittedStorage.getItem(FIRST_SEND_KEY)).toBeNull());
   expect(plannerInputTexts(reopened.sent)).toEqual([message]);
@@ -786,7 +788,7 @@ it.each(['one-shot reload', 'persistent reload', 'persistent in tab'] as const)(
         delivery = harness({ reload: true, submittedStorage });
       }
     }
-    await screen.findByRole('complementary', { name: 'Planner' });
+    await screen.findByRole('region', { name: 'Lead' });
     await waitFor(() => expect(plannerInputTexts(delivery.sent)).toEqual([message]));
     const sent = delivery === original ? original.sent : [...original.sent, ...delivery.sent];
     const sends = sent.filter(({ method, path }) => method === 'POST' && path === '/api/v1/sessions/card-planner/messages');
@@ -929,8 +931,8 @@ describe('the new-track page is a route reached from Area groups', () => {
     await userEvent.click(await screen.findByRole('button', { name: 'New track in Reading' }));
     // Exposed first: the absence checks below would pass vacuously against a page that never rendered.
     expect(await findComposer()).toBeTruthy();
-    expect(screen.queryByLabelText('Area')).toBeNull();
-    expect(screen.getByRole('button', { name: FOLDER_CHIP_NAME }).textContent).toBe(`Repo: ${FOLDER_PLACEHOLDER}`);
+    expect(screen.getByRole('button', { name: 'Area: Reading' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: FOLDER_CHIP_NAME }).textContent).toBe(FOLDER_CHIP_NAME);
     await userEvent.type(screen.getByLabelText(TASK_LABEL), 'Read it');
     await userEvent.click(await screen.findByRole('button', { name: 'Create track' }));
     await waitFor(() => expect(createdTrackBodies(sent)).toHaveLength(1));
@@ -1012,7 +1014,7 @@ describe('the new-track page is a route reached from Area groups', () => {
     await userEvent.type(screen.getByLabelText(TASK_LABEL), 'Read it');
 
     await userEvent.click(await screen.findByRole('button', { name: FOLDER_CHIP_NAME }));
-    await userEvent.click(await screen.findByRole('menuitem', { name: /^Others…/ }));
+    await userEvent.click(await screen.findByRole('menuitem', { name: /^Choose folder…/ }));
     expect(await screen.findByRole('dialog', { name: 'Choose a directory' })).toBeTruthy();
     await screen.findByDisplayValue('/srv/app/');
     await userEvent.click(await screen.findByRole('button', { name: 'Select this directory' }));
@@ -1138,8 +1140,7 @@ describe('the sentence is delivered by the create, and the track opens on it', (
     await userEvent.click(screen.getByRole('button', { name: 'Create track' }));
 
     await waitFor(() => expect(window.location.pathname).toBe(`/track/w-new`));
-    /* Named, not by bare role: the track page's panel column is a `complementary` too. */
-    expect(await screen.findByRole('complementary', { name: 'Planner' })).toBeTruthy();
+    expect(await screen.findByRole('region', { name: 'Lead' })).toBeTruthy();
   });
 
   /* The kernel writes the sentence to the transcript when the queue drains it, so the
@@ -1156,11 +1157,11 @@ describe('the sentence is delivered by the create, and the track opens on it', (
     await userEvent.click(screen.getByRole('button', { name: 'Create track' }));
 
     await waitFor(() => expect(window.location.pathname).toBe(`/track/w-new`));
-    const drawer = await screen.findByRole('complementary', { name: 'Planner' });
+    const stage = await screen.findByRole('region', { name: 'Lead' });
     await waitFor(() => expect(
-      [...drawer.querySelectorAll('[data-nc-entry="human:input-1"] [data-nc-turn="you"]')].map((turn) => turn.textContent),
+      [...stage.querySelectorAll('[data-nc-entry="human:input-1"] [data-nc-turn="you"]')].map((turn) => turn.textContent),
     ).toEqual(['Read it']));
-    expect(drawer.querySelector('[data-nc-thread-empty]')).toBeNull();
+    expect(stage.querySelector('[data-nc-thread-empty]')).toBeNull();
     const items = sent.filter((request) => request.path.includes('/items') && !request.path.includes('limit=1'));
     expect(items.length).toBeGreaterThan(0);
     expect(plannerInputTexts(sent)).toEqual(['Read it']);
@@ -1175,13 +1176,13 @@ describe('the sentence is delivered by the create, and the track opens on it', (
     await userEvent.click(screen.getByRole('button', { name: 'Create track' }));
 
     await waitFor(() => expect(window.location.pathname).toBe(`/track/w-new`));
-    const drawer = await screen.findByRole('complementary', { name: 'Planner' });
+    const stage = await screen.findByRole('region', { name: 'Lead' });
     await waitFor(() => expect(plannerInputTexts(sent)).toEqual(['Read it']));
-    await waitFor(() => expect(drawer.querySelector('[data-nc-thread-empty]')).toBeNull());
-    expect(drawer.querySelectorAll('[data-nc-turn="you"]')).toHaveLength(1);
+    await waitFor(() => expect(stage.querySelector('[data-nc-thread-empty]')).toBeNull());
+    expect(stage.querySelectorAll('[data-nc-turn="you"]')).toHaveLength(1);
   });
 
-  it('navigates before the track detail lands, and opens the drawer when it does', async () => {
+  it('navigates before the track detail lands, and shows the Lead stage when it does', async () => {
     let releaseDetail = (): void => undefined;
     const held = new Promise<void>((resolve) => { releaseDetail = () => { resolve(); }; });
     const { sent } = harness({ heldDetail: held });
@@ -1195,17 +1196,19 @@ describe('the sentence is delivered by the create, and the track opens on it', (
     await waitFor(() => { expect(window.location.pathname).toBe(`/track/w-new`); });
     expect(createdTrackBodies(sent)).toHaveLength(1);
     await findTrackPage();
-    expect(screen.queryByRole('complementary', { name: 'Planner' })).toBeNull();
+    expect(screen.queryByRole('region', { name: 'Lead' })).toBeNull();
 
     releaseDetail();
     await held;
-    expect(await screen.findByRole('complementary', { name: 'Planner' })).toBeTruthy();
+    expect(await screen.findByRole('region', { name: 'Lead' })).toBeTruthy();
   }, 10_000);
 
   it('does not yank the reader back when the create lands after they left', async () => {
     let releaseCreate = (): void => undefined;
     const held = new Promise<void>((resolve) => { releaseCreate = () => { resolve(); }; });
-    const { sent } = harness({ heldCreate: held });
+    const { sent } = harness({ heldCreate: held, trackDetail: { status: 200, statusText: 'OK', body: fixtureSnapshot(
+      TRACK_ROW, [fixtureSession('card-planner', TRACK_ROW.id, { title: 'Planner', isLead: true })], fixtureReport('# Initial plan'),
+    ) } });
 
     await userEvent.click(await screen.findByRole('button', { name: 'New track in Reading' }));
     await findComposer();
@@ -1222,9 +1225,7 @@ describe('the sentence is delivered by the create, and the track opens on it', (
 
     /* A leftover intent would surface on the next visit to the track, so that visit is the observable. */
     window.history.pushState({}, '', `/track/w-new`);
-    /* The title only renders once the track detail has landed, the same read the
-           drawer needs; asserting absence before that is vacuous. */
-    await screen.findByRole('button', { name: 'Rename track' });
+    await screen.findByRole('heading', { name: 'Initial plan' });
     expect(screen.queryByRole('complementary', { name: 'Planner' })).toBeNull();
   }, 10_000);
 

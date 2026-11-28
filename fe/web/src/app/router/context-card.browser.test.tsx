@@ -123,7 +123,7 @@ it('keeps empty groups hidden while retaining the single card-level creation act
   expect(root.querySelector('section[aria-label="Needs attention"]')).toBeNull();
   const creation = page.getByRole('button', { name: 'New', exact: true });
   await creation.click();
-  expect(root.querySelectorAll('button[aria-expanded="false"]')).toHaveLength(2);
+  expect(root.querySelectorAll('button[aria-expanded="false"]')).toHaveLength(3);
 });
 
 it('uses the existing unknown-kind fallback and preserves selection while focusing a conversation', async () => {
@@ -209,7 +209,8 @@ it('does not leave an empty work spacer between conversations and related conten
   const related = root.querySelector<HTMLElement>('section[aria-label="Related"]')!;
   const workbench = root.querySelector<HTMLElement>('section[aria-label="Workbench"]')!;
   expect(workbench.getBoundingClientRect().top - conversation.getBoundingClientRect().bottom).toBeCloseTo(12, 2);
-  expect(related.getBoundingClientRect().top - workbench.querySelector('[data-nc-card-inventory]')!.getBoundingClientRect().bottom).toBeCloseTo(12, 2);
+  expect(workbench.querySelector('button[aria-expanded]')?.getAttribute('aria-expanded')).toBe('false');
+  expect(related.getBoundingClientRect().top - workbench.getBoundingClientRect().bottom).toBeCloseTo(12, 2);
 });
 
 

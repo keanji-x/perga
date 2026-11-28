@@ -34,7 +34,7 @@ export function renderCommandFixture(options: Readonly<{
     if (request.path === '/api/v1/tracks/daily') return ok(fixtureSnapshot(track, [
       fixtureSession('daily-planner', track.id, { title: 'Daily Planner conversation', isLead: true }),
       fixtureSession('second-planner', track.id, { title: 'Other conversation' }),
-    ], options.reportBody === undefined ? undefined : fixtureReport(options.reportBody)));
+    ], fixtureReport(options.reportBody ?? '# Command track notes')));
     if (request.path.includes('/items?')) {
       const id = conversationCardId(request.path);
       return ok(sessionPage(fixtureSession(id, 'daily'), [sessionItem(id, 1, 'Ready for commands')], options.running ? sessionTurn(id) : null));
