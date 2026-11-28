@@ -23,9 +23,7 @@ if (daemon is null && foreground is null)
     if (args is ["auth", ..])
         return await AuthCliCommand.RunAsync(args, Console.In, Console.Out, Console.Error);
     if (HostCliCommand.Handles(args))
-        return HostDaemonCommand.Handles(args[0])
-            ? await HostDaemonCommand.RunWithConsoleCancellationAsync(args, HostCliEnvironment.FromProcess())
-            : await HostCliCommand.RunAsync(args, HostCliEnvironment.FromProcess());
+        return await HostDaemonCommand.RunWithConsoleCancellationAsync(args, HostCliEnvironment.FromProcess());
 }
 args = foreground?.HostArgs ?? args;
 

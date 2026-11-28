@@ -108,7 +108,7 @@ internal static class HostDaemonCommand
             catch (IOException ex) when (IsLockContention(ex))
             {
                 if (elapsed.Elapsed >= StartTimeout + StopTimeout)
-                    throw new IOException("Another Perga lifecycle command is still running.", ex);
+                    throw new LifecycleLockContentionException(ex);
                 await Task.Delay(PollInterval, ct).ConfigureAwait(false);
             }
         }
@@ -118,7 +118,16 @@ internal static class HostDaemonCommand
         ? (ex.HResult & 0xffff) is 32 or 33
         : ex.HResult is 11 or 35; // EAGAIN / EWOULDBLOCK on Linux and macOS.
 
-    public static HostDaemonState? TryGetRunningInstance(string dataDir, out bool stale)
+    internal sealed class LifecycleLockContentionException(IOException innerException) :
+        IOException("Another Perga lifecycle command is still running.", innerException);
+
+    public static HostDaemonState? PeekRunningInstance(string dataDir) =>
+        FindRunningInstance(dataDir, removeStale: false, out _);
+
+    public static HostDaemonState? TryGetRunningInstance(string dataDir, out bool stale) =>
+        FindRunningInstance(dataDir, removeStale: true, out stale);
+
+    private static HostDaemonState? FindRunningInstance(string dataDir, bool removeStale, out bool stale)
     {
         stale = false;
         var statePath = HostDaemonState.PathIn(dataDir);
@@ -128,8 +137,11 @@ internal static class HostDaemonCommand
         if (process is not null)
             return state;
 
-        state.RemoveIfOwned(statePath);
-        stale = true;
+        if (removeStale)
+        {
+            state.RemoveIfOwned(statePath);
+            stale = true;
+        }
         return null;
     }
 

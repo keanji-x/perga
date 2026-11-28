@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.IO.Pipelines;
 using System.Net;
 using System.Net.Sockets;
 using System.Runtime.InteropServices;
@@ -137,6 +138,23 @@ public sealed class HostDaemonTests : IDisposable
         Assert.Equal(1, status.Code);
         Assert.Contains("stale", status.Output);
         Assert.False(File.Exists(StatePath));
+    }
+
+    [Fact]
+    public async Task UninstallPreviewLeavesStaleStateAndDoesNotAcquireTheLifecycleLock()
+    {
+        Directory.CreateDirectory(Install);
+        File.WriteAllText(Path.Combine(Install, HostCliCommand.InstallMarker), "perga-install-v1\n");
+        var state = State(int.MaxValue, DateTime.UtcNow.Ticks, "Perga.Host");
+        state.Write(StatePathAfterCreatingData());
+
+        var preview = await InvokeAsync("uninstall");
+
+        Assert.Equal(1, preview.Code);
+        Assert.Contains("re-run with --yes", preview.Error);
+        Assert.DoesNotContain("currently running", preview.Output);
+        Assert.Equal(state.Pid, HostDaemonState.Read(StatePath)?.Pid);
+        Assert.False(File.Exists(Path.Combine(Data, "host.lifecycle.lock")));
     }
 
     [Theory]
@@ -421,8 +439,25 @@ public sealed class HostDaemonTests : IDisposable
         Assert.Equal(database, updated.DbPath);
         Assert.Equal(["--urls", old.Url.TrimEnd('/'), "--require-auth"], updated.HostArgs);
 
+        using var input = new StringReader("n\n");
+        using var output = new StringWriter();
+        using var error = new StringWriter();
+        var interactive = CliEnvironment(Variables(), output, error) with { IsInteractive = true, Input = input };
+        Assert.Equal(1, await HostCliCommand.RunAsync(["uninstall"], interactive));
+        Assert.Contains("Stop Perga and uninstall? [y/N] ", output.ToString());
+        Assert.DoesNotContain("Stopping Perga", output.ToString());
+        Assert.Equal(updated.Pid, HostDaemonState.Read(StatePath)?.Pid);
+
         var uninstall = await RunProcessAsync(["uninstall", "--yes"]);
         Assert.True(uninstall.Code == 0, uninstall.Error);
+        Assert.StartsWith(string.Join(Environment.NewLine,
+        [
+            $"Perga {updated.Version} is currently running (PID {updated.Pid}, {updated.Url}).",
+            "Uninstalling will stop this background instance first.",
+            "",
+            "This removes:"
+        ]), uninstall.Output);
+        Assert.Contains($"Stopping Perga (PID {updated.Pid})...{Environment.NewLine}Stopped Perga (PID {updated.Pid}).{Environment.NewLine}Removed Perga", uninstall.Output);
         Assert.False(Directory.Exists(Install));
         Assert.False(File.Exists(StatePath));
         Assert.True(File.Exists(updated.DbPath));
@@ -447,13 +482,86 @@ public sealed class HostDaemonTests : IDisposable
         await File.WriteAllTextAsync(installer, """printf 'unexpected\n' > "$PERGA_INSTALL_DIR/VERSION" """);
         var result = command == "upgrade"
             ? await RunProcessAsync(["upgrade"], new() { ["PERGA_INSTALLER_URL"] = new Uri(installer).AbsoluteUri })
-            : await RunProcessAsync(["uninstall", "--yes"]);
+            : await RunProcessAsync(["uninstall"]);
 
         Assert.Equal(1, result.Code);
         Assert.Contains("is inside the install directory", result.Error);
+        Assert.DoesNotContain("This removes:", result.Output);
         Assert.Equal("v0.1.2\n", await File.ReadAllTextAsync(Path.Combine(Install, "VERSION")));
         Assert.True(File.Exists(daemon.DbPath));
         Assert.Equal(daemon.Pid, HostDaemonState.Read(StatePath)?.Pid);
+    }
+
+    [Fact]
+    public async Task InteractiveUninstallRefusesToStopADaemonThatStartedAfterThePreview()
+    {
+        if (!IsUnix)
+            return;
+        PrepareInstall();
+        var launcher = Path.Combine(Bin, "perga");
+        await File.WriteAllTextAsync(launcher, $"DEFAULT_INSTALL_DIR='{HostCliCommand.PhysicalPath(Install)}'\n");
+        var confirmation = new Pipe();
+        using var input = new StreamReader(confirmation.Reader.AsStream());
+        await using var answer = new StreamWriter(confirmation.Writer.AsStream()) { AutoFlush = true };
+        using var output = new StringWriter();
+        using var error = new StringWriter();
+        var interactive = CliEnvironment(Variables(), output, error) with { IsInteractive = true, Input = input };
+
+        var uninstall = HostCliCommand.RunAsync(["uninstall"], interactive);
+        Assert.Contains("Continue? [y/N] ", output.ToString());
+
+        var start = await RunProcessAsync(["start", "--urls", DynamicUrl, "--no-open"]);
+        Assert.True(start.Code == 0, start.Error);
+        var state = Assert.IsType<HostDaemonState>(HostDaemonState.Read(StatePath));
+        await answer.WriteLineAsync("y");
+
+        Assert.Equal(1, await uninstall);
+        Assert.Contains($"error: Perga (PID {state.Pid}) started after confirmation.", error.ToString());
+        Assert.Contains("hint:  Run 'perga stop' or re-run 'perga uninstall'.", error.ToString());
+        Assert.DoesNotContain("Stopping Perga", output.ToString());
+        Assert.True(File.Exists(Path.Combine(Install, "Perga.Host")));
+        Assert.True(File.Exists(launcher));
+        Assert.Equal(state.Pid, HostDaemonState.Read(StatePath)?.Pid);
+        using var daemon = state.GetOwnedProcess();
+        Assert.NotNull(daemon);
+    }
+
+    [Fact]
+    public async Task UninstallReportsStopTimeoutAndKeepsTheInstallation()
+    {
+        if (!IsUnix)
+            return;
+        PrepareInstall();
+        var launcher = Path.Combine(Bin, "perga");
+        await File.WriteAllTextAsync(launcher, $"DEFAULT_INSTALL_DIR='{HostCliCommand.PhysicalPath(Install)}'\n");
+        var start = new ProcessStartInfo("/bin/sh")
+        {
+            ArgumentList = { "-c", "trap '' TERM; printf 'ready\\n'; read -r line" },
+            RedirectStandardInput = true,
+            RedirectStandardOutput = true
+        };
+        using var daemon = Process.Start(start)!;
+        try
+        {
+            Assert.Equal("ready", await daemon.StandardOutput.ReadLineAsync().WaitAsync(TimeSpan.FromSeconds(5)));
+            State(daemon.Id, daemon.StartTime.ToUniversalTime().Ticks, daemon.ProcessName).Write(StatePathAfterCreatingData());
+
+            var result = await RunProcessAsync(["uninstall", "--yes"]);
+
+            Assert.Equal(1, result.Code);
+            Assert.Contains($"Stopping Perga (PID {daemon.Id})...", result.Output);
+            Assert.DoesNotContain("Stopped Perga", result.Output);
+            Assert.Contains($"error: Perga (PID {daemon.Id}) did not stop within 10 seconds.", result.Error);
+            Assert.Contains($"hint:  Stop it first with 'perga stop' (or 'kill {daemon.Id}'), then re-run 'perga uninstall'.", result.Error);
+            Assert.True(File.Exists(Path.Combine(Install, "Perga.Host")));
+            Assert.True(File.Exists(launcher));
+            Assert.Equal(daemon.Id, HostDaemonState.Read(StatePath)?.Pid);
+        }
+        finally
+        {
+            daemon.StandardInput.Close();
+            await daemon.WaitForExitAsync();
+        }
     }
 
     private async Task CheckExplicitBrowserAsync(string url, string expectedOpenedUrl)
