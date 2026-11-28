@@ -21,9 +21,9 @@ declare module 'vitest/internal/browser' {
 afterEach(cleanup);
 const AREA = { id: 'c1', name: 'Product', color: '#5B8DEF', sortOrder: 1, folders: [], createdAtMs: 1, updatedAtMs: 1 };
 const ok = (body: unknown): ApiTransportResponse => ({ status: 200, statusText: 'OK', body });
-function setup(path: string, areaName = AREA.name, onRequest: (request: ApiRequest) => void = () => undefined, title = 'Responsive mobile UI', options: Readonly<{ trackAreaId?: string; failTracks?: boolean; failAreas?: boolean; longLists?: boolean; longReport?: boolean; viewportRoot?: boolean }> = {}) {
+function setup(path: string, areaName = AREA.name, onRequest: (request: ApiRequest) => void = () => undefined, title = 'Responsive mobile UI', options: Readonly<{ trackAreaId?: string; failTracks?: boolean; failAreas?: () => boolean; longLists?: boolean; longReport?: boolean; viewportRoot?: boolean }> = {}) {
   const track = fixtureTrack('w1', { areaId: options.trackAreaId ?? 'c1', title, leadSessionId: 'planner', workspaceDriver: 'vcs-workspace', workspaceSpec: { logicalRoot: '/tmp', worktreePath: '/tmp/.worktrees/w1' } });
-  const report = fixtureReport(options.longReport ? '# Findings\n\n' + Array.from({ length: 60 }, (_, index) => `Paragraph ${index + 1}: report content remains below the fixed workspace header.`).join('\n\n') : '## Findings\n\n[Source detail](perga://source/src_2c9e0a1b)');
+  const report = fixtureReport(options.longReport ? '# Findings\n\n' + Array.from({ length: 60 }, (_, index) => `Paragraph ${index + 1}: report content remains below the fixed workspace header.`).join('\n\n') + '\n\n[Source detail](perga://source/src_2c9e0a1b)' : '## Findings\n\n[Source detail](perga://source/src_2c9e0a1b)');
   const planner = fixtureSession('planner', 'w1', { title: 'Design review', isLead: true });
   const transport: ApiTransportPort = { send(request) {
     return Promise.resolve(reply(request));
@@ -38,7 +38,7 @@ function setup(path: string, areaName = AREA.name, onRequest: (request: ApiReque
       track.title = next;
       return ok(track);
     }
-    if ((options.failAreas && request.path === '/api/v1/areas') || (options.failTracks && request.path === '/api/v1/areas/c2/tracks?includeClosed=true')) return { status: 500, statusText: 'Server Error', body: { error: 'List unavailable' } };
+    if ((request.path === '/api/v1/areas' && options.failAreas?.()) || (options.failTracks && request.path === '/api/v1/areas/c2/tracks?includeClosed=true')) return { status: 500, statusText: 'Server Error', body: { error: 'List unavailable' } };
     if (request.path === '/api/v1/areas') return ok([...(options.longLists ? Array.from({ length: 18 }, (_, index) => ({ ...AREA, id: `extra${index}`, name: `Area ${index}`, sortOrder: index - 18 })) : []), { ...AREA, name: areaName }, { ...AREA, id: 'c2', name: 'Frontend' }]);
     if (request.path === '/api/v1/areas/c1/tracks?includeClosed=true') return ok([...(track.areaId === 'c1' ? [track] : []), { ...track, areaId: 'c1', id: 'w2', title: 'Another track' }, ...(options.longLists ? Array.from({ length: 25 }, (_, index) => ({ ...track, id: `long${index}`, title: `Long track ${index}` })) : [])]);
     if (request.path === '/api/v1/areas/c2/tracks?includeClosed=true') return ok([{ ...track, areaId: 'c2', id: 'w3', title: 'Frontend track' }]);
@@ -62,11 +62,105 @@ function setup(path: string, areaName = AREA.name, onRequest: (request: ApiReque
 }
 const settlePaint = () => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
 
+async function reportScrollport(): Promise<HTMLElement> {
+  await page.getByRole('heading', { name: 'Findings', exact: true }).findElement();
+  return document.querySelector<HTMLElement>('[data-nc-track-page]')!;
+}
+
+async function revealTrackSelector(title = 'Responsive mobile UI') {
+  const scrollport = await reportScrollport();
+  scrollport.scrollTop = scrollport.scrollHeight;
+  const selector = page.getByRole('button', { name: `Switch track, ${title}`, exact: true });
+  await expect.element(selector).toBeVisible();
+  return selector;
+}
+
+it('reveals the Track title only past the mobile document heading and opens the Area from both surfaces', async () => {
+  await page.viewport(390, 844);
+  const longTitle = 'Responsive mobile UI with a deliberately long report title that wraps on a phone';
+  const router = setup('/track/w1', AREA.name, undefined, longTitle, { longReport: true, viewportRoot: true });
+  const scrollport = await reportScrollport();
+  const shell = page.elementLocator(document.querySelector('[data-nc-workspace-header] header')!);
+  const docTitle = await page.getByRole('heading', { name: longTitle, exact: true, level: 1 }).findElement();
+  const docHeader = docTitle.closest('header')!;
+  const area = page.getByRole('button', { name: 'Open area Product', exact: true });
+  const areaButton = await area.findElement();
+  expect(docHeader).toContainElement(areaButton);
+  expect(docTitle.getBoundingClientRect().height).toBeGreaterThan(parseFloat(getComputedStyle(docTitle).lineHeight));
+  expect(docTitle.getBoundingClientRect().bottom).toBeLessThan(areaButton.getBoundingClientRect().top);
+  expect(docHeader.textContent).toMatch(/Product·Updated \d{4}-\d{2}-\d{2}/);
+  expect(getComputedStyle(areaButton).borderWidth).toBe('0px');
+  expect(getComputedStyle(areaButton).backgroundColor).toBe('rgba(0, 0, 0, 0)');
+  expect(getComputedStyle(docHeader).borderBottomWidth).toBe('1px');
+  const selector = shell.getByRole('button', { name: `Switch track, ${longTitle}`, exact: true });
+  const expectBlank = () => {
+    expect(selector.query()).toBeNull();
+    expect(shell.getByRole('button', { name: /^Switch area,/ }).query()).toBeNull();
+    expect(getComputedStyle(shell.element()).boxShadow).toBe('none');
+  };
+  expect(scrollport.scrollTop).toBe(0);
+  expectBlank();
+
+  await area.click();
+  await expect.element(page.getByRole('region', { name: 'Open tracks' })).toBeVisible();
+  await page.getByRole('button', { name: 'Back to Report' }).click();
+  await expect.element(area).toHaveFocus();
+  expect(router.state.location.pathname).toBe('/track/w1');
+
+  const boundary = docHeader.getBoundingClientRect().bottom - scrollport.getBoundingClientRect().top;
+  scrollport.scrollTop = boundary - 8;
+  await settlePaint();
+  expect(scrollport.scrollTop).toBeGreaterThan(0);
+  expectBlank();
+  scrollport.scrollTop = boundary + 8;
+  await expect.element(selector).toBeVisible();
+  expect(docHeader.getBoundingClientRect().bottom).toBeLessThan(scrollport.getBoundingClientRect().top);
+  expect([...document.querySelectorAll('[data-nc-page-title]')]).toEqual([selector.element()]);
+  const label = selector.element().querySelector('span')!;
+  expect(label.scrollWidth).toBeGreaterThan(label.clientWidth);
+  expect(getComputedStyle(label)).toMatchObject({ whiteSpace: 'nowrap', textOverflow: 'ellipsis' });
+  expect(getComputedStyle(shell.element()).boxShadow).not.toBe('none');
+
+  await selector.click();
+  await expect.element(page.getByRole('region', { name: 'Open tracks' })).toBeVisible();
+  await page.getByRole('button', { name: 'Back to Report' }).click();
+  await expect.element(selector).toHaveFocus();
+  await userEvent.keyboard('{F2}');
+  await expect.element(page.getByRole('textbox', { name: 'Track title' })).toHaveFocus();
+  await userEvent.keyboard('{Escape}');
+  await expect.element(selector).toHaveFocus();
+  scrollport.scrollTop = 0;
+  await settlePaint();
+  expectBlank();
+});
+
+it('uses the document title for focus restoration and F2 on a short mobile report', async () => {
+  await page.viewport(390, 844);
+  setup('/track/w1', AREA.name, undefined, undefined, { viewportRoot: true });
+  const scrollport = await reportScrollport();
+  const title = await page.getByRole('heading', { name: 'Responsive mobile UI', level: 1 }).findElement();
+  expect(scrollport.scrollTop).toBe(0);
+  expect(scrollport.scrollHeight).toBe(scrollport.clientHeight);
+  expect([...document.querySelectorAll('[data-nc-page-title]')]).toEqual([title]);
+  (title as HTMLElement).focus();
+  expect(document.activeElement).toBe(title);
+  await userEvent.keyboard('{F2}');
+  await expect.element(page.getByRole('textbox', { name: 'Track title' })).toHaveFocus();
+  await userEvent.keyboard('{Escape}');
+  await expect.element(page.elementLocator(title)).toHaveFocus();
+  expect(scrollport.scrollTop).toBe(0);
+
+  const chevron = page.getByRole('button', { name: 'Open area Product' }).element().querySelector('svg')!;
+  expect(getComputedStyle(chevron).transform).toBe('none');
+  scrollport.dir = 'rtl';
+  expect(getComputedStyle(chevron).transform).toBe('matrix(-1, 0, 0, 1, 0, 0)');
+});
+
 it('removes abandoned title containers when switching Tracks', async () => {
   await page.viewport(390, 844);
   const router = setup('/track/w1');
-  const selector = await page.getByRole('button', { name: 'Switch track, Product', exact: true }).findElement();
-  const host = selector.closest('[data-nc-workspace-header]')!;
+  const back = await page.getByRole('button', { name: 'Back to Focus' }).findElement();
+  const host = back.closest('[data-nc-workspace-header]')!;
   for (const id of ['w2', 'w1', 'w2', 'w1']) {
     await router.navigate({ to: '/track/$trackId', params: { trackId: id } });
     await page.getByRole('heading', { name: id === 'w1' ? 'Responsive mobile UI' : 'Another track', exact: true }).findElement();
@@ -228,11 +322,12 @@ describe('Unified mobile headers', () => {
     }
   });
 
-  it('reserves the mobile title for switching and preserves the desktop rename editor on mobile', async () => {
+  it('keeps the report top bar blank and preserves the desktop rename editor on mobile', async () => {
     await page.viewport(390, 844);
     setup('/track/w1');
-    await page.getByRole('button', { name: 'Switch track, Product', exact: true }).findElement();
+    await page.getByRole('button', { name: 'Open area Product', exact: true }).findElement();
     await expect.element(page.getByRole('button', { name: 'Track actions', exact: true })).toBeVisible();
+    expect(page.getByRole('button', { name: /^Switch track,/ }).query()).toBeNull();
     expect(page.getByRole('button', { name: 'Rename track', exact: true }).query()).toBeNull();
     await editTrack();
     const input = await page.getByRole('textbox', { name: 'Track title', exact: true }).findElement();
@@ -242,12 +337,12 @@ describe('Unified mobile headers', () => {
     await page.viewport(1280, 720);
   });
 
-  it('switches Tracks from the title and reserves renaming for the independent Edit button', async () => {
+  it('switches Tracks from the document Area button without starting a rename', async () => {
     await page.viewport(390, 844);
     const writes: ApiRequest[] = [];
     const router = setup('/track/w1', AREA.name, (request) => { if (request.method !== 'GET') writes.push(request); });
-    await page.getByRole('button', { name: /^Switch track,/ }).findElement();
-    const selector = page.getByRole('button', { name: 'Switch track, Product', exact: true });
+    await page.getByRole('button', { name: 'Open area Product', exact: true }).findElement();
+    const selector = page.getByRole('button', { name: 'Open area Product', exact: true });
     expect(selector.query()).not.toBeNull();
     await selector.click();
     expect(page.getByRole('textbox', { name: 'Track title', exact: true }).query()).toBeNull();
@@ -259,25 +354,42 @@ describe('Unified mobile headers', () => {
     const input = page.getByRole('textbox', { name: 'Track title', exact: true });
     await input.fill('Cancelled draft');
     await userEvent.keyboard('{Escape}');
-    await page.getByRole('button', { name: 'Switch track, Product', exact: true }).findElement();
+    await page.getByRole('button', { name: 'Open area Product', exact: true }).findElement();
     expect(writes).toEqual([]);
     await page.viewport(1280, 720);
   });
 
   it.each(['tracks', 'areas'])('uses the Track’s exact Area and exposes %s read failure with a dismissible menu', async (failure) => {
     await page.viewport(320, 844);
-    setup('/track/w1', AREA.name, () => undefined, 'Second Area track', { trackAreaId: 'c2', failTracks: failure === 'tracks', failAreas: failure === 'areas' });
-    const selector = page.getByRole('button', { name: failure === 'areas' ? 'Switch track, Second Area track' : 'Switch track, Frontend', exact: true });
-    await selector.click();
+    let areasUnavailable = failure === 'areas';
+    setup('/track/w1', AREA.name, undefined, 'Second Area track', {
+      trackAreaId: 'c2', failTracks: failure === 'tracks', failAreas: () => areasUnavailable, viewportRoot: true,
+    });
+    const scrollport = await reportScrollport();
+    expect(scrollport.scrollTop).toBe(0);
+    expect(scrollport.scrollHeight).toBe(scrollport.clientHeight);
+    const opener = await page.getByRole('button', {
+      name: failure === 'areas' ? 'Open workspace' : 'Open area Frontend', exact: true,
+    }).findElement();
+    if (failure === 'areas') expect(opener.textContent).toBe('Workspace');
+    await page.elementLocator(opener).click();
     /* The 500's text ("List unavailable") is the server's: the item is the fixed sentence alone. */
     const alert = await page.getByRole('alert').findElement();
     expect(alert.textContent).toContain(failure === 'areas' ? 'Areas are unavailable.' : 'Tracks are unavailable.');
     expect(alert.textContent).not.toContain('List unavailable');
     expect(page.getByRole('button', { name: /^Another track\b/ }).query()).toBeNull();
-    await page.getByRole('button', { name: 'Retry', exact: true }).findElement();
+    const retry = page.getByRole('button', { name: 'Retry', exact: true });
+    await expect.element(retry).toBeVisible();
+    if (failure === 'areas') {
+      areasUnavailable = false;
+      await retry.click();
+      const dialog = page.getByRole('dialog', { name: 'Tracks and settings' });
+      await expect.element(dialog.getByRole('button', { name: 'Frontend', exact: true })).toBeVisible();
+    }
     await userEvent.keyboard('{Escape}');
     await expect.poll(() => page.getByRole('dialog', { name: 'Tracks and settings' }).query()).toBeNull();
-    expect(document.activeElement).toBe(await selector.findElement());
+    await expect.element(page.elementLocator(opener)).toHaveFocus();
+    await expect.element(page.elementLocator(opener)).toHaveAccessibleName('Open area Frontend');
     await page.viewport(1280, 720);
   });
 
@@ -330,18 +442,21 @@ describe('Unified mobile headers', () => {
     expect(writes).toEqual([]);
     await userEvent.keyboard('{Escape}');
     expect(writes).toEqual([]);
-    await page.getByRole('button', { name: /^Switch track,/ }).findElement();
+    await page.getByRole('button', { name: 'Open area Product', exact: true }).findElement();
   });
 
   it('does not open the title menu or editor from the synthesized click after an Enter commit', async () => {
     await page.viewport(390, 844);
     const writes: ApiRequest[] = [];
-    setup('/track/w1', AREA.name, (request) => { if (request.method === 'PATCH') writes.push(request); });
-    await editTrack();
+    setup('/track/w1', AREA.name, (request) => { if (request.method === 'PATCH') writes.push(request); },
+      'Responsive mobile UI', { longReport: true, viewportRoot: true });
+    const trigger = await revealTrackSelector();
+    (trigger.element() as HTMLElement).focus();
+    await userEvent.keyboard('{F2}');
     const input = page.getByRole('textbox', { name: 'Track title', exact: true });
     await input.fill('Committed title');
     await userEvent.keyboard('{Enter}');
-    const selector = await page.getByRole('button', { name: 'Switch track, Product', exact: true }).findElement();
+    const selector = await page.getByRole('button', { name: 'Switch track, Committed title', exact: true }).findElement();
     selector.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 0 }));
     await settlePaint();
     expect(page.getByRole('textbox', { name: 'Track title', exact: true }).query()).toBeNull();
@@ -417,16 +532,15 @@ describe('Unified mobile headers', () => {
       expect(hit.height).toBeGreaterThanOrEqual(44);
       const title = header.querySelector<HTMLElement>('[aria-label^="Switch track,"]')
         ?? header.querySelector<HTMLElement>('[aria-label^="Switch area,"]')
-        ?? header.querySelector<HTMLElement>('h1, h2')!;
-      expect(title.getBoundingClientRect().right).toBeLessThanOrEqual(width);
+        ?? header.querySelector<HTMLElement>('h1, h2');
+      if (title !== null) expect(title.getBoundingClientRect().right).toBeLessThanOrEqual(width);
 
       await page.screenshot({ path: `../../../../test-results/unified-${width}-${name}.png` });
     };
-    await page.getByRole('button', { name: /^Switch track,/ }).findElement();
+    await page.getByRole('button', { name: 'Open area Product', exact: true }).findElement();
     await record('track', document.querySelector<HTMLElement>('[data-nc-workspace-header] header')!);
-    const selector = await page.getByRole('button', { name: 'Switch track, Product', exact: true }).findElement();
-    const back = await page.getByRole('button', { name: 'Back to Focus', exact: true }).findElement();
-    expect(selector.getBoundingClientRect().left).toBeGreaterThanOrEqual(back.getBoundingClientRect().right);
+    const selector = await page.getByRole('button', { name: 'Open area Product', exact: true }).findElement();
+    expect(page.getByRole('button', { name: /^Switch track,/ }).query()).toBeNull();
     expect(selector.getBoundingClientRect().right).toBeLessThanOrEqual(width - 16);
     await page.elementLocator(selector).click();
     const trackPage = await page.getByRole('dialog', { name: 'Tracks and settings' }).findElement();
@@ -476,10 +590,10 @@ describe('Unified mobile headers', () => {
 });
 
 
-it.each(['Switch track, Product'])('hands read-mode %s focus to the desktop Rename control when resizing', async (name) => {
+it('hands a revealed Track selector’s focus to the desktop Rename control when resizing', async () => {
   await page.viewport(390, 844);
-  setup('/track/w1');
-  const current = await page.getByRole('button', { name, exact: true }).findElement();
+  setup('/track/w1', AREA.name, undefined, undefined, { longReport: true, viewportRoot: true });
+  const current = (await revealTrackSelector()).element();
   (current as HTMLElement).focus();
   expect(document.activeElement).toBe(current);
   await page.viewport(1280, 900);
@@ -488,22 +602,22 @@ it.each(['Switch track, Product'])('hands read-mode %s focus to the desktop Rena
   expect(document.activeElement).toBe(desktop);
 });
 
-it('hands desktop Rename focus to the mobile Track selector when resizing', async () => {
+it('hands desktop Rename focus to the document heading at the top of the mobile report', async () => {
   await page.viewport(1280, 900);
   setup('/track/w1');
   const desktop = await page.getByRole('button', { name: 'Rename track', exact: true }).findElement();
   (desktop as HTMLElement).focus();
   await page.viewport(390, 844);
-  const edit = await page.getByRole('button', { name: /^Switch track,/ }).findElement();
+  const title = await page.getByRole('heading', { name: 'Responsive mobile UI', level: 1 }).findElement();
   await settlePaint();
-  expect(document.activeElement).toBe(edit);
+  expect(document.activeElement).toBe(title);
   await page.viewport(1280, 720);
 });
 
 it.each(['outside', 'blur'])('does not reclaim title focus after it has moved %s before resizing', async (destination) => {
   await page.viewport(390, 844);
-  setup('/track/w1');
-  const title = await page.getByRole('button', { name: 'Switch track, Product', exact: true }).findElement() as HTMLElement;
+  setup('/track/w1', AREA.name, undefined, undefined, { longReport: true, viewportRoot: true });
+  const title = (await revealTrackSelector()).element() as HTMLElement;
   title.focus();
   const source = await page.getByRole('button', { name: 'Source detail', exact: true }).findElement() as HTMLElement;
   if (destination === 'outside') source.focus(); else title.blur();
@@ -512,7 +626,7 @@ it.each(['outside', 'blur'])('does not reclaim title focus after it has moved %s
   await settlePaint();
   expect(document.activeElement).toBe(destination === 'outside' ? source : document.body);
   await page.viewport(390, 844);
-  await page.getByRole('button', { name: /^Switch track,/ }).findElement();
+  await page.getByRole('button', { name: 'Track actions', exact: true }).findElement();
   await settlePaint();
   expect(document.activeElement).toBe(destination === 'outside' ? source : document.body);
   await page.viewport(1280, 720);

@@ -24,11 +24,12 @@ export type EditableTitleProps = Readonly<{
   className?: string;
   /** Marks this as the route's single page-title element. No `tabIndex={-1}`: taking a rename control out of the Tab order would delete the keyboard path to renaming. */
   isPageTitle?: boolean;
-  titleRef?: React.RefObject<HTMLButtonElement | null>;
+  titleRef?: React.RefObject<HTMLElement | null>;
   /** Custom read mode, with the same rename and post-commit click guard. */
   readView?: (controls: Readonly<{
     beginEditing: () => void;
-    titleRef: (node: HTMLButtonElement | null) => void;
+    titleRef: (node: HTMLElement | null) => void;
+    isPageTitle?: boolean;
   }>) => ReactNode;
 }>;
 
@@ -42,7 +43,7 @@ export function EditableTitle({
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(value);
   const inputRef = useRef<HTMLInputElement | null>(null);
-  const localTitleRef = useRef<HTMLButtonElement | null>(null);
+  const localTitleRef = useRef<HTMLElement | null>(null);
   const suppressClickUntil = useRef(0);
   const pending = useRef(false);
   const feedback = useOperationFeedback();
@@ -79,7 +80,7 @@ export function EditableTitle({
     });
   }, [draft, emptyCommit, feedback, onCommit, readCommitFailure, restoreTitleFocus, value]);
 
-  const attachTitle = (node: HTMLButtonElement | null) => {
+  const attachTitle = (node: HTMLElement | null) => {
     localTitleRef.current = node;
     if (titleRef) titleRef.current = node;
   };
@@ -88,7 +89,7 @@ export function EditableTitle({
     if (readView !== undefined) return <span data-nc-title-read-view="" onClickCapture={(event) => {
       // Enter's trailing synthesized click must not activate custom read controls either.
       if (Date.now() < suppressClickUntil.current) { event.preventDefault(); event.stopPropagation(); }
-    }}>{readView({ beginEditing: begin, titleRef: attachTitle })}</span>;
+    }}>{readView({ beginEditing: begin, titleRef: attachTitle, isPageTitle })}</span>;
     return (
       <button
         ref={attachTitle}

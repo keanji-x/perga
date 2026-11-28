@@ -70,7 +70,7 @@ function setup(path: string, onCommit: ProfilerOnRenderCallback = () => {}) {
 const href = (router: ReturnType<typeof setup>) => router.state.location.href;
 const mobilePanel = () => document.querySelector('[data-nc-mobile-page]');
 
-const reportEntry = () => screen.getByRole('button', { name: /^Switch track,/ });
+const reportEntry = () => screen.getByRole('button', { name: 'Track actions' });
 
 async function openPanel(router: ReturnType<typeof setup>, panel: 'cards' | 'tasks' | 'outline' | 'conversations'): Promise<void> {
   await act(() => router.navigate({ to: '/track/w1', search: { panel }, state: { [PANEL_PUSHED_STATE_KEY]: true } }));
@@ -126,7 +126,7 @@ describe('the mobile report panel is the URL (#1191 §2.4)', () => {
     await waitFor(() => { expect(document.activeElement).toBe(mobilePanel()); });
   });
 
-  it('closes back to the report and returns focus to the report title', async () => {
+  it('closes back to the report and returns focus to the report actions', async () => {
     const router = setup('/track/w1');
     await openPanel(router, 'cards');
     await waitFor(() => { expect(href(router)).toBe('/track/w1?panel=cards'); });
@@ -160,7 +160,7 @@ describe('the mobile report panel is the URL (#1191 §2.4)', () => {
     const router = setup('/track/w1?panel=cards');
     expect(await screen.findByRole('heading', { name: 'Tools' })).toBeTruthy();
 
-    await userEvent.click(await screen.findByRole('button', { name: /^Switch track,/ }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Open area Product' }));
     // Leaving the report layer drops the report's panel.
     await waitFor(() => { expect(href(router)).toBe('/track/w1'); });
     expect(screen.getByRole('dialog', { name: 'Tracks and settings' })).toBeTruthy();
@@ -171,13 +171,13 @@ describe('the mobile report panel is the URL (#1191 §2.4)', () => {
    * step, so only `router.history.length` can tell the two behaviours apart. */
   it('does not stack a duplicate report entry each time the reader leaves the panel for a sheet', async () => {
     const router = setup('/track/w1');
-    await screen.findByRole('button', { name: /^Switch track,/ });
+    await screen.findByRole('button', { name: 'Open area Product' });
     expect(router.history.length).toBe(1);
 
     for (let cycle = 0; cycle < 3; cycle += 1) {
       await openPanel(router, 'cards');
       await waitFor(() => { expect(href(router)).toBe('/track/w1?panel=cards'); });
-      await userEvent.click(screen.getByRole('button', { name: /^Switch track,/ }));
+      await userEvent.click(screen.getByRole('button', { name: 'Open area Product' }));
       await waitFor(() => { expect(href(router)).toBe('/track/w1'); });
       expect(screen.getByRole('dialog', { name: 'Tracks and settings' })).toBeTruthy();
       fireEvent.keyDown(document, { key: 'Escape' });
@@ -213,7 +213,7 @@ describe('workspace header navigation', () => {
     const router = setup('/track/w1', () => {
       headerCounts.add(document.querySelectorAll('[data-nc-mobile-header]').length);
     });
-    await screen.findByRole('button', { name: /^Switch track,/ });
+    await screen.findByRole('button', { name: 'Open area Product' });
     headerCounts.clear();
 
     await userEvent.click(screen.getByRole('button', { name: 'Back to Focus' }));
@@ -223,14 +223,14 @@ describe('workspace header navigation', () => {
     expect(headerCounts).toEqual(new Set([1]));
     headerCounts.clear();
     await act(() => router.navigate({ to: '/track/w1' }));
-    await screen.findByRole('button', { name: /^Switch track,/ });
+    await screen.findByRole('button', { name: 'Open area Product' });
     expect(href(router)).toBe('/track/w1');
     expect(headerCounts).toEqual(new Set([1]));
   });
 
   it('opens the current track’s area without a dock', async () => {
     setup('/track/w1?from=area');
-    await userEvent.click(await screen.findByRole('button', { name: /^Switch track,/ }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Open area Product' }));
     expect(screen.getByRole('dialog', { name: 'Tracks and settings' })).toBeTruthy();
     expect(screen.getByRole('heading', { name: 'Product' })).toBeTruthy();
     expect(document.querySelector('nav[aria-label="Primary"]')).toBeNull();

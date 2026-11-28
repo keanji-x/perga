@@ -94,7 +94,7 @@ describe('shared Track title in production hosts', () => {
     expect(onOpenTrack).toHaveBeenCalledWith('w1');
     view.unmount();
     render(<div style={{ height: '100dvh' }}><MobileTracks {...props} view="tracks" /></div>);
-    expect(decoration(screen.getByRole('button', { name: /^Alpha\b.*\bClosed$/ }))).toBe('line-through');
+    expect(decoration(screen.getByRole('button', { name: /^Alpha\b.*\bClosed\b/ }))).toBe('line-through');
   });
 });
 
@@ -116,7 +116,7 @@ describe('a failed inline rename', () => {
     const onRenameTrack = vi.fn<(title: string) => Promise<void>>()
       .mockRejectedValueOnce(new Error('socket hang up')).mockResolvedValue(undefined);
     const input = await failRename(onRenameTrack);
-    await userEvent.click(page.getByRole('alert').getByRole('button', { name: /^Dismiss/ }));
+    await userEvent.click(page.getByRole('button', { name: /^Dismiss The rename is unconfirmed/ }));
     expect(screen.queryByRole('alert')).toBeNull();
     await expect.element(input).toHaveValue('Kept draft');
     await expect.element(input).toHaveFocus();
@@ -130,7 +130,7 @@ describe('a failed inline rename', () => {
   it('cancels the editor on Escape from Dismiss, as Escape in the input does', async () => {
     await failRename(vi.fn<(title: string) => Promise<void>>().mockRejectedValue(new Error('socket hang up')));
     await userEvent.tab();
-    await expect.element(page.getByRole('alert').getByRole('button', { name: /^Dismiss/ })).toHaveFocus();
+    await expect.element(page.getByRole('button', { name: /^Dismiss The rename is unconfirmed/ })).toHaveFocus();
     await userEvent.keyboard('{Escape}');
     await expect.element(page.getByRole('textbox', { name: 'Track title' })).not.toBeInTheDocument();
     await expect.element(page.getByRole('button', { name: 'Rename track' })).toHaveFocus();
@@ -144,7 +144,7 @@ describe('a failed inline rename', () => {
   it('keeps the draft when Dismiss is reached and pressed from the keyboard', async () => {
     const input = await failRename(vi.fn<(title: string) => Promise<void>>().mockRejectedValue(new Error('socket hang up')));
     await userEvent.tab();
-    await expect.element(page.getByRole('alert').getByRole('button', { name: /^Dismiss/ })).toHaveFocus();
+    await expect.element(page.getByRole('button', { name: /^Dismiss The rename is unconfirmed/ })).toHaveFocus();
     await userEvent.keyboard('{Enter}');
     expect(screen.queryByRole('alert')).toBeNull();
     await expect.element(input).toHaveValue('Kept draft');

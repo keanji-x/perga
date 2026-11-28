@@ -34,6 +34,7 @@ export type MobileFocusHomeProps = Readonly<{
   onOpenWorkspace: () => void;
   workspaceTriggerRef?: Ref<HTMLButtonElement>;
   onOpenTrack: (trackId: string) => void;
+  onOpenArea?: (areaId: string) => void;
   onNewTrack?: (areaId?: string) => void;
   onMarkAllRead?: (tracks: readonly Track[]) => void;
   renderTrackTitle?: (track: Track, content: ReactNode) => ReactNode;
@@ -51,6 +52,7 @@ export function MobileFocusHome({
   onOpenWorkspace,
   workspaceTriggerRef,
   onOpenTrack,
+  onOpenArea,
   onNewTrack,
   onMarkAllRead,
   renderTrackTitle,
@@ -243,7 +245,7 @@ export function MobileFocusHome({
             <button
               key={candidate}
               type="button"
-              className={`${styles.filterPill} ${active ? styles.filterPillActive : ''}`}
+              className={`${styles.filterTab} ${active ? styles.filterTabActive : ''}`}
               aria-pressed={active}
               onClick={() => setTab(candidate)}
             >
@@ -306,6 +308,7 @@ export function MobileFocusHome({
                 unread={!isClosed(track) && isUnread(track)}
                 formatters={timeFormatters}
                 onOpenTrack={onOpenTrack}
+                onOpenArea={onOpenArea}
                 renderTitle={renderTrackTitle}
               />
             ))}

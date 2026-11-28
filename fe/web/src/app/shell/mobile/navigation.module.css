@@ -200,6 +200,14 @@
     background: var(--bg);
   }
 
+  .areaSummaryStrip {
+    border-bottom: var(--space-px) solid color-mix(in srgb, var(--hairline) 45%, transparent);
+  }
+
+  .areaSectionHeader {
+    border-block: var(--space-px) solid color-mix(in srgb, var(--hairline) 45%, transparent);
+  }
+
   .areaNotice {
     padding-block: var(--space-2);
   }
@@ -219,7 +227,7 @@
     margin: 0;
     padding: 0;
     list-style: none;
-    background: var(--surface-card);
+    background: var(--bg);
   }
 
   .areaSection:last-child .areaFeed {

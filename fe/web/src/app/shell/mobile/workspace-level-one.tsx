@@ -204,7 +204,6 @@ export function WorkspaceLevelOne({
                     current={track.id === currentTrackId}
                     renderTitle={(track) => <TrackTitle track={track} />}
                     timestampMs={track.closedAt ?? track.updatedAt}
-                    previewLines={2}
                     surface="card"
                   />
                 ))}

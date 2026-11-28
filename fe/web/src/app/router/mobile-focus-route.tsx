@@ -84,6 +84,7 @@ export function MobileFocusRoute({
       onRetry={retryRead}
       onOpenWorkspace={() => openMobileSection({ kind: 'areas', areaId: shownAreas[0]?.id }, 'workspace')}
       workspaceTriggerRef={workspaceTriggerRef}
+      onOpenArea={shareScope === null ? (areaId) => openMobileSection({ kind: 'tracks', areaId, returnTo: 'focus' }, 'opener') : undefined}
       onOpenTrack={(trackId) => go({ name: 'track', trackId, from: 'pages' })}
       renderTrackTitle={(track, content) => <TrackTitle track={track}>{content}</TrackTitle>}
       onNewTrack={handleNewTrack}
