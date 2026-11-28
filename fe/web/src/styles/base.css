@@ -38,7 +38,7 @@
   }
 
   /* The startup announcement in web/index.html stays available to screen readers before mount. */
-  #root > p[role='status'] {
+  #root > p[data-nc-boot-status] {
     position: fixed;
     inline-size: 1px;
     block-size: 1px;

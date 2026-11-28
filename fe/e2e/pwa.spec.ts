@@ -48,10 +48,10 @@ test('mobile startup keeps the loading announcement accessible without painting 
   await page.setViewportSize({ width: 390, height: 844 });
   // Leave the document and stylesheet intact while holding the app before mount.
   await page.route('**/*', route => route.request().resourceType() === 'script' ? route.abort() : route.continue());
+  const status = page.getByRole('status');
   for (const colorScheme of ['light', 'dark'] as const) {
     await page.emulateMedia({ colorScheme });
     await page.goto('/');
-    const status = page.getByRole('status');
     await expect(status).toHaveText('正在加载工作区…');
     await expect(status).toHaveCSS('clip-path', 'inset(50%)');
     await expect(status).toHaveCSS('width', '1px');
@@ -61,6 +61,10 @@ test('mobile startup keeps the loading announcement accessible without painting 
     const background = Buffer.from(colorScheme === 'light' ? [243, 242, 238, 255] : [27, 33, 39, 255]);
     expect(data.equals(Buffer.alloc(data.length, background))).toBe(true);
   }
+
+  // A status paragraph rendered by the app has the same role without the boot marker.
+  await status.evaluate(element => element.removeAttribute('data-nc-boot-status'));
+  await expect(status).toHaveCSS('clip-path', 'none');
 });
 
 test('Chrome installs and launches Perga in a standalone window', async ({ baseURL }, testInfo) => {

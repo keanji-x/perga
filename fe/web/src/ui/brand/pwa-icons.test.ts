@@ -31,22 +31,39 @@ it('serves the same transparent, color-adaptive favicon in the app and on the si
 });
 
 it.each([
-  { name: 'perga-192.png', size: 192, transparent: true },
-  { name: 'perga-512.png', size: 512, transparent: true },
-  { name: 'perga-maskable-192.png', size: 192, transparent: false },
-  { name: 'perga-maskable-512.png', size: 512, transparent: false },
-  { name: 'apple-touch-icon.png', size: 180, transparent: false },
-])('renders $name with the required background pixels', ({ name, size, transparent }) => {
+  { name: 'perga-192.png', size: 192, kind: 'splash' },
+  { name: 'perga-512.png', size: 512, kind: 'splash' },
+  { name: 'perga-maskable-192.png', size: 192, kind: 'maskable' },
+  { name: 'perga-maskable-512.png', size: 512, kind: 'maskable' },
+  { name: 'apple-touch-icon.png', size: 180, kind: 'apple-touch' },
+])('renders $name with the required background and mask geometry', ({ name, size, kind }) => {
   const { width, height, data } = PNG.sync.read(readFileSync(new URL(`icons/${name}`, publicDir)));
   expect([width, height]).toEqual([size, size]);
+  const opaqueBackground = Buffer.from([243, 242, 238, 255]);
   const corners = [0, width - 1, (height - 1) * width, width * height - 1];
   const aboveMark = Math.floor(height / 10) * width + Math.floor(width / 2);
   for (const index of [...corners, aboveMark]) {
     const rgba = data.subarray(index * 4, index * 4 + 4);
-    if (transparent) {
+    if (kind === 'splash') {
       expect(rgba[3]).toBe(0);
     } else {
-      expect([...rgba]).toEqual([243, 242, 238, 255]);
+      expect(rgba).toEqual(opaqueBackground);
     }
   }
+
+  if (kind === 'splash') return;
+  expect(data.every((value, index) => index % 4 !== 3 || value === 255), `${name} contains translucent pixels`).toBe(true);
+
+  if (kind !== 'maskable') return;
+  const safeRadius = size * 0.4;
+  const center = size / 2;
+  let markPixelsOutsideSafeCircle = 0;
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      if (Math.hypot(x + 0.5 - center, y + 0.5 - center) <= safeRadius) continue;
+      const offset = (y * width + x) * 4;
+      if (!data.subarray(offset, offset + 4).equals(opaqueBackground)) markPixelsOutsideSafeCircle++;
+    }
+  }
+  expect(markPixelsOutsideSafeCircle, `${name} contains mark pixels outside the safe circle`).toBe(0);
 });
