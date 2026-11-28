@@ -8,7 +8,6 @@ import { createPortal } from 'react-dom';
 
 import { useState } from '../../../ui/state/public.ts';
 import { restoreDrawerFocus } from '../../../ui/drawer/restore-focus.ts';
-import { BrandMotion } from '../../../ui/brand/motion.tsx';
 
 import styles from './activity-groups.module.css';
 import type { ConversationActivity } from '../../../../../core/domain/conversation.ts';
@@ -59,14 +58,11 @@ export type ToolCallGroupProps = Readonly<{
 export function ToolCallGroup({ calls, entry, ui, onExpandedChange, onDetailOpenChange, live, showMotion }: ToolCallGroupProps) {
   const rootRef = useRef<HTMLDivElement | null>(null);
   const [statusHosts, setStatusHosts] = useState<readonly HTMLElement[]>([]);
-  // Astryx owns row/detail focus. Replace only its status ink, using its semantic status slot.
+  // Astryx owns row/detail focus and live execution spinners; only unfinished non-live calls swap to an unconfirmed badge.
   useLayoutEffect(() => {
     const root = rootRef.current;
-    /* A lone call has no header: its one row is always the visible one. */
-    const header = root === null ? null : headerOf(root);
-    const hosts = (!live || showMotion) && root !== null
-      ? [...root.querySelectorAll<HTMLElement>('[role="progressbar"]')]
-        .filter(host => !live || ui.expanded || header === null || header.contains(host)) : [];
+    const hosts = !live && root !== null
+      ? [...root.querySelectorAll<HTMLElement>('[role="progressbar"]')] : [];
     setStatusHosts(previous => previous.length === hosts.length && previous.every((host, index) => host === hosts[index])
       ? previous : hosts);
   }, [calls, live, showMotion, ui.expanded]);
@@ -123,9 +119,9 @@ export function ToolCallGroup({ calls, entry, ui, onExpandedChange, onDetailOpen
         {...(showMotion ? { 'data-nc-live': '' } : {})}
         calls={[...calls]}
       />
-      {statusHosts.map((host, index) => live
-        ? createPortal(<BrandMotion kind="execution" />, host, String(index))
-        : host.parentElement !== null ? createPortal(<span className={styles.unconfirmed} data-nc-unconfirmed="" title="Completion unconfirmed" aria-hidden="true"><Icon icon="info" size="xsm" /></span>, host.parentElement, String(index)) : null)}
+      {statusHosts.map((host, index) => host.parentElement !== null
+        ? createPortal(<span className={styles.unconfirmed} data-nc-unconfirmed="" title="Completion unconfirmed" aria-hidden="true"><Icon icon="info" size="xsm" /></span>, host.parentElement, String(index))
+        : null)}
     </>
   );
 }

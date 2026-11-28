@@ -15,38 +15,37 @@ function action(id: string, state: 'running' | 'done'): ConversationActivity {
     durationMs: state === 'done' ? 1400 : null, detail: null, atMs: 1 };
 }
 
-it('uses the execution mark in a collapsed and expanded tool group and removes it when the turn ends', () => {
+it('shows the vendor spinner in a collapsed and expanded tool group and hides it when the turn ends', () => {
   const { container, rerender } = render(<ChatThread hasPendingMessages={false} canContinue={false} conversation={conversation} turns={[action('first', 'done'), action('second', 'running')]} lastSessionTurn={RUNNING_TURN} cards={{}} stalled={false} />);
-  const status = container.querySelector<HTMLElement>('[role="progressbar"]')!;
-  expect(status.querySelector('[data-nc-motion="execution"]')!.checkVisibility()).toBe(true);
-  expect([...status.querySelectorAll(':scope > :not([data-nc-motion])')].every((node) => getComputedStyle(node).display === 'none')).toBe(true);
+  const status = container.querySelector<HTMLElement>('[data-nc-live] [role="progressbar"]')!;
+  expect(status.checkVisibility()).toBe(true);
   fireEvent.click(container.querySelector('[aria-expanded]')!);
-  expect(container.querySelector<HTMLElement>('[role="progressbar"]')!.querySelector('[data-nc-motion="execution"]')!.checkVisibility()).toBe(true);
+  expect(container.querySelector<HTMLElement>('[data-nc-live] [role="progressbar"]')!.checkVisibility()).toBe(true);
   rerender(<ChatThread hasPendingMessages={false} canContinue={false} conversation={conversation} turns={[action('first', 'done'), action('second', 'running')]} cards={{}} stalled={false} />);
-  expect(container.querySelector('[data-nc-motion]')).toBeNull();
+  expect(container.querySelector('[data-nc-live]')).toBeNull();
   expect(container.querySelector('[role="progressbar"]')!.checkVisibility()).toBe(false);
 });
 
-it('replaces the running animation with a visible completion icon', () => {
+it('replaces the running spinner with a visible completion icon', () => {
   const props = { hasPendingMessages: false, canContinue: false, conversation, cards: {}, stalled: false };
   const { container, rerender } = render(<ChatThread {...props} turns={[action('first', 'done'), action('second', 'running')]} lastSessionTurn={RUNNING_TURN} />);
-  expect(container.querySelector('[data-nc-motion]')!.checkVisibility()).toBe(true);
+  expect(container.querySelector('[data-nc-live] [role="progressbar"]')!.checkVisibility()).toBe(true);
   rerender(<ChatThread {...props} turns={[action('first', 'done'), action('second', 'done')]} />);
   const icon = container.querySelector('[aria-expanded="false"] > span:first-child')!;
   expect(icon.querySelector('svg')!.checkVisibility()).toBe(true);
   expect(icon.querySelector('svg')!.getBoundingClientRect().width).toBeGreaterThan(0);
-  expect(container.querySelector('[data-nc-motion]')).toBeNull();
+  expect(container.querySelector('[role="progressbar"]')).toBeNull();
 });
 
-it('keeps the tool group toggle clickable through the decorative execution animation', async () => {
+it('keeps the tool group toggle clickable through the running spinner', async () => {
   const { container } = render(<ChatThread hasPendingMessages={false} canContinue={false} conversation={conversation} turns={[action('first', 'done'), action('second', 'running')]} lastSessionTurn={RUNNING_TURN} cards={{}} stalled={false} />);
   await userEvent.click(container.querySelector<HTMLElement>('[role="progressbar"]')!);
   expect(container.querySelector('[aria-expanded="true"]')).not.toBeNull();
 });
 
-it('places the lone execution mark before the verb and centers it within the row', () => {
+it('places the lone running spinner before the verb and centers it within the row', () => {
   const { container } = render(<ChatThread hasPendingMessages={false} canContinue={false} conversation={conversation} turns={[action('single', 'running')]} lastSessionTurn={RUNNING_TURN} cards={{}} stalled={false} />);
-  const marker = container.querySelector<SVGElement>('[data-nc-motion="execution"]')!;
+  const marker = container.querySelector<HTMLElement>('[data-nc-live] [role="progressbar"]')!;
   const row = container.querySelector<HTMLElement>('[data-nc-entry] > div')!;
   expect(marker.checkVisibility()).toBe(true);
   /* The painted verb, not Astryx's visually hidden `Running` status. */
@@ -54,7 +53,7 @@ it('places the lone execution mark before the verb and centers it within the row
   const iconBox = marker.getBoundingClientRect();
   const textBox = verb.getBoundingClientRect();
   const rowBox = row.getBoundingClientRect();
-  expect(container.querySelectorAll('[data-nc-motion]')).toHaveLength(1);
+  expect(container.querySelectorAll('[data-nc-live] [role="progressbar"]')).toHaveLength(1);
   expect(iconBox.right).toBeLessThanOrEqual(textBox.left);
   expect(iconBox.top + iconBox.height / 2).toBeCloseTo(rowBox.top + rowBox.height / 2, 1);
 });

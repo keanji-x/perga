@@ -163,7 +163,7 @@ function buildEditorialPageHtml(markdown, markSvg, {
   <meta name="twitter:title" content="${escapeHtml(title)}" />
   <meta name="twitter:description" content="${escapeHtml(description)}" />
   <meta name="twitter:image" content="https://keanji-x.github.io/perga/og-card.png" />
-  <link rel="icon" type="image/svg+xml" href="${assetPrefix}favicon.svg?v=2" />
+  <link rel="icon" type="image/svg+xml" href="${assetPrefix}favicon.svg?v=3" />
   <link rel="icon" type="image/png" sizes="192x192" href="${assetPrefix}icon-192.png" />
   <link rel="apple-touch-icon" href="${assetPrefix}icon-192.png" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />

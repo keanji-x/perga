@@ -264,7 +264,7 @@ it.each([900, 600])('shows the shared masthead above a clean perga composer and 
   const assistant = page.getByRole('region', { name: 'Today Assistant', exact: true });
   const heading = assistant.getByRole('heading', { name: 'What would you like to move forward today?' });
   await expect.element(heading).toBeVisible();
-  const logo = heading.element().querySelector<SVGSVGElement>('[data-nc-motion="creation"]')!;
+  const logo = heading.element().querySelector<SVGSVGElement>('[data-nc-brand-mark]')!;
   await expect.element(logo).toBeVisible();
   expect(assistant.getByText('说说今天的重点，计划与进展会整理在右侧日报里。').query()).toBeNull();
   const field = assistant.getByRole('combobox', { name: 'Message', exact: true });

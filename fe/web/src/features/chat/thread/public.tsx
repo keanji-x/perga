@@ -67,7 +67,7 @@ export function ChatEmpty({ working = false, children }: Readonly<{ working?: bo
 }
 
 function emptyConversationContent(working: boolean): EmptyStateSchema {
-  return { icon: working ? <ActivityIndicator state="working" motion="thinking" /> : <Icon name="chat" />, title: working ? 'Organizing your thoughts' : 'Start a conversation', description: working ? 'Replies will appear here.' : 'Begin with a question, task, or idea.' };
+  return { icon: working ? <ActivityIndicator state="working" /> : <Icon name="chat" />, title: working ? 'Organizing your thoughts' : 'Start a conversation', description: working ? 'Replies will appear here.' : 'Begin with a question, task, or idea.' };
 }
 
 export type ChatThreadProps = Readonly<{
@@ -329,7 +329,7 @@ export const ChatThread = memo(function ChatThread({ conversation, turns, pendin
 
   const hasLiveRuntime = runtimeStatus?.kind === 'running' || activeBackgroundTaskCount(runtimeTasks) > 0;
   const currentMeta = <CurrentStatusNotice lastTurn={lastSessionTurn} runtimeStatus={runtimeStatus} runtimeTasks={runtimeTasks}
-    leading={(live || hasLiveRuntime) && !tailCarriesLiveMark ? <ActivityIndicator state="working" motion="thinking" /> : undefined}
+    leading={(live || hasLiveRuntime) && !tailCarriesLiveMark ? <ActivityIndicator state="working" /> : undefined}
     detailsExpanded={reading.expanded.get('current-status') ?? false}
     onDetailsExpandedChange={expanded => reading.setExpanded('current-status', expanded)}
     copyAction={copyAction} regenerateAction={regenerateAction} messageActions={messageActions} />;

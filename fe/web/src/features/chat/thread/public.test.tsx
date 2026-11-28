@@ -34,8 +34,8 @@ const RAIL_FIXTURE_EXCHANGES = 5;
 
 const NOW = 1_760_000_000_000;
 
-/* The thread's working marks are decorative by contract; counted by the marker, not by a label. A running tool call's mark is the execution motion in the vendor's status slot. */
-const workingMarks = () => document.querySelectorAll('[data-nc-activity="working"], [data-nc-motion="execution"]');
+/* The thread's working marks are decorative by contract; counted by the marker, not by a label. A running tool call's mark is the vendor spinner inside a live tool group. */
+const workingMarks = () => document.querySelectorAll('[data-nc-activity="working"], [data-nc-live] [role="progressbar"]');
 
 function conversation(overrides: Partial<Conversation> = {}): Conversation {
   return { provider: 'codex' as const,

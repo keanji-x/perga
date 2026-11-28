@@ -54,7 +54,7 @@ it('hands the live mark between the status row and an executing tool without dup
   const running: ConversationActivity = { ...thought('tool'), verb: 'Calling tool', state: 'running' };
   rerender(<ChatThread {...props} turns={[...done, running]} lastSessionTurn={RUNNING_TURN} />);
   expect(container.querySelector('[data-nc-current-meta] [data-nc-activity="working"]')).toBeNull();
-  expect([...container.querySelectorAll('[data-nc-motion="execution"]')].filter(node => node.checkVisibility({ visibilityProperty: true }))).toHaveLength(1);
+  expect([...container.querySelectorAll('[data-nc-live] [role="progressbar"]')].filter(node => node.checkVisibility({ visibilityProperty: true }))).toHaveLength(1);
   rerender(<ChatThread {...props} turns={[...done, { ...running, state: 'done' }]} lastSessionTurn={RUNNING_TURN} />);
   indicatorBesideStatus(container);
   rerender(<ChatThread {...props} turns={[...done, { ...running, state: 'done' }]} />);
@@ -89,6 +89,6 @@ it.each([false, true])('shows a static, truthful status for unfinished calls aft
   const icon = [...entry.querySelectorAll('svg')].find(node => node.checkVisibility() && node.closest('[data-nc-unconfirmed]'));
   expect(icon).toBeDefined();
   for (const label of within(entry).queryAllByText('Running', { exact: true })) expect(label.checkVisibility()).toBe(false);
-  expect(container.querySelector('[data-nc-motion]')).toBeNull();
+  expect(container.querySelector('[data-nc-live] [role="progressbar"]')).toBeNull();
   expect(within(screen.getByRole('status', { name: 'Current response status' })).getByText('Stopped')).toBeTruthy();
 });
