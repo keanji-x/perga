@@ -705,7 +705,7 @@ public sealed partial class MemoryIntegrationTests
         var areaLead = await kernel.OpenMcpCallerAsync(area.LeadSessionId, ct);
 
         var empty = await SendAndReadTurnAsync(host, kernel, trackId, sessionId, "Empty memory", ct);
-        Assert.Equal("Empty memory", empty.Input.Prompt);
+        Assert.Equal("Empty memory", empty.Input.PromptWithoutReportState());
         var pinned = await SuccessfulCallAsync(host, areaLead, "put", Entry("team", "Area pinned body", pinned: true), ct);
         await SuccessfulCallAsync(host, areaLead, "put", Entry("topic", "Workspace topic body"), ct);
         await SuccessfulCallAsync(host, globalLead, "put", Entry("shared", "Catalogued kestrels are reviewed annually."), ct);
@@ -717,7 +717,7 @@ public sealed partial class MemoryIntegrationTests
         Assert.DoesNotContain("Workspace topic body", first.Input.Prompt);
         Assert.DoesNotContain("<memory_context>", first.Spec.SystemPrompt ?? "");
         var unchanged = await SendAndReadTurnAsync(host, kernel, trackId, sessionId, "Unchanged", ct);
-        Assert.Equal("Unchanged", unchanged.Input.Prompt);
+        Assert.Equal("Unchanged", unchanged.Input.PromptWithoutReportState());
 
         await SuccessfulCallAsync(host, areaLead, "put", new
         {
@@ -917,12 +917,12 @@ public sealed partial class MemoryIntegrationTests
         await File.WriteAllTextAsync(dir, "A file makes the scope unreadable.", ct);
         Assert.Null(await provider.GetContextSnapshotAsync(null, ct));
         var failed = await SendAndReadTurnAsync(host, kernel, trackId, sessionId, "Memory unavailable", ct);
-        Assert.Equal("Memory unavailable", failed.Input.Prompt);
+        Assert.Equal("Memory unavailable", failed.Input.PromptWithoutReportState());
 
         File.Delete(dir);
         Directory.Move(backup, dir);
         var recovered = await SendAndReadTurnAsync(host, kernel, trackId, sessionId, "Memory recovered", ct);
-        Assert.Equal("Memory recovered", recovered.Input.Prompt);
+        Assert.Equal("Memory recovered", recovered.Input.PromptWithoutReportState());
         Assert.Equal(["loaded"], await MemoryNoticeModesAsync(kernel, sessionId, ct));
     }
 
@@ -946,7 +946,7 @@ public sealed partial class MemoryIntegrationTests
         var cleared = await SendAndReadTurnAsync(host, kernel, trackId, sessionId, "After deletion", ct);
         Assert.StartsWith(ClearedContext, cleared.Input.Prompt, StringComparison.Ordinal);
         var stillEmpty = await SendAndReadTurnAsync(host, kernel, trackId, sessionId, "Still empty", ct);
-        Assert.Equal("Still empty", stillEmpty.Input.Prompt);
+        Assert.Equal("Still empty", stillEmpty.Input.PromptWithoutReportState());
 
         var page = await kernel.GetSessionItemsAsync(sessionId, new(Limit: 100), Owner, ct);
         var notice = Assert.Single(page.Items, item => item.Kind == "system" &&
@@ -990,7 +990,7 @@ public sealed partial class MemoryIntegrationTests
             await using var reopenedAgain = new PergaHostTestCluster(directory.FullName);
             var restartedKernel = reopenedAgain.Services.GetRequiredService<IPergaKernel>();
             var again = await SendAndReadTurnAsync(reopenedAgain, restartedKernel, trackId, sessionId, "Still empty after restart", ct);
-            Assert.Equal("Still empty after restart", again.Input.Prompt);
+            Assert.Equal("Still empty after restart", again.Input.PromptWithoutReportState());
             Assert.Equal(["loaded", "cleared"], await MemoryNoticeModesAsync(restartedKernel, sessionId, ct));
         }
         finally
@@ -1019,7 +1019,7 @@ public sealed partial class MemoryIntegrationTests
         var cleared = await SendAndReadTurnAsync(host, kernel, trackId, sessionId, "First turn after compaction", ct);
         Assert.StartsWith(ClearedContext, cleared.Input.Prompt, StringComparison.Ordinal);
         var again = await SendAndReadTurnAsync(host, kernel, trackId, sessionId, "Still empty", ct);
-        Assert.Equal("Still empty", again.Input.Prompt);
+        Assert.Equal("Still empty", again.Input.PromptWithoutReportState());
         Assert.Equal(["loaded", "cleared"], await MemoryNoticeModesAsync(kernel, sessionId, ct));
     }
 

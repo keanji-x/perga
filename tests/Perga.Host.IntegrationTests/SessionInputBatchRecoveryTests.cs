@@ -50,7 +50,7 @@ public sealed class SessionInputBatchRecoveryTests
                 else
                 {
                     var execution = Assert.Single(reopened.AgentRuntime.ExecutedTurns);
-                    Assert.Equal("First prompt\n\nSecond prompt", execution.Input.Prompt);
+                    Assert.Equal("First prompt\n\nSecond prompt", execution.Input.PromptWithoutReportState());
                     Assert.Equal(turnId, execution.Input.CorrelationId);
                 }
                 var bubbles = (await kernel.GetSessionItemsAsync(sessionId, new(), new InteropPrincipal.Human(), default)).Items.Where(i => i.Kind == "user").ToArray();
@@ -78,7 +78,7 @@ public sealed class SessionInputBatchRecoveryTests
                     using var response = await reopened.AuthenticatedClient.SendAsync(request);
                     Assert.Equal(HttpStatusCode.OK, response.StatusCode);
                     await kernel.WaitForTrackIdleAsync(trackId);
-                    Assert.Equal("After unlock", Assert.Single(reopened.AgentRuntime.ExecutedTurns).Input.Prompt);
+                    Assert.Equal("After unlock", Assert.Single(reopened.AgentRuntime.ExecutedTurns).Input.PromptWithoutReportState());
                 }
             }
             await using var again = new PergaHostTestCluster(directory.FullName);

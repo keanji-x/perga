@@ -1,7 +1,7 @@
 export default defineTemplate({
   id: "agents-delivery",
   title: "AGENTS.md 阶段交付协议",
-  description: "按仓库 AGENTS.md 组织实现、独立审查与验证。",
+  description: "按仓库 AGENTS.md 组织代码修改、缺陷修复、重构、独立审查与 PR 交付。",
   inputs: {
     reviewProvider: { type: "string", optional: true, label: "审查提供方" },
     reviewModel: { type: "string", optional: true, label: "审查模型" },

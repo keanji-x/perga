@@ -116,7 +116,7 @@ public sealed class UnifiedSessionLifecycleTests
         Assert.False((await ctx.Kernel.GetSessionItemsAsync(id, new(), Human, default)).WorkerPaused);
         var inputs = ctx.AgentRuntime.OpenedSessions.SelectMany(s => s.RecordedInputs).ToArray();
         Assert.Equal(2, inputs.Length);
-        Assert.Equal(existingQueue ? "earlier\n\nresume" : "resume", inputs[1].Prompt);
+        Assert.Equal(existingQueue ? "earlier\n\nresume" : "resume", inputs[1].PromptWithoutReportState());
         if (queued is not null)
             Assert.Equal("delivered", (await ctx.Store.SessionMessages.GetAsync(id, queued.MessageId, default))!.Delivery);
         Assert.Equal("delivered", (await ctx.Store.SessionMessages.GetAsync(id, resumed.MessageId, default))!.Delivery);
@@ -144,7 +144,7 @@ public sealed class UnifiedSessionLifecycleTests
         finally { release.TrySetResult(); }
         await ctx.Kernel.WaitForTrackIdleAsync(snapshot.Track.Id);
         await ctx.SendAndWaitForTurnAsync(id, new("next", "next"));
-        Assert.DoesNotContain(ctx.AgentRuntime.OpenedSessions.SelectMany(s => s.RecordedInputs), i => i.Prompt == "declined");
+        Assert.DoesNotContain(ctx.AgentRuntime.OpenedSessions.SelectMany(s => s.RecordedInputs), i => i.PromptWithoutReportState() == "declined");
     }
 
     [Fact]
@@ -175,7 +175,7 @@ public sealed class UnifiedSessionLifecycleTests
         await ctx.Kernel.ListSessionsAsync(snapshot.Track.Id, new(), Human, default);
         await ctx.Kernel.WaitForTrackIdleAsync(snapshot.Track.Id).WaitAsync(TimeSpan.FromSeconds(3));
         await ctx.SendAndWaitForTurnAsync(id, new("after cancellation", "after-cancellation"));
-        Assert.Contains(ctx.AgentRuntime.OpenedSessions.SelectMany(s => s.RecordedInputs), i => i.Prompt == "after cancellation");
+        Assert.Contains(ctx.AgentRuntime.OpenedSessions.SelectMany(s => s.RecordedInputs), i => i.PromptWithoutReportState() == "after cancellation");
         Assert.Equal("new-model", ctx.AgentRuntime.OpenedSessions.Last().LaunchSpec.Model);
     }
 
@@ -259,7 +259,7 @@ public sealed class UnifiedSessionLifecycleTests
         }
         finally { release.TrySetResult(); }
         await ctx.Kernel.WaitForTrackIdleAsync(snapshot.Track.Id);
-        Assert.DoesNotContain(ctx.AgentRuntime.OpenedSessions.SelectMany(s => s.RecordedInputs), i => i.Prompt == "unsupported");
+        Assert.DoesNotContain(ctx.AgentRuntime.OpenedSessions.SelectMany(s => s.RecordedInputs), i => i.PromptWithoutReportState() == "unsupported");
     }
 
     [Theory]

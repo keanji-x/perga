@@ -550,7 +550,7 @@ public sealed class DurableSessionInputTests
             HarnessLaunchSpec spec, TurnInput input, [EnumeratorCancellation] CancellationToken ct)
         {
             yield return new UnifiedAgentEvent.TextDelta("working");
-            if (input.Prompt == "initial")
+            if (input.PromptWithoutReportState() == "initial")
             {
                 turnStarted.TrySetResult();
                 await endTurn.Task.WaitAsync(ct);
@@ -635,7 +635,7 @@ public sealed class DurableSessionInputTests
                 await allowProviderOutput.Task.WaitAsync(ct);
             }
             yield return new UnifiedAgentEvent.TextDelta("working");
-            if (input.Prompt == "initial")
+            if (input.PromptWithoutReportState() == "initial")
             {
                 turnStarted.TrySetResult();
                 await endTurn.Task.WaitAsync(ct);
@@ -713,7 +713,7 @@ public sealed class DurableSessionInputTests
             await kernel.WaitForTrackIdleAsync(trackId);
 
             Assert.Equal(supportsSteering ? new[] { "initial", "second queued" } : new[] { "initial", "first queued\n\nsecond queued" },
-                host.AgentRuntime.ExecutedTurns.Select(execution => execution.Input.Prompt));
+                host.AgentRuntime.ExecutedTurns.Select(execution => execution.Input.PromptWithoutReportState()));
             var final = await ReadPageAsync();
             Assert.Equal("completed", Assert.Single(final.Items, item => item.Kind == "user" &&
                 item.Payload.TryGetProperty("inputId", out var id) && id.GetString() == second.MessageId).MessageStatus);

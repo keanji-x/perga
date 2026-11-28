@@ -101,7 +101,7 @@ public sealed class L2ConfigurationRecoveryRegressionTests
         async IAsyncEnumerable<UnifiedAgentEvent> Stream(ScriptableFakeAgentSession session, TurnInput input,
             [EnumeratorCancellation] CancellationToken ct)
         {
-            if (input.Prompt == "old")
+            if (input.PromptWithoutReportState() == "old")
             {
                 yield return new UnifiedAgentEvent.TextDelta("accepted");
                 started.TrySetResult();

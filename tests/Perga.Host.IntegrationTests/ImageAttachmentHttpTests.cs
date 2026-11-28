@@ -312,7 +312,7 @@ public sealed class ImageAttachmentHttpTests
             [EnumeratorCancellation] CancellationToken token)
         {
             yield return new UnifiedAgentEvent.TurnAccepted("provider-turn");
-            if (input.Prompt == "running")
+            if (input.PromptWithoutReportState() == "running")
             {
                 started.TrySetResult();
                 await release.Task.WaitAsync(token);
@@ -355,7 +355,7 @@ public sealed class ImageAttachmentHttpTests
 
         await host.Services.GetRequiredService<IPergaKernel>().WaitForTrackIdleAsync(trackId, ct);
         var inputs = host.AgentRuntime.ExecutedTurns.Select(turn => turn.Input).ToArray();
-        Assert.Equal(["running", "image prompt", "text prompt"], inputs.Select(input => input.Prompt));
+        Assert.Equal(["running", "image prompt", "text prompt"], inputs.Select(input => input.PromptWithoutReportState()));
         Assert.Null(inputs[2].Attachments);
         var store = host.Services.GetRequiredService<ITrackStore>();
         var turns = await store.ListSessionTurnsAsync(sessionId, ct);
@@ -379,7 +379,7 @@ public sealed class ImageAttachmentHttpTests
                 yield break;
             }
             yield return new UnifiedAgentEvent.TurnAccepted("provider-turn");
-            if (input.Prompt == "running")
+            if (input.PromptWithoutReportState() == "running")
             {
                 started.TrySetResult();
                 await release.Task.WaitAsync(token);

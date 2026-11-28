@@ -4,7 +4,7 @@ import { views } from "./views.js";
 export default defineTemplate({
   id: "equity-research",
   title: "个股长期投研",
-  description: "跟踪价格区间、估值和临近事件，持续更新长期投资判断。",
+  description: "为单只上市股票建立并持续更新投资判断，跟踪价格、估值、财报与催化事件。",
   inputs: {
     earningsProvider: { type: "string", optional: true, label: "财报分析提供方" },
     earningsModel: { type: "string", optional: true, label: "财报分析模型" },

@@ -206,7 +206,7 @@ public sealed partial class TrackFlowTests
 
         var turn = Assert.Single(ctx.Store.GetTurnsForSession(snapshot.Track.LeadSessionId!));
         AssertSuperseded(Assert.Single(await ctx.Store.TrackWakes.ListAsync(trackId, default)), turn.Id);
-        Assert.Single(ctx.AgentRuntime.OpenedSessions.SelectMany(s => s.RecordedInputs), input => input.Prompt == "Watch settled");
+        Assert.Single(ctx.AgentRuntime.OpenedSessions.SelectMany(s => s.RecordedInputs), input => input.PromptWithoutReportState() == "Watch settled");
     }
 
     [Theory]
@@ -252,7 +252,7 @@ public sealed partial class TrackFlowTests
         await ctx.Kernel.WaitForTrackIdleAsync(trackId).WaitAsync(TimeSpan.FromSeconds(5));
 
         var explicitInputs = ctx.AgentRuntime.OpenedSessions.SelectMany(s => s.RecordedInputs)
-            .Where(input => input.Prompt == "Both reviews finished");
+            .Where(input => input.PromptWithoutReportState() == "Both reviews finished");
         if (expectExplicitWake)
         {
             Assert.Single(explicitInputs);
@@ -363,7 +363,7 @@ public sealed partial class TrackFlowTests
         var secondWake = Assert.Single(wakes, w => w.CoalesceKey == TrackWakeRequests.TaskSettled(second.Task).CoalesceKey);
         Assert.Equal(expectedState, firstWake.State);
         Assert.Equal(expectedState, secondWake.State);
-        var joinInputs = ctx.AgentRuntime.OpenedSessions.SelectMany(s => s.RecordedInputs).Where(input => input.Prompt == "Join wake");
+        var joinInputs = ctx.AgentRuntime.OpenedSessions.SelectMany(s => s.RecordedInputs).Where(input => input.PromptWithoutReportState() == "Join wake");
         if (siblingOutcome == FlowOutcome.Ok)
         {
             Assert.Single(joinInputs);
@@ -393,7 +393,7 @@ public sealed partial class TrackFlowTests
         var turn = Assert.Single(ctx.Store.GetTurnsForSession(leadId));
         AssertSuperseded(await ReadTaskWakeAsync(ctx, worker.Task), turn.Id);
         Assert.Single(ctx.AgentRuntime.OpenedSessions.SelectMany(s => s.RecordedInputs),
-            input => input.Prompt == "Direct Lead wake");
+            input => input.PromptWithoutReportState() == "Direct Lead wake");
     }
 
     [Theory]
@@ -426,7 +426,7 @@ public sealed partial class TrackFlowTests
         Assert.Equal(TrackWakeStates.Done, delivered.State);
         Assert.Single(ctx.Store.GetTurnsForSession(leadId));
         Assert.DoesNotContain(ctx.AgentRuntime.OpenedSessions.SelectMany(s => s.RecordedInputs),
-            input => input.Prompt == "Join wake");
+            input => input.PromptWithoutReportState() == "Join wake");
     }
 
     [Fact]
@@ -483,7 +483,7 @@ public sealed partial class TrackFlowTests
         var delivered = await ReadTaskWakeAsync(ctx, workerTask);
         Assert.Equal(deferred.Id, delivered.Id);
         Assert.Equal(TrackWakeStates.Done, delivered.State);
-        Assert.DoesNotContain(ctx.AgentRuntime.OpenedSessions.SelectMany(s => s.RecordedInputs), input => input.Prompt == "Cron join");
+        Assert.DoesNotContain(ctx.AgentRuntime.OpenedSessions.SelectMany(s => s.RecordedInputs), input => input.PromptWithoutReportState() == "Cron join");
 
         async Task FireAsync()
         {
@@ -576,15 +576,15 @@ public sealed partial class TrackFlowTests
         if (startupFailure)
             Assert.Equal(2, attempts);
         else
-            Assert.Single(leadInputs, input => input.Prompt == "Explicit wake");
-        Assert.Contains("Task 'review'", Assert.Single(leadInputs, input => input.Prompt != "Explicit wake").Prompt);
+            Assert.Single(leadInputs, input => input.PromptWithoutReportState() == "Explicit wake");
+        Assert.Contains("Task 'review'", Assert.Single(leadInputs, input => input.PromptWithoutReportState() != "Explicit wake").Prompt);
         Assert.Contains((await ctx.Kernel.GetTrackFlowAsync(trackId)).Projection.Archived,
             node => node.Id == "notify" && node.Status == "failed");
 
         static async IAsyncEnumerable<UnifiedAgentEvent> ReplyAsync(TurnInput input, string failure)
         {
             await Task.Yield();
-            if (input.Prompt != "Explicit wake")
+            if (input.PromptWithoutReportState() != "Explicit wake")
                 yield return new UnifiedAgentEvent.TurnCompleted(null);
             else if (failure == "interrupted")
                 yield return new UnifiedAgentEvent.TurnInterrupted();
@@ -669,7 +669,7 @@ public sealed partial class TrackFlowTests
         Assert.Equal(pending.Id, delivered.Id);
         Assert.Equal(TrackWakeStates.Done, delivered.State);
         Assert.DoesNotContain(ctx.AgentRuntime.OpenedSessions.SelectMany(s => s.RecordedInputs),
-            input => input.Prompt == "Review ready");
+            input => input.PromptWithoutReportState() == "Review ready");
     }
 
     [Fact]
@@ -695,7 +695,7 @@ public sealed partial class TrackFlowTests
     private static async IAsyncEnumerable<UnifiedAgentEvent> RunScript(
         TurnInput input, Task hold, [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct)
     {
-        if (input.Prompt == "Hold lead")
+        if (input.PromptWithoutReportState() == "Hold lead")
             await hold.WaitAsync(ct);
         yield return new UnifiedAgentEvent.TurnCompleted(null);
     }

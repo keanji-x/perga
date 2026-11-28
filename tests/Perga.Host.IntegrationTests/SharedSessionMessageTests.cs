@@ -101,7 +101,7 @@ public sealed class SharedSessionMessageTests
             await using var reopened = new PergaHostTestCluster(directory.FullName);
             var kernel = reopened.Services.GetRequiredService<IPergaKernel>();
             await kernel.WaitForTrackIdleAsync(trackId);
-            Assert.Equal(["first-waiting\n\nsecond-waiting"], reopened.AgentRuntime.ExecutedTurns.Select(execution => execution.Input.Prompt));
+            Assert.Equal(["first-waiting\n\nsecond-waiting"], reopened.AgentRuntime.ExecutedTurns.Select(execution => execution.Input.PromptWithoutReportState()));
             foreach (var (key, expected) in new[] { ("declared-uncertain", "unknown"), ("withdraw-me", "withdrawn"),
                          ("first-waiting", "delivered"), ("second-waiting", "delivered") })
             {
@@ -243,18 +243,18 @@ public sealed class SharedSessionMessageTests
         }
 
         await kernel.WaitForTrackIdleAsync(trackId, ct);
-        Assert.Equal(["first", "second\n\ncontent"], host.AgentRuntime.ExecutedTurns.Select(execution => execution.Input.Prompt));
+        Assert.Equal(["first", "second\n\ncontent"], host.AgentRuntime.ExecutedTurns.Select(execution => execution.Input.PromptWithoutReportState()));
 
         async IAsyncEnumerable<UnifiedAgentEvent> Stream(HarnessLaunchSpec _, TurnInput input,
             [EnumeratorCancellation] CancellationToken token)
         {
             yield return new UnifiedAgentEvent.TextDelta("Running");
-            if (input.Prompt == "first")
+            if (input.PromptWithoutReportState() == "first")
             {
                 first.TrySetResult(input.CorrelationId);
                 await endFirst.Task.WaitAsync(token);
             }
-            else if (input.Prompt == "second\n\ncontent")
+            else if (input.PromptWithoutReportState() == "second\n\ncontent")
             {
                 second.TrySetResult(input.CorrelationId);
                 await endSecond.Task.WaitAsync(token);

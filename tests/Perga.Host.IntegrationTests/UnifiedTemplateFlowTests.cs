@@ -145,7 +145,7 @@ public sealed class UnifiedTemplateFlowTests
         Assert.Equal(TaskRunStatus.Done, secondConsumer.Status);
         Assert.Equal(2, secondConsumer.RunCount);
         Assert.Collection(host.AgentRuntime.ExecutedTurns.Where(turn =>
-            turn.Input.Prompt.StartsWith("Check ", StringComparison.Ordinal) || turn.Input.Prompt.Contains("Consume pulse", StringComparison.Ordinal)),
+            turn.Input.PromptWithoutReportState().StartsWith("Check ", StringComparison.Ordinal) || turn.Input.Prompt.Contains("Consume pulse", StringComparison.Ordinal)),
             turn => Assert.Contains("Check old value", turn.Input.Prompt),
             turn => Assert.Contains("Consume pulse", turn.Input.Prompt),
             turn => Assert.Contains("Check new value", turn.Input.Prompt),

@@ -121,21 +121,28 @@ public sealed partial class TrackActor
             "Use session_list/create/read/update/send/withdraw/control/respond to manage child conversations. Use session_create for collaborators and reuse requestKey for retries. Declare formal tasks in Flow and have Workers submit task_done with an outcome. Use provider_list to discover available providers, models, reasoning efforts, and permission modes. Only control your direct children; the Lead can also manage other sessions. Never stop, reset or archive yourself. Answer delegated asks and approvals with session_respond; the human can always take over.";
         if (session.IsLead)
         {
-            if (_memoryBinding is null && report.Blocks.Count == 0 && string.IsNullOrWhiteSpace(reportMd))
-                reportMd = BuildEmptyReportPrompt(report.DocRev);
+            var reportFirst = _memoryBinding is null;
+            if (reportFirst && TemplateReport.IsBlank(report))
+                reportMd = "(empty)";
 
-            var templateScoping = _policy is null
-                ? " When no template is active yet, once you understand the scope of substantive work—before doing deep work or writing the Report—check `template_list` (and `template_read` for any plausible match), resolve task-specific `inputs`, preview with `track_set(..., dryRun: true)` when helpful, and apply a fitting template up front so its Report layout and `data` seed cleanly."
-                : string.Empty;
+            const string discoverTemplates = "When no template is active yet, once you understand the scope of substantive work—before doing deep work or writing the Report—check `template_list` (and `template_read` for any plausible match), resolve task-specific `inputs`, preview with `track_set(..., dryRun: true)` when helpful, and apply a fitting template up front so its Report layout and `data` seed cleanly.";
+            var templateScoping = !reportFirst && _policy is null ? $" {discoverTemplates}" : string.Empty;
+            var templateCatalog = reportFirst && _policy is null ? BuildLeadTemplateCatalogCore(discoverTemplates) : string.Empty;
+            var reportGuidance = reportFirst
+                ? "For substantive work, default to Report-first. Write goals, plans, analyses, decisions, and implementation or verification progress to the Report with `report_commit` before ending the turn. Keep your Conversation reply concise and point to the Report. Leave the Report unchanged only for brief one-off Q&A, small talk, or clarifying questions before work starts."
+                : "Use **Conversation** as the working thread for quick answers, clarifying questions, coordination, and brief summaries of Report updates, not as the sole home for lasting deliverables.";
+            var templateReportGuidance = reportFirst
+                ? "After `track_set`, use its `reportAnchor` with `report_commit` when present. Otherwise, get an anchor with `report_read` before editing. Inspect"
+                : "After `track_set`, read the seeded Report (`report_read`) and inspect";
             return $"""
                     You are the Lead Session for Perga Track `{TrackId}` (title: `{_track.Title}`).{BuildTrackOriginNote()}
 
                     ## Track Model
                     You own four durable surfaces on this Track:
                     - **Title**: keep it concise and accurate once the goal is clear (`track_rename`).
-                    - **Report**: the Track's living document (`report_read` / `report_commit`)—where plans, research, decisions, and current progress live. Use **Conversation** as the working thread for quick answers, clarifying questions, coordination, and brief summaries of Report updates, not as the sole home for lasting deliverables.
-                    - **Templates & Data**: Templates are optional and implicit (`template_list` / `template_read`, apply or preview via `track_set` with a `templateId` or `.perga.js source`, `inputs`, and `dryRun`, detach with `clear`, update inputs with `template_update_inputs`). A template composes four layers—Report widgets, schema-validated `data` (`data_patch`), starter Flow nodes, and worker routing—and is composable rather than all-or-nothing (you own any Flow or schedule nodes a template seeds and may edit or cancel them).{templateScoping} Keep structured facts in `data` and narrative in the Report without duplicating widget content. After `track_set`, read the seeded Report (`report_read`) and inspect `template_read(templateId: "__current__", format: "files")` when you need the template's `data` schema.
-                    - **Flow**: declarative task, watch, Track spawn, and schedule orchestration governed by `flow.json`.
+                    - **Report**: the Track's living document (`report_read` / `report_commit`)—where plans, research, decisions, and current progress live. {reportGuidance}
+                    - **Templates & Data**: Templates are optional and implicit (`template_list` / `template_read`, apply or preview via `track_set` with a `templateId` or `.perga.js source`, `inputs`, and `dryRun`, detach with `clear`, update inputs with `template_update_inputs`). A template composes four layers—Report widgets, schema-validated `data` (`data_patch`), starter Flow nodes, and worker routing—and is composable rather than all-or-nothing (you own any Flow or schedule nodes a template seeds and may edit or cancel them).{templateScoping} Keep structured facts in `data` and narrative in the Report without duplicating widget content. {templateReportGuidance} `template_read(templateId: "__current__", format: "files")` when you need the template's `data` schema.
+                    - **Flow**: declarative task, watch, Track spawn, and schedule orchestration governed by `flow.json`.{templateCatalog}
 
                     ## Track Flow Orchestration
                     - The Host manages `{_flowFileStore.GetFlowFilePath(TrackId)}` (current `flowRev`: {_track.FlowRev}).
@@ -164,17 +171,46 @@ public sealed partial class TrackActor
         return $"You are operating in Perga Track '{_track.Title}' ({TrackId}) as {role}.\n\n{sessionNote}\n\n## Current Report\n{reportMd}{templateDataSection}";
     }
 
-    private static string BuildEmptyReportPrompt(int docRev)
+    private string BuildLeadTemplateCatalogCore(string discoverTemplates)
     {
-        var anchor = JsonSerializer.Serialize(
-            new ReadAnchor(docRev, new Dictionary<string, int>(), WholeDocumentRead: true), JsonHelpers.SerializerOptions);
-        return $"""
-                The Report is empty. Use this ReadAnchor to call `report_commit` directly without calling `report_read` first: `{anchor}`. If you apply a template with `track_set` first, call `report_read` to get the seeded Report's anchor.
+        var manifests = _templateCatalog.ListManifests();
+        if (manifests.Count == 0)
+            return string.Empty;
+        if (manifests.Count > 10)
+            return $"\n\n{discoverTemplates}";
 
-                The user sees the Report alongside your reply. On the first turn:
-                - If you establish a clear goal, plan, analysis, or deliverable, commit an initial structured Report with `report_commit` before ending the turn. Use `track_rename` if the title is still untitled or a placeholder. Keep your reply concise and point to the Report.
-                - If you're answering a quick one-off question or asking for clarification before starting work, you can leave the Report empty for now. Briefly say you'll fill it in once the direction is confirmed.
-                """;
+        var entries = manifests.Select(manifest =>
+        {
+            var inputKeys = string.Join(", ", manifest.InputsSchema.EnumerateObject().Select(property => property.Name));
+            return $"- `{manifest.Id}` | {manifest.Title} | {manifest.Description} | inputKeys: [{inputKeys}]";
+        });
+        return "\n\n## Installed Templates\n" +
+               "If no template is active and a listed template clearly fits the work, apply it directly with `track_set` and supply any task-specific inputs. Seeding an empty Report returns `reportAnchor` for an immediate `report_commit`.\n" +
+               string.Join("\n", entries);
+    }
+
+    private string? BuildLeadReportStateContextCore(AgentSessionDto session)
+    {
+        if (!session.IsLead || _memoryBinding is not null)
+            return null;
+
+        var report = _reports.Document;
+        if (TemplateReport.IsBlank(report))
+        {
+            var anchor = JsonSerializer.Serialize(_reports.CreateReadAnchor(), JsonHelpers.SerializerOptions);
+            var templateGuidance = _policy is null && _templateCatalog.ListManifests().Count > 0
+                ? "If a fitting template applies (check the installed list or `template_list`), apply it first with `track_set` and use its `reportAnchor`. "
+                : string.Empty;
+            return $"""
+                    <report_state>
+                    The Report is empty. {templateGuidance}To commit directly without a template change, use this ReadAnchor: `{anchor}`.
+                    Commit substantive plans, analyses, or deliverables with `report_commit` before ending the turn. Use `track_rename` if the Track is still untitled. Skip the Report for brief one-off Q&A, small talk, or clarifying questions before work starts.
+                    </report_state>
+                    """;
+        }
+
+        var sections = JsonSerializer.Serialize(ReportBlockSelection.CollectOrderedSections(report.Blocks), JsonHelpers.SerializerOptions);
+        return $"<report_state>docRev={report.DocRev}; H1 sections={sections}. Before ending the turn, use a current anchor to sync new findings, decisions, and progress with `report_commit` (`replace_section` or `edit_block`).</report_state>";
     }
 
     private string BuildEpochSeedSystemPrompt(

@@ -30,7 +30,7 @@ public sealed class WorkerSessionIntegrationTests
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         host.AgentRuntime.BeforeTurn = async (input, turnCt) =>
         {
-            if (input.Prompt != prompt) return;
+            if (input.PromptWithoutReportState() != prompt) return;
             started.TrySetResult();
             await release.Task.WaitAsync(turnCt);
         };

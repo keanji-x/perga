@@ -243,7 +243,7 @@ internal static class KernelMcpReportSupport
 
         return JsonHelpers.ToElement(report with
         {
-            Sections = format == "outline" ? CollectOrderedSections(blocks) : null,
+            Sections = format == "outline" ? ReportBlockSelection.CollectOrderedSections(blocks) : null,
             RenderedMarkdown = format is "full" or "markdown" ? report.RenderedMarkdown : null,
             Blocks = format is "full" or "blocks" ? blocks : null,
             OutlineBlocks = format == "outline"
@@ -574,21 +574,6 @@ internal static class KernelMcpReportSupport
         }
 
         return elem.GetBoolean();
-    }
-
-    private static IReadOnlyList<string> CollectOrderedSections(IReadOnlyList<ReportBlock> blocks)
-    {
-        var seen = new HashSet<string>(StringComparer.Ordinal);
-        var sections = new List<string>();
-        foreach (var block in blocks)
-        {
-            if (!string.IsNullOrWhiteSpace(block.SectionH1) && seen.Add(block.SectionH1))
-            {
-                sections.Add(block.SectionH1);
-            }
-        }
-
-        return sections;
     }
 
     private static JsonElement BuildBlockContract() => JsonHelpers.ParseClone("""

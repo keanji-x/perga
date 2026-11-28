@@ -172,7 +172,14 @@ public sealed partial class TrackActor
         }
         if (flowChanged)
             await TryPokeLeadForPendingWakesCoreAsync().ConfigureAwait(false);
-        return result with { Track = TemplatePresentation.Project(_track, _policy, header.View) };
+
+        var document = _reports.Document;
+        return result with
+        {
+            Track = TemplatePresentation.Project(_track, _policy, header.View),
+            ReportAnchor = reportSeed is not null || TemplateReport.IsBlank(document) ? _reports.CreateReadAnchor() : null,
+            ReportSections = reportSeed is not null ? ReportBlockSelection.CollectOrderedSections(document.Blocks) : null
+        };
     }
 
     private async Task<(FlowSpecDto Spec, TrackFlowUpdate? Update, HashSet<string> StoppingNodes)> PrepareTemplateFlowCoreAsync(

@@ -149,7 +149,7 @@ public sealed class SessionLivenessTests
             var page = await kernel.GetSessionItemsAsync(session.Id, new(), new InteropPrincipal.Human(), default);
             Assert.Equal("idle", page.State);
             Assert.Equal("interrupted", page.LastTurn?.Status);
-            Assert.DoesNotContain(host.AgentRuntime.ExecutedTurns, t => t.Input.Prompt == "launch");
+            Assert.DoesNotContain(host.AgentRuntime.ExecutedTurns, t => t.Input.PromptWithoutReportState() == "launch");
         }
         finally { release.TrySetResult(); }
     }
