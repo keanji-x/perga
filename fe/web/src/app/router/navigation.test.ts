@@ -187,10 +187,20 @@ describe('isSameTrackEntry', () => {
     expect(sameTrackSearch(entry, 'mem', { panel: undefined }, alias)).toEqual({});
   });
 
-  it.each(['', '?day=2026-11-28', '?view=today'])('keeps the Focus and Today root out of Track history (%s)', (searchStr) => {
+  it.each(['', '?day=2026-10-04', '?view=today'])('does not infer Track ownership from a root URL alone (%s)', (searchStr) => {
     const root = { pathname: '/', searchStr };
     expect(isSameTrackEntry(root, 'daily')).toBe(false);
     expect(sameTrackSearch(root, 'daily', {})).toBeNull();
+  });
+
+  it.each(['?day=2026-10-04', '?view=today'])('matches Today only to its recorded Track (%s)', (searchStr) => {
+    const today = { pathname: '/', searchStr, trackId: 'daily' };
+    expect(isSameTrackEntry(today, 'daily')).toBe(true);
+    expect(isSameTrackEntry(today, 'project')).toBe(false);
+  });
+
+  it('excludes mobile Focus even when desktop Today recorded its Track at the root', () => {
+    expect(isSameTrackEntry({ pathname: '/', trackId: 'daily' }, 'daily')).toBe(false);
   });
 });
 

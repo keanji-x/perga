@@ -75,7 +75,7 @@ import { useUiPreferences } from '../providers/ui-preferences.tsx';
 import { useMobileHeaderActionsHost,useMobileHeaderTitleHost } from '../shell/public.tsx';
 import { mobileBackLabel, useMobileShellBack } from './mobile-back.ts';
 import { visibleAreas } from '../../../../core/domain/area.ts';
-import { useHistoryReturnFocus } from './app-history.tsx';
+import { useHistoryReturnFocus, useHistoryTrack } from './app-history.tsx';
 import { TrackSelector } from '../shell/mobile/track-selector.tsx';
 import dailyStyles from './daily-planner.module.css';
 import { deriveEmptyTrackCenter, type CenteredStagePresentation } from './centered-stage.tsx';
@@ -120,6 +120,7 @@ export function TrackRouteBody({
 
 }) {
   const track = useMemo(() => toTrack(snapshot.track, trackActivityFromSnapshot(snapshot)), [snapshot]);
+  useHistoryTrack(track.id);
   const isMemoryTrack = track.areaId === 'sys_memory';
   const canReopenTrack = !isMemoryTrack && snapshot.track.closedAtMs != null;
   const canCloseTrack = !isMemoryTrack && !canReopenTrack;

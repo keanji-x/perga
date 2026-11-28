@@ -410,12 +410,15 @@ export type TrackSearchPatch = Readonly<{
 }>;
 
 export function isSameTrackEntry(
-  entry: Readonly<{ pathname: string }> | null,
+  entry: Readonly<{ pathname: string; searchStr?: string; trackId?: string }> | null,
   expectedTrackId: string,
   alias?: TrackRouteAlias,
 ): boolean {
   return entry !== null && (routeParamFromPath(entry.pathname, '/track/') === expectedTrackId
-    || (alias?.trackId === expectedTrackId && trimPathRight(entry.pathname) === trimPathRight(alias.path)));
+    || (alias?.trackId === expectedTrackId && trimPathRight(entry.pathname) === trimPathRight(alias.path))
+    // A bare root can record Today on desktop and resolve to Focus on mobile.
+    || (entry.trackId === expectedTrackId
+      && !isMobileFocusHomeLocation({ pathname: entry.pathname, searchStr: entry.searchStr ?? '' })));
 }
 
 /**
