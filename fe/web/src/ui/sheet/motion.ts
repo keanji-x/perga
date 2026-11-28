@@ -2,6 +2,11 @@ import { playSpring, type SpringSample } from '../motion/spring.ts';
 import { createPlaybackTarget } from '../motion/target.ts';
 import { notifyAncestorVisualChange } from '../hover-preview/visual-change.ts';
 
+function footerOffset(footer: HTMLDivElement) {
+  const transform = getComputedStyle(footer).transform;
+  return transform === 'none' ? 0 : new DOMMatrixReadOnly(transform).m42;
+}
+
 /** One paint writer and playback identity per connected panel lifetime. Layout
  * changes retain q/v; q is motion relative to the declared unanimated frame. */
 export function createSheetMotion(panel: HTMLDivElement, getFooter: () => HTMLDivElement | null) {
@@ -13,8 +18,20 @@ export function createSheetMotion(panel: HTMLDivElement, getFooter: () => HTMLDi
   // CSS-pixel frame. Keep fractional travel; offsetHeight would round it.
   let painted: SpringSample | null = null;
   const paint = (value: number) => ({ transform: `translateY(${value}px)` });
-  const clearFooter = () => {
+  const cancelFooter = () => {
     footerAnimation?.cancel(); footerAnimation = null;
+  };
+  const holdFooter = () => {
+    if (footerAnimation === null) return;
+    const footer = getFooter();
+    if (footer !== null) {
+      const offset = footerOffset(footer);
+      footer.style.transform = offset === 0 ? '' : paint(offset).transform;
+    }
+    cancelFooter();
+  };
+  const clearFooter = () => {
+    cancelFooter();
     const footer = getFooter();
     if (footer !== null) footer.style.transform = '';
   };
@@ -26,6 +43,7 @@ export function createSheetMotion(panel: HTMLDivElement, getFooter: () => HTMLDi
     const sample = active.sample() ?? painted ?? { value: panel.getBoundingClientRect().height, velocity: 0 };
     // Preserve paint before removing the native fill effect.
     write(sample.value, false); painted = sample;
+    holdFooter();
     active.setOnVisualChange(undefined); active.cancel(); revision++;
     // Publish only after the old native fill can no longer override inline paint.
     notifyAncestorVisualChange(panel);
@@ -34,33 +52,37 @@ export function createSheetMotion(panel: HTMLDivElement, getFooter: () => HTMLDi
   return {
     hold,
     direct: (sample: SpringSample) => { if (live) { painted = sample; write(sample.value); } },
-    move: (to: number, immediate: boolean, settled: () => void, { exit = false } = {}) => {
+    move: (to: number, immediate: boolean, settled: () => void, { exit = false } = {}): boolean => {
       // Initialization is available only after native show/layout. A hidden
       // border box (including its default zero) is never ready paint. Existing
       // q/v remains untouched while geometry is unavailable.
-      if (!live || !panel.isConnected || panel.getClientRects().length === 0) return;
+      if (!live || !panel.isConnected || panel.getClientRects().length === 0) return false;
       const height = panel.getBoundingClientRect().height;
-      if (!Number.isFinite(height) || height <= 0 || getComputedStyle(panel).visibility !== 'visible') return;
-      const footer = getFooter();
-      const footerTransform = footerAnimation && footer ? getComputedStyle(footer).transform : 'none';
-      const footerFrom = footerTransform === 'none' ? 0 : new DOMMatrixReadOnly(footerTransform).m42;
+      if (!Number.isFinite(height) || height <= 0 || getComputedStyle(panel).visibility !== 'visible') return false;
       const from = hold(); const generation = revision;
       const complete = () => {
         if (!live || revision !== generation || !panel.isConnected) return;
+        clearFooter();
         painted = { value: to, velocity: 0 }; write(to); settled();
       };
       if (immediate || exit && from.value >= to || from.value === to && from.velocity === 0) {
-        clearFooter(); complete(); return;
+        complete(); return true;
       }
-      const syncFooter = footer?.isConnected && (exit || footerFrom > 0 && from.value > 0);
+      const footer = getFooter();
+      const footerFrom = footer?.isConnected ? footerOffset(footer) : 0;
+      const panelSpan = to - from.value;
+      const syncFooter = footer?.isConnected && (exit || footerFrom > 0 && panelSpan !== 0);
+      const footerTarget = exit && syncFooter ? footerFrom + Math.max(panelSpan,
+        (footer.ownerDocument.defaultView?.innerHeight ?? 0) - footer.getBoundingClientRect().top) : 0;
       const keyframes: Keyframe[] = [];
       // The same samples and document clock drive the portal independently of panel clipping.
       const playback = playSpring([panel], from.value, to, from.velocity, syncFooter ? value => {
-        keyframes.push(paint(Math.max(0, exit ? footerFrom + (value - from.value) : footerFrom * value / from.value)));
+        const progress = (value - from.value) / panelSpan;
+        keyframes.push(paint(Math.max(0, footerFrom + progress * (footerTarget - footerFrom))));
         return paint(value);
       } : paint, { stopAtTarget: exit });
       // Only the panel's finished promise owns settlement, including manual finish().
-      active.replace({ ...playback, cancel: () => { playback.cancel(); clearFooter(); } }, complete);
+      active.replace({ ...playback, cancel: () => { playback.cancel(); cancelFooter(); } }, complete);
       if (syncFooter) {
         const [primary] = playback.animations;
         footerAnimation = footer.animate(keyframes, primary.effect!.getTiming());
@@ -70,6 +92,7 @@ export function createSheetMotion(panel: HTMLDivElement, getFooter: () => HTMLDi
       playback.setOnVisualChange(() => {
         if (live && revision === generation && panel.isConnected) notifyAncestorVisualChange(panel);
       });
+      return true;
     },
     dispose: () => { live = false; revision++; active.setOnVisualChange(undefined); active.cancel(); clearFooter(); },
   };

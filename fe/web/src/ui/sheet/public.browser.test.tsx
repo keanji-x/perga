@@ -45,6 +45,12 @@ async function acquire(handle: HTMLElement) {
 }
 const releaseMouse = () => commands.mouseButton('[data-nc-sheet-handle]', false);
 
+async function pausePair(panel: HTMLElement, footer: HTMLElement) {
+  const pair = [panel.getAnimations()[0], footer.getAnimations()[0]] as const;
+  for (const animation of pair) animation.pause();
+  await Promise.all(pair.map(animation => animation.ready));
+  return pair;
+}
 
 // Seed through the real handle/release path. Only the native timeline is held;
 // no fixture paints the panel or reimplements the spring. The two inputs yield
@@ -334,6 +340,30 @@ it('moves the stationary footer by only the remaining panel travel on drag dismi
   } finally { await releaseMouse(); }
 });
 
+it('clears a tall footer after a deep drag without jumping on release', async () => {
+  const { panel, dialog, handle, footer, settle, update, props } = await mount({
+    footer: <textarea aria-label="Multiline draft" style={{ display: 'block', boxSizing: 'border-box', height: 110 }} />,
+  });
+  await settle();
+  const footerTop = footer.getBoundingClientRect().top;
+  const down = await acquire(handle);
+  try {
+    event(handle, 'pointermove', down.y + 580, down.time + 500, down.id);
+    expect(footer.getBoundingClientRect().top).toBe(footerTop);
+    expect(window.innerHeight - footerTop).toBeGreaterThan(panel.getBoundingClientRect().height - 580);
+    event(handle, 'pointerup', down.y + 580, down.time + 501, down.id);
+    expect(props.onCloseRequest).toHaveBeenCalledWith('handle');
+    update({ open: false });
+    const [exit, footerExit] = await pausePair(panel, footer);
+    exit.currentTime = footerExit.currentTime = 0;
+    expect(footer.getBoundingClientRect().top).toBe(footerTop);
+    exit.currentTime = footerExit.currentTime = Number(exit.effect!.getComputedTiming().duration);
+    expect(footer.getBoundingClientRect().top).toBeGreaterThanOrEqual(window.innerHeight);
+    await act(async () => { exit.finish(); await exit.finished; });
+    expect(dialog.open).toBe(false);
+  } finally { await releaseMouse(); }
+});
+
 it.each(['reopen', 'desktop'] as const)('releases the moving exit footer on %s', async mode => {
   const destination = document.body.appendChild(document.createElement('div'));
   const { panel, dialog, footer, settle, update } = await mount({ desktopFooterRef: { current: destination } });
@@ -378,13 +408,35 @@ it.each(['reopen', 'desktop'] as const)('releases the moving exit footer on %s',
   } finally { destination.remove(); }
 });
 
+it('holds the returning footer on handle acquisition without pointer movement', async () => {
+  const { panel, handle, footer, settle, update } = await mount();
+  await settle();
+  const rest = footer.getBoundingClientRect().top;
+  update({ open: false });
+  const [exit, footerExit] = await pausePair(panel, footer);
+  exit.currentTime = footerExit.currentTime = 60;
+  update({ open: true });
+  const [entry, footerEntry] = await pausePair(panel, footer);
+  entry.currentTime = footerEntry.currentTime = 80;
+  const held = footer.getBoundingClientRect().top;
+  expect(held - rest).toBeGreaterThan(20);
+
+  const down = await acquire(handle);
+  try {
+    expect(handle.hasPointerCapture(down.id)).toBe(true);
+    expect(footer.getAnimations()).toHaveLength(0);
+    expect(Math.abs(footer.getBoundingClientRect().top - held)).toBeLessThan(1);
+  } finally { await releaseMouse(); }
+  await settle();
+  expect(footer.getBoundingClientRect().top).toBe(rest);
+  expect(footer.style.transform).toBe('');
+});
+
 it('keeps the active exit and retained frame when the keyboard dismisses', async () => {
   const { panel, dialog, footer, frame, settle, update } = await mount({ frame: { heightPx: 480, bottomInsetPx: 300 } });
   await settle();
   update({ open: false });
-  const [exit] = panel.getAnimations();
-  const [footerExit] = footer.getAnimations();
-  exit.pause(); await exit.ready;
+  const [exit, footerExit] = await pausePair(panel, footer);
   const calls = vi.mocked(spring.playSpring);
   const count = calls.mock.calls.length;
   update({ frame: { heightPx: 560, bottomInsetPx: 110 } });
@@ -394,6 +446,9 @@ it('keeps the active exit and retained frame when the keyboard dismisses', async
   expect(footer.getAnimations()).toEqual([footerExit]);
   expect(frame.getBoundingClientRect().height).toBe(480);
   expect(frame.getBoundingClientRect().bottom).toBe(700);
+  exit.currentTime = footerExit.currentTime = Number(exit.effect!.getComputedTiming().duration);
+  expect(panel.getBoundingClientRect().top).toBeGreaterThanOrEqual(window.innerHeight);
+  expect(footer.getBoundingClientRect().top).toBeGreaterThanOrEqual(window.innerHeight);
   await act(async () => { exit.finish(); await exit.finished; });
   expect(dialog.open).toBe(false);
 });
@@ -659,6 +714,20 @@ it('keeps close choice authority while exit waits for a usable layout frame', as
     await expect.poll(() => dialog.open).toBe(false);
     expect(document.activeElement).toBe(external); expect(focus).not.toHaveBeenCalled();
   } finally { controls.remove(); }
+});
+
+it('retries closing on a frame update after the panel becomes visible', async () => {
+  const { panel, dialog, settle, update } = await mount();
+  await settle();
+  panel.style.visibility = 'hidden';
+  update({ open: false });
+  expect(dialog.open).toBe(true);
+  expect(panel.getAnimations()).toHaveLength(0);
+
+  panel.style.visibility = '';
+  update({ frame: { heightPx: 550, bottomInsetPx: 20 } });
+  expect(panel.getAnimations()).toHaveLength(1);
+  await expect.poll(() => dialog.open).toBe(false);
 });
 
 // Formal PR3014 sampler integration; native controls and independent rect/time oracle.
