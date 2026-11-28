@@ -4,6 +4,7 @@ using Dapper;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
 using Perga.AgentKit;
+using Perga.Host.Serialization;
 using Perga.Kernel;
 using Perga.Kernel.Ports;
 using Perga.Host.IntegrationTests.Fixtures;
@@ -43,6 +44,55 @@ public sealed class SessionLivenessTests
         Assert.Equal("completed", page.LastTurn?.Status);
         Assert.Equal(before.NativeThreadId, page.Session.NativeThreadId);
         Assert.Equal(before.Epoch, page.Session.Epoch);
+    }
+
+    [Fact]
+    public async Task IdleEvictionKeepsCompactAvailableAndResumesOriginalSession()
+    {
+        var idleTimeout = TimeSpan.FromMinutes(2);
+        await using var host = new PergaHostTestCluster(configureHostOptions: o => o.SessionIdleTimeout = idleTimeout);
+        var (track, sessionId) = await host.CreateTrackAsync();
+        var kernel = host.Services.GetRequiredService<IPergaKernel>();
+        var human = new InteropPrincipal.Human();
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var ct = deadline.Token;
+        var itemsUrl = $"/api/v1/sessions/{sessionId}/items?view=run";
+        var compactCalls = 0;
+        host.AgentRuntime.CompactHandler = _ =>
+        {
+            Interlocked.Increment(ref compactCalls);
+            return Task.FromResult(new NativeCompactResult(Summary: "Compacted."));
+        };
+
+        var unused = await host.AuthenticatedClient.GetFromJsonAsync<SessionItemsPageDto>(itemsUrl, PergaJsonDefaults.ApiOptions, ct);
+        Assert.False(unused!.Capabilities!.SupportsCompact);
+
+        await kernel.SendSessionMessageAsync(sessionId, new("first", "first"), human, ct);
+        await kernel.WaitForTrackIdleAsync(track, ct);
+        var before = await host.AuthenticatedClient.GetFromJsonAsync<SessionItemsPageDto>(itemsUrl, PergaJsonDefaults.ApiOptions, ct);
+        Assert.NotNull(before!.Session.NativeThreadId);
+        Assert.True(before.Capabilities!.SupportsCompact);
+
+        host.TimeProvider.Advance(idleTimeout);
+        Assert.Equal(1, await kernel.Actors.EvictIdleSessionRuntimesAsync(ct));
+        var evicted = await host.AuthenticatedClient.GetFromJsonAsync<SessionItemsPageDto>(itemsUrl, PergaJsonDefaults.ApiOptions, ct);
+        Assert.Equal("idle", evicted!.State);
+        Assert.Null(evicted.ReadonlyReason);
+        Assert.True(evicted.Capabilities!.SupportsCompact);
+        Assert.Single(host.AgentRuntime.OpenedSessions);
+
+        using var response = await host.AuthenticatedClient.PostAsJsonAsync($"/api/v1/sessions/{sessionId}/control",
+            new { action = "compact", expectedEpoch = evicted.Session.Epoch }, ct);
+        response.EnsureSuccessStatusCode();
+
+        var after = await host.AuthenticatedClient.GetFromJsonAsync<SessionItemsPageDto>(itemsUrl, PergaJsonDefaults.ApiOptions, ct);
+        Assert.Equal("idle", after!.State);
+        Assert.Equal(before.Session.NativeThreadId, after.Session.NativeThreadId);
+        Assert.Equal(before.Session.Epoch, after.Session.Epoch);
+        Assert.Equal(2, host.AgentRuntime.OpenedSessions.Count);
+        Assert.Equal(before.Session.NativeThreadId, host.AgentRuntime.OpenedSessions.Last().Spec.ResumeNativeThreadId);
+        Assert.Equal(1, compactCalls);
+        Assert.Single(host.AgentRuntime.ExecutedTurns);
     }
 
     [Theory]

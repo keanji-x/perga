@@ -425,10 +425,13 @@ public sealed partial class TrackActor
         _runtimes.TryGetOpen(session.Id, out var handle);
         if (!string.Equals(handle?.LaunchSpec.Provider, session.Provider, StringComparison.OrdinalIgnoreCase)) handle = null;
         var configuration = handle?.Agent.WorkerConfiguration;
+        var supportsResume = handle?.Agent.SupportsSessionResume ?? EffectiveAgentRuntime.CanResumeSession(session.Provider);
+        // Compact can reopen an existing session before choosing native compaction or an epoch handover.
+        var canResumeForCompact = supportsResume && !session.ReconnectInvalidated &&
+            !string.IsNullOrWhiteSpace(session.NativeThreadId);
         return new(configuration?.Models ?? [], configuration?.DefaultModel, configuration?.DefaultReasoningEffort,
             handle?.Agent.AvailablePermissionModes ?? [], handle?.Agent.SupportsNativeSteer == true,
-            handle?.Agent.SupportsSessionResume ?? EffectiveAgentRuntime.CanResumeSession(session.Provider),
-            handle?.Agent.SupportsNativeCompact == true);
+            supportsResume, handle?.Agent.SupportsNativeCompact == true || canResumeForCompact);
     }
 
     private IReadOnlyList<PendingInteractionDto> ReadInteractionsCore(AgentSessionDto session, InteropPrincipal principal)
