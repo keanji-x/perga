@@ -309,11 +309,12 @@ public sealed class HostCliTests : IDisposable
         CreatePackage();
         UseLauncherEnvironment();
         WriteLauncher();
-        var db = Path.Combine(Root, "db", "custom.db");
+        var data = Path.Combine(Root, "user's data");
+        _variables["PERGA_DATA_DIR"] = data;
+        var db = Path.Combine(Root, "db", "user's custom.db");
         _variables["PERGA_DB_PATH"] = db;
-        Directory.CreateDirectory(Path.GetDirectoryName(db)!);
-        File.WriteAllText(db, "db");
-        File.WriteAllText(Path.Combine(Data, "perga.db"), "data");
+        Write(db, "db");
+        Write(Path.Combine(data, "perga.db"), "data");
         File.WriteAllText(Path.Combine(Bin, "other-tool"), "keep");
 
         var result = await RunAsync("uninstall", confirm);
@@ -322,9 +323,51 @@ public sealed class HostCliTests : IDisposable
         Assert.False(Directory.Exists(Install));
         Assert.False(File.Exists(Launcher));
         Assert.Equal("db", File.ReadAllText(db));
-        Assert.Equal("data", File.ReadAllText(Path.Combine(Data, "perga.db")));
+        Assert.Equal("data", File.ReadAllText(Path.Combine(data, "perga.db")));
         Assert.True(File.Exists(Path.Combine(Bin, "other-tool")));
-        Assert.Contains($"Your data remains in {Data}", result.Output);
+        Assert.Contains($"  db:       {db}", result.Output);
+        Assert.Contains($"Your data remains in {data}.", result.Output);
+        Assert.Contains($"Your database remains at {db}.", result.Output);
+        Assert.Contains($"To remove all user data too:\n  rm -rf '{Root}/user'\\''s data'\n  rm -f '{Root}/db/user'\\''s custom.db'", Normalize(result.Output));
+    }
+
+    [Fact]
+    public async Task UninstallListsAnExplicitDatabaseInsideTheDataDirectoryOnlyAsUserData()
+    {
+        CreatePackage();
+        UseLauncherEnvironment();
+        var db = Path.Combine(Data, "custom.db");
+        _variables["PERGA_DB_PATH"] = db;
+        Write(db, "db");
+
+        var result = await RunAsync("uninstall", "--yes");
+
+        Assert.Equal(0, result.Code);
+        Assert.Equal("db", File.ReadAllText(db));
+        Assert.Contains($"User data is kept:\n  data:     {Data}", Normalize(result.Output));
+        Assert.Contains($"  rm -rf '{Data}'", result.Output);
+        Assert.DoesNotContain("  db:", result.Output);
+        Assert.DoesNotContain("  rm -f ", result.Output);
+    }
+
+    [Fact]
+    public async Task UninstallShowsThePhysicalPathOfAnExternalDatabaseReachedThroughData()
+    {
+        CreatePackage();
+        UseLauncherEnvironment();
+        var db = Path.Combine(Root, "external db", "custom.db");
+        Write(db, "db");
+        var link = Path.Combine(Data, "linked db");
+        Directory.CreateSymbolicLink(link, Path.GetDirectoryName(db)!);
+        _variables["PERGA_DB_PATH"] = Path.Combine(link, "custom.db");
+
+        var result = await RunAsync("uninstall", "--yes");
+
+        Assert.Equal(0, result.Code);
+        Assert.Equal("db", File.ReadAllText(db));
+        Assert.Contains($"  db:       {db}", result.Output);
+        Assert.Contains($"Your database remains at {db}.", result.Output);
+        Assert.Contains($"  rm -rf '{Data}'\n  rm -f '{db}'", Normalize(result.Output));
     }
 
     [Fact]
@@ -337,6 +380,8 @@ public sealed class HostCliTests : IDisposable
         var refused = await RunAsync("uninstall");
         Assert.Equal(1, refused.Code);
         Assert.Contains("re-run with --yes", refused.Error);
+        Assert.Contains($"User data is kept:\n  data:     {Data}", Normalize(refused.Output));
+        Assert.DoesNotContain("db:", refused.Output);
         AssertInstalled();
 
         _interactive = true;
@@ -350,8 +395,66 @@ public sealed class HostCliTests : IDisposable
         _input = "YES\n";
         var accepted = await RunAsync("uninstall");
         Assert.Equal(0, accepted.Code);
+        Assert.Contains($"Your data remains in {Data}.", accepted.Output);
+        Assert.DoesNotContain("  rm -f ", accepted.Output);
         Assert.False(Directory.Exists(Install));
         Assert.False(File.Exists(Launcher));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task UninstallDoesNotCreateTheDataDirectory(bool externalDatabase)
+    {
+        CreatePackage();
+        UseLauncherEnvironment();
+        WriteLauncher();
+        Directory.Delete(Data);
+        var db = Path.Combine(Root, "custom.db");
+        if (externalDatabase)
+        {
+            _variables["PERGA_DB_PATH"] = db;
+            Write(db, "db");
+        }
+
+        var result = await RunAsync("uninstall", "--yes");
+
+        Assert.Equal(0, result.Code);
+        Assert.False(Directory.Exists(Install));
+        Assert.False(File.Exists(Launcher));
+        Assert.False(Directory.Exists(Data));
+        Assert.DoesNotContain("Your data remains in", result.Output);
+        Assert.DoesNotContain("rm -rf", result.Output);
+        if (externalDatabase)
+        {
+            Assert.Equal("db", File.ReadAllText(db));
+            Assert.Contains("User data is kept:", result.Output);
+            Assert.Contains($"  db:       {db}", result.Output);
+            Assert.Contains($"Your database remains at {db}.", result.Output);
+            Assert.Contains($"  rm -f '{db}'", result.Output);
+        }
+        else
+        {
+            Assert.DoesNotContain("User data is kept:", result.Output);
+            Assert.DoesNotContain("To remove all user data too:", result.Output);
+        }
+    }
+
+    [Fact]
+    public async Task UninstallReportsLifecycleLockContentionAndKeepsTheInstallation()
+    {
+        CreatePackage();
+        UseLauncherEnvironment();
+        WriteLauncher();
+        using var held = await HostDaemonCommand.AcquireLockAsync(Data, CancellationToken.None);
+
+        var result = await RunAsync("uninstall", "--yes");
+
+        Assert.Equal(1, result.Code);
+        Assert.Contains("error: Another Perga lifecycle command is still running.", result.Error);
+        Assert.Contains("hint:  Wait for it to finish or check 'perga status', then re-run 'perga uninstall'.", result.Error);
+        AssertInstalled();
+        Assert.True(File.Exists(Launcher));
     }
 
     [Fact]
@@ -375,7 +478,7 @@ public sealed class HostCliTests : IDisposable
         var marker = Path.Combine(Install, HostCliCommand.InstallMarker);
         File.Delete(marker);
 
-        await AssertUninstallRefusedAsync($"has no regular {HostCliCommand.InstallMarker}");
+        await AssertUninstallRefusedAsync("Remove the directory manually to uninstall Perga.");
 
         var elsewhere = Path.Combine(Root, "marker");
         File.WriteAllText(elsewhere, "perga-install-v1\n");

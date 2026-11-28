@@ -235,7 +235,7 @@ public static partial class HostCliCommand
                 throw new CliException($"could not download the installer from {url} (curl exit {download}).");
             using (await HostDaemonCommand.AcquireLockAsync(paths.DataDir, ct).ConfigureAwait(false))
             {
-                previous = RunningForPackageChange(paths.DataDir, paths.InstallDir, env);
+                previous = RunningForPackageChange(HostDaemonCommand.TryGetRunningInstance(paths.DataDir, out _), paths.InstallDir, env);
                 var installed = await env.RunProcessAsync("bash", [script], childEnv, ct).ConfigureAwait(false);
                 if (installed != 0 || previous is null)
                     return installed;
@@ -284,9 +284,9 @@ public static partial class HostCliCommand
         return 1;
     }
 
-    private static HostDaemonState? RunningForPackageChange(string dataDir, string installDir, HostCliEnvironment env)
+    private static HostDaemonState? RunningForPackageChange(HostDaemonState? state, string installDir, HostCliEnvironment env)
     {
-        if (HostDaemonCommand.TryGetRunningInstance(dataDir, out _) is not { } state)
+        if (state is null)
             return null;
 
         var physicalInstall = PhysicalPath(installDir);
@@ -308,36 +308,122 @@ public static partial class HostCliCommand
         if (args.FirstOrDefault(a => a is not ("-y" or "--yes")) is { } unknown)
             throw new UsageException($"unknown argument '{unknown}'.", usage);
         var plan = UninstallPlan.Resolve(env);
+        var hasDataDir = Directory.Exists(plan.DataDir);
+        var preview = hasDataDir
+            ? RunningForPackageChange(HostDaemonCommand.PeekRunningInstance(plan.DataDir), plan.InstallDir, env)
+            : null;
+        if (preview is not null)
+        {
+            env.Output.WriteLine($"Perga {preview.Version} is currently running (PID {preview.Pid}, {preview.Url}).");
+            env.Output.WriteLine("Uninstalling will stop this background instance first.");
+            env.Output.WriteLine();
+        }
 
         env.Output.WriteLine("This removes:");
         env.Output.WriteLine($"  install:  {plan.InstallDir}");
         if (plan.Launcher is not null)
             env.Output.WriteLine($"  launcher: {plan.Launcher}");
-        env.Output.WriteLine("User data is kept:");
-        env.Output.WriteLine($"  data:     {plan.DataDir}");
-        env.Output.WriteLine($"  db:       {plan.DbPath}");
+        var externalDb = ExternalDatabasePath(env, plan);
+        if (hasDataDir || externalDb is not null)
+        {
+            env.Output.WriteLine("User data is kept:");
+            if (hasDataDir)
+                env.Output.WriteLine($"  data:     {plan.DataDir}");
+            if (externalDb is not null)
+                env.Output.WriteLine($"  db:       {externalDb}");
+        }
         if (args.Length == 0)
         {
             if (!env.IsInteractive)
                 throw new CliException("refusing to uninstall without confirmation; re-run with --yes.");
-            env.Output.Write("Continue? [y/N] ");
+            env.Output.Write(preview is null ? "Continue? [y/N] " : "Stop Perga and uninstall? [y/N] ");
             env.Output.Flush();
-            if (env.Input.ReadLine()?.Trim().ToLowerInvariant() is not ("y" or "yes"))
+            // Console.In reads synchronously, so cancel the wait independently of the reader.
+            var confirmation = await Task.Run(env.Input.ReadLine, ct).WaitAsync(ct).ConfigureAwait(false);
+            if (confirmation?.Trim().ToLowerInvariant() is not ("y" or "yes"))
             {
                 env.Output.WriteLine("Uninstall cancelled.");
                 return 1;
             }
         }
 
-        using var lifecycleLock = await HostDaemonCommand.AcquireLockAsync(plan.DataDir, ct).ConfigureAwait(false);
-        if (RunningForPackageChange(plan.DataDir, plan.InstallDir, env) is { } running)
-            await HostDaemonCommand.StopInstanceAsync(plan.DataDir, running, ct).ConfigureAwait(false);
+        FileStream? lifecycleLock = null;
+        try
+        {
+            if (Directory.Exists(plan.DataDir))
+                lifecycleLock = await HostDaemonCommand.AcquireLockAsync(plan.DataDir, ct).ConfigureAwait(false);
+        }
+        catch (HostDaemonCommand.LifecycleLockContentionException ex)
+        {
+            env.Error.WriteLine($"error: {ex.Message}");
+            env.Error.WriteLine("hint:  Wait for it to finish or check 'perga status', then re-run 'perga uninstall'.");
+            return 1;
+        }
+
+        using var held = lifecycleLock;
+        if (held is not null &&
+            RunningForPackageChange(HostDaemonCommand.TryGetRunningInstance(plan.DataDir, out _), plan.InstallDir, env) is { } running)
+        {
+            if (args.Length == 0 && preview is null)
+            {
+                env.Error.WriteLine($"error: Perga (PID {running.Pid}) started after confirmation.");
+                env.Error.WriteLine("hint:  Run 'perga stop' or re-run 'perga uninstall'.");
+                return 1;
+            }
+
+            ct.ThrowIfCancellationRequested();
+            env.Output.WriteLine($"Stopping Perga (PID {running.Pid})...");
+            try
+            {
+                if (await HostDaemonCommand.StopInstanceAsync(plan.DataDir, running, ct).ConfigureAwait(false))
+                    env.Output.WriteLine($"Stopped Perga (PID {running.Pid}).");
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or Win32Exception)
+            {
+                env.Error.WriteLine($"error: {ex.Message}");
+                env.Error.WriteLine($"hint:  Stop it first with 'perga stop' (or 'kill {running.Pid}'), then re-run 'perga uninstall'.");
+                return 1;
+            }
+        }
+
+        ct.ThrowIfCancellationRequested();
+        Directory.Delete(plan.InstallDir, recursive: true);
         if (plan.Launcher is not null)
             File.Delete(plan.Launcher);
-        Directory.Delete(plan.InstallDir, recursive: true);
-        env.Output.WriteLine($"Removed Perga from {plan.InstallDir}. Your data remains in {plan.DataDir}.");
+        env.Output.WriteLine($"Removed Perga from {plan.InstallDir}.");
+        WriteUninstallCleanupHint(env, plan);
         return 0;
     }
+
+    private static void WriteUninstallCleanupHint(HostCliEnvironment env, UninstallPlan plan)
+    {
+        var hasDataDir = Directory.Exists(plan.DataDir);
+        var externalDb = ExternalDatabasePath(env, plan);
+        if (!hasDataDir && externalDb is null)
+            return;
+
+        if (hasDataDir)
+            env.Output.WriteLine($"Your data remains in {plan.DataDir}.");
+        if (externalDb is not null)
+            env.Output.WriteLine($"Your database remains at {externalDb}.");
+        env.Output.WriteLine("To remove all user data too:");
+        if (hasDataDir)
+            env.Output.WriteLine($"  rm -rf {QuoteForShell(plan.DataDir)}");
+        if (externalDb is not null)
+            env.Output.WriteLine($"  rm -f {QuoteForShell(externalDb)}");
+    }
+
+    private static string? ExternalDatabasePath(HostCliEnvironment env, UninstallPlan plan)
+    {
+        if (!plan.ExplicitDbPath || !File.Exists(plan.DbPath))
+            return null;
+
+        var physicalDb = PhysicalPath(plan.DbPath);
+        var comparison = env.CaseInsensitivePaths ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+        return IsInside(physicalDb, PhysicalPath(plan.DataDir), comparison) ? null : physicalDb;
+    }
+
+    private static string QuoteForShell(string path) => $"'{path.Replace("'", "'\\''", StringComparison.Ordinal)}'";
 
     private static bool NoArguments(HostCliEnvironment env, string[] args, string usage)
     {
@@ -385,7 +471,7 @@ public static partial class HostCliCommand
     }
 
     /// <summary>The verified targets of <c>perga uninstall</c>. Every check fails closed.</summary>
-    private sealed record UninstallPlan(string InstallDir, string? Launcher, string DataDir, string DbPath)
+    private sealed record UninstallPlan(string InstallDir, string? Launcher, string DataDir, string DbPath, bool ExplicitDbPath)
     {
         private static readonly string[] CheckedVariables =
         [
@@ -458,7 +544,7 @@ public static partial class HostCliCommand
             var realInstall = baseInstall;
             var marker = Path.Combine(realInstall, InstallMarker);
             if (!File.Exists(marker) || IsLink(marker))
-                throw new CliException($"'{realInstall}' has no regular {InstallMarker} file; refusing to remove a directory the installer did not create.");
+                throw new CliException($"'{realInstall}' has no regular {InstallMarker} file to verify the install.sh installation. Remove the directory manually to uninstall Perga.");
 
             var paths = InstallationPaths.From(env);
             var protectedPaths = new List<(string Name, string Path)>
@@ -481,7 +567,8 @@ public static partial class HostCliCommand
                 EnsureOutsideInstall(name, path, realInstall, exclusionComparison);
             }
 
-            return new(realInstall, binDir is null ? null : VerifiedLauncher(Path.Combine(binDir, "perga"), realInstall), paths.DataDir, paths.DbPath);
+            return new(realInstall, binDir is null ? null : VerifiedLauncher(Path.Combine(binDir, "perga"), realInstall),
+                paths.DataDir, paths.DbPath, paths.ExplicitDbPath);
         }
 
         // The launcher pins the instance it belongs to; an override naming another instance is refused.
@@ -501,7 +588,7 @@ public static partial class HostCliCommand
             if (IsLink(launcher) || !File.Exists(launcher))
                 throw new CliException($"launcher '{launcher}' is not a regular file; refusing to uninstall.");
             const string prefix = "DEFAULT_INSTALL_DIR=";
-            var expected = $"'{realInstall.Replace("'", "'\\''", StringComparison.Ordinal)}'";
+            var expected = QuoteForShell(realInstall);
             if (!File.ReadLines(launcher).Any(line =>
                     line.StartsWith(prefix, StringComparison.Ordinal) &&
                     string.Equals(line[prefix.Length..], expected, StringComparison.Ordinal)))
