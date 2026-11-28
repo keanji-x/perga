@@ -392,7 +392,8 @@ it.each(['reopen', 'desktop'] as const)('releases the moving exit footer on %s',
       entry.pause(); footerEntry.pause();
       await Promise.all([entry.ready, footerEntry.ready]);
       entry.currentTime = footerEntry.currentTime = 0;
-      expect(footer.getBoundingClientRect().top).toBeCloseTo(held, 2);
+      // A trajectory sample and the browser's interpolated paint can differ by a fraction of a pixel.
+      expect(Math.abs(footer.getBoundingClientRect().top - held)).toBeLessThan(1);
       entry.currentTime = footerEntry.currentTime = 80;
       expect(footer.getBoundingClientRect().top).toBeGreaterThan(footerTop);
       expect(footer.getBoundingClientRect().top).toBeLessThan(held);
