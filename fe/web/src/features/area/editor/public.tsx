@@ -69,7 +69,7 @@ export function AreaEditorForm(props: AreaEditorFormProps) {
   const { accessibleName } = folderLabelParts({
     value: cwd, controlLabel: 'Default folder', emptyLabel: `Perga workspace${targetSuffix}`, modeSuffix: targetLabel,
   });
-  const folderDetail = `${folderBound ? cwd : 'Managed workspace'}${targetSuffix}`;
+  const folderDetail = `${folderBound ? cwd : 'Managed by Perga'}${targetSuffix}`;
   const fieldsDisabled = submitting || locked;
 
   const submit = (event: FormEvent<HTMLElement>) => {

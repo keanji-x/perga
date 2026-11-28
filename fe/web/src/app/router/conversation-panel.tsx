@@ -33,7 +33,7 @@ export function useConversationPanel(
   const surfaceTarget = savedTarget[0] ?? (options.embedded?.active ? logicalTarget : null);
   const embedded = options.embedded === undefined ? undefined : {
     ...options.embedded,
-    active: options.embedded.active && (!options.embedDefaultOnly
+    active: options.embedded.active && (!options.embedded.defaultRowOnly
       || (surfaceTarget?.kind === 'row' && surfaceTarget.id === options.defaultRowId)),
   };
   const mainTarget = [surfaceTarget, savedTarget[1]] as const;
@@ -70,7 +70,7 @@ export function useConversationPanel(
   const side = useConversationPane(transport, unauthorized, source, sideTarget,
     { ...options, embedded: undefined, reportComposer: undefined, ownedCardIds, onTerminal: options.terminal?.workbench.reveal, inline: true, slotId: sideSlot, enabled: sideAvailable, presented: sidePresented });
   // The first turn from the empty Track stage should follow its report into the drawer.
-  const onAdmittedMessage = options.retainDefaultOnSend && savedTarget[0] === null
+  const onAdmittedMessage = embedded?.retainDefaultOnSend && savedTarget[0] === null
     ? (id: string) => savedTarget[1]({ kind: 'row', id }) : undefined;
   const main = useConversationPane(transport, unauthorized, source, mainTarget,
     { ...options, embedded, onAdmittedMessage, reportComposer: mainReportComposer, ownedCardIds, stacked: true, showSideCommand: !compact, retainCompanion: options.terminal !== undefined, onTerminal: options.terminal?.workbench.reveal,

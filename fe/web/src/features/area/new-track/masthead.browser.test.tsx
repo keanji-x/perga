@@ -29,6 +29,16 @@ it('places the Area in the desktop page header while keeping the composer masthe
   const composer = container.querySelector('[data-nc-new-track-message]')!;
   const left = mark.getBoundingClientRect().left;
   expect(Math.abs(composer.getBoundingClientRect().left - left)).toBeLessThan(1);
+  const send = screen.getByRole('button', { name: 'Create track' });
+  const chip = document.createElement('span');
+  chip.style.backgroundColor = 'var(--surface-chip)';
+  container.append(chip);
+  const neutral = getComputedStyle(chip).backgroundColor;
+  chip.remove();
+  expect(getComputedStyle(send).backgroundColor).toBe(neutral);
+  await page.getByRole('textbox', { name: 'What this track should do' }).fill('Plan the work');
+  await expect.element(page.elementLocator(send)).toBeEnabled();
+  expect(getComputedStyle(send).backgroundColor).not.toBe(neutral);
   for (const size of [22, 30]) {
     heading.style.fontSize = `${size}px`;
     expect(mark.getBoundingClientRect().height).toBeCloseTo(size, 1);

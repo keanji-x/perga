@@ -129,6 +129,12 @@
 
   .send,
   .composer button[aria-label="Send"] { border-radius: var(--radius-pill); }
+
+  .send:is(:disabled, [aria-disabled="true"]) {
+    background: var(--surface-chip);
+    color: var(--text);
+  }
+
   @media (width < 60rem) {
     .send { flex: none; }
 

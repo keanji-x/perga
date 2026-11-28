@@ -56,7 +56,7 @@ it.each([1440, 390, 320])('keeps the empty daily report and conversation reachab
 it.each(['report', 'flow'] as const)('hands the centered Lead conversation to the desktop drawer when %s content arrives', async (content) => {
   await page.viewport(1440, 900);
   const lead = fixtureSession('project-lead', 'project', { title: 'Lead', isLead: true });
-  const track = fixtureTrack('project', { areaId: 'project-area', title: content === 'report' ? 'New project' : ' Untitled Track ', leadSessionId: lead.id });
+  const track = fixtureTrack('project', { areaId: 'project-area', title: content === 'report' ? '' : 'Untitled Track', leadSessionId: lead.id });
   const sessions = content === 'report' ? [lead] : [lead, fixtureSession('project-review', track.id, { title: 'Review' })];
   const firstMessage = 'Make a release plan';
   let sent = false;
@@ -80,9 +80,11 @@ it.each(['report', 'flow'] as const)('hands the centered Lead conversation to th
   });
   const stage = page.getByRole('region', { name: 'Lead', exact: true });
   const composer = stage.getByRole('combobox', { name: 'Message', exact: true });
-  await expect.element(stage.getByRole('heading', { name: content === 'report' ? 'New project' : 'What should this track focus on?' })).toBeVisible();
+  const heading = stage.getByRole('heading', { name: 'What should this track focus on?', exact: true });
+  await expect.element(heading).toBeVisible();
   const placeholder = stage.getByText('Write a message, @ to mention, or / for commands…', { exact: true });
   await expect.element(placeholder).toBeVisible();
+  expect(heading.element().parentElement?.nextElementSibling).toContainElement(composer.element());
   expect(placeholder.element().closest('[data-nc-composer]')).not.toBeNull();
   await expect.element(stage.getByText('Type @ for templates or tracks · / for commands', { exact: true })).not.toBeInTheDocument();
   const rename = page.getByRole('button', { name: 'Rename track', exact: true });

@@ -559,6 +559,12 @@ export function userVisibleTracks(tracks: readonly Track[], areas: readonly Area
 
 export const UNTITLED_TRACK_LABEL = 'Untitled track';
 
+/** Recognizes blank titles and the Kernel's persisted default title. */
+export function isUntitledTrackTitle(title: string): boolean {
+  const trimmed = title.trim();
+  return trimmed === '' || trimmed.toLowerCase() === UNTITLED_TRACK_LABEL.toLowerCase();
+}
+
 /** One display fallback for tracks created without a title. */
 export function trackDisplayTitle(title: string): string {
   return title.trim() || UNTITLED_TRACK_LABEL;

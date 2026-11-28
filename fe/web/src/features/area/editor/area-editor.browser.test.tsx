@@ -35,7 +35,7 @@ it('uses a quiet caption and a full-width folder row above the creation actions'
   expect(subtitle.getBoundingClientRect().bottom).toBeLessThan(input.getBoundingClientRect().top);
   const folder = screen.getByRole('button', { name: 'Default folder: Perga workspace' });
   expect(getComputedStyle(folder).borderWidth).toBe('1px');
-  expect(folder.textContent).toContain('Default folder · Managed workspace');
+  expect(folder.textContent).toContain('Default folder · Managed by Perga');
   expect(folder.textContent).toContain('Choose');
   const folderBox = folder.getBoundingClientRect();
   const cancelBox = screen.getByRole('button', { name: 'Cancel' }).getBoundingClientRect();

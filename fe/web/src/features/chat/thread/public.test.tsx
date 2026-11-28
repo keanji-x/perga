@@ -707,10 +707,12 @@ describe('ChatThread’s exchange rail', () => {
     outer.remove();
   });
 
-  it('shows the first exchange immediately in the drawer seam', () => {
+  it('shows the drawer rail when a second exchange arrives', () => {
     const { outer, pane, seam } = drawerPane();
-    render(<ChatThread hasPendingMessages={false} canContinue={false} cards={{}} stalled={false} conversation={conversation()} turns={exchangeTurns(1)} />, { container: pane });
-    expect(railDots()).toHaveLength(1);
+    const { rerender } = render(<ChatThread hasPendingMessages={false} canContinue={false} cards={{}} stalled={false} conversation={conversation()} turns={exchangeTurns(1)} />, { container: pane });
+    expect(railDots()).toHaveLength(0);
+    rerender(<ChatThread hasPendingMessages={false} canContinue={false} cards={{}} stalled={false} conversation={conversation()} turns={exchangeTurns(2)} />);
+    expect(railDots()).toHaveLength(2);
     expect(seam.contains(railDots()[0])).toBe(true);
     expect(pane.querySelector('[data-nc-rail-track]')).toBeNull();
     outer.remove();

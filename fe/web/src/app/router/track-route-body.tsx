@@ -57,7 +57,6 @@ import { DELETE_CARD_COPY } from '../../features/track/delete-copy.ts';
 import { DeleteConfirmDialog,useDeleteConfirm } from '../../ui/operation-feedback/public.tsx';
 import { useState } from '../../ui/state/public.ts';
 import { useCompactViewport } from '../../ui/viewport/public.ts';
-import { CenteredComposerIntroduction } from '../../ui/drawer/centered-composer-introduction.tsx';
 import {
 useConversationCommands
 } from '../conversations/public.tsx';
@@ -75,7 +74,7 @@ import { useUiPreferences } from '../providers/ui-preferences.tsx';
 import { useMobileConversationOwner,useMobileHeaderActionsHost,useMobileHeaderTitleHost,useOpenMobileSection } from '../shell/public.tsx';
 import { TrackSelector } from '../shell/mobile/track-selector.tsx';
 import dailyStyles from './daily-planner.module.css';
-import { type DailyCenterPresentation } from './daily-planner.tsx';
+import { deriveEmptyTrackCenter, type CenteredStagePresentation } from './centered-stage.tsx';
 import mobileChatStyles from './mobile-chat.module.css';
 import {
 renderedMobilePanel,
@@ -103,7 +102,7 @@ export function TrackRouteBody({
   trackPath?: string;
   cardRuntime: CardRuntime;
   recentFiles: RecentFileHistory;
-  center?: DailyCenterPresentation;
+  center?: CenteredStagePresentation;
   showWorkspaceIsolation?: boolean;
   reportEvidence?: ReactNode;
   reportHeader?: ReactNode;
@@ -238,17 +237,7 @@ export function TrackRouteBody({
   const hasTrackReportContent = reportPresentation.hasBody || hasFlowContent;
   const centerLead = center === undefined && reportEmpty === undefined && !isMemoryTrack
     && !workspaceWaiting && plannerCard !== undefined && !hasTrackReportContent && !compactViewport;
-  const isUntitled = /^untitled track$/i.test(trackTitle);
-  const effectiveCenter: DailyCenterPresentation | undefined = center ?? (centerLead ? {
-    title: 'Lead',
-    presented: true,
-    onOpenAssistant: () => {},
-    emptyIntroduction: <CenteredComposerIntroduction title={isUntitled ? 'What should this track focus on?' : trackTitle}>
-      Lead compiles your goals, decisions, and progress into a living report here.
-    </CenteredComposerIntroduction>,
-    footerPrefix: null,
-    render: (assistant) => <div className={dailyStyles.center}><div className={dailyStyles.assistant}>{assistant}</div></div>,
-  } : undefined);
+  const effectiveCenter = center ?? (centerLead ? deriveEmptyTrackCenter(track.title) : undefined);
   const centerAvailable = effectiveCenter !== undefined && !compactViewport;
   /* Redeeming the planner-open intent: `armed` is already "this track, this visit",
    * and the planner card's id exists only once the detail has landed. `disarm()`
@@ -352,13 +341,12 @@ export function TrackRouteBody({
     {
       workspace: { waiting: workspaceWaiting, notice: workspaceNotice },
       defaultRowId: effectiveCenter === undefined ? null : plannerCard?.id ?? null,
-      retainDefaultOnSend: centerLead,
       onPresent: effectiveCenter?.onOpenAssistant,
       presented: centerAvailable ? effectiveCenter.presented : undefined,
-      embedDefaultOnly: centerLead,
       embedded: effectiveCenter === undefined ? undefined : {
         active: centerAvailable, host: centerHost, footerPrefix: effectiveCenter.footerPrefix,
         emptyIntroduction: effectiveCenter.emptyIntroduction, label: effectiveCenter.title,
+        defaultRowOnly: centerLead, retainDefaultOnSend: centerLead,
       },
       onArchive: conversationMutations.archive,
       terminal: { workbench, render: () => <TerminalWorkbenchView workbench={workbench} host={trackCardHost}

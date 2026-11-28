@@ -77,7 +77,7 @@ describe('AreaEditorForm', () => {
       executionTargets: [{ id: 'build-box', label: 'Build machine', kind: 'ssh', isDefault: false, destination: 'dev@example.test', removable: true }],
     });
     const folder = screen.getByRole('button', { name: 'Default folder: Perga workspace · Build machine' });
-    expect(folder.textContent).toContain('Default folder · Managed workspace · Build machine');
+    expect(folder.textContent).toContain('Default folder · Managed by Perga · Build machine');
   });
 
   it('pushes the directory browser into its host Dialog instead of nesting a modal', async () => {

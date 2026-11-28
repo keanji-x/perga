@@ -20,9 +20,10 @@
   .areaSwitcher > button { padding-inline-start: var(--space-2); }
 
   .areaLabel, .areaSwitcher > button {
-    color: var(--text);
-    font: var(--type-page-title);
-    letter-spacing: var(--type-page-title-tracking);
+    font: var(--type-ui);
+    font-weight: var(--weight-medium);
+    letter-spacing: var(--type-ui-tracking);
+    color: var(--text-2);
   }
 
   .areaLabel {
