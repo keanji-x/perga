@@ -106,3 +106,13 @@ describe.each([true, 'controls'] as const)('ContextGroup disclosure (%s)', (coll
     expect(document.getElementById(toggle.getAttribute('aria-controls')!)?.hidden).toBe(true);
   });
 });
+
+describe('ContextGroup secondary action visibility', () => {
+  it.each([undefined, 'intent', 'always'] as const)('keeps secondary visibility independent from the primary action (%s)', visibility => {
+    render(<ContextGroup title="Actions" secondaryActionVisibility={visibility}
+      secondaryAction={<button type="button">Secondary</button>}
+      action={<button type="button">Primary</button>}>Rows</ContextGroup>);
+    expect(screen.getByRole('button', { name: 'Secondary' }).parentElement!.className.includes('alwaysAction')).toBe(visibility === 'always');
+    expect(screen.getByRole('button', { name: 'Primary' }).parentElement!.className.includes('alwaysAction')).toBe(false);
+  });
+});

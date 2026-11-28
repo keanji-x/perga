@@ -23,6 +23,7 @@ import { useEffect, useLayoutEffect } from 'react';
 
 import type { ApiRequest, ApiTransportPort, ApiTransportResponse } from '../../../../core/api/types.ts';
 import { createUnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
+import { isTrackUnread, isUnread, type ReadState } from '../../../../core/domain/read-receipts.ts';
 import { queryKeys } from '../providers/query-keys.ts';
 import type { Conversation, TranscriptEntry } from '../../../../core/domain/conversation.ts';
 import {
@@ -1883,3 +1884,49 @@ it('keeps a visible conversation without output manually unread after receipt re
 });
 
 function fixtureConversationCardId(trackId: string, key: string): string { return `conv-${trackId}-${key}`; }
+
+
+it('marks every unread conversation read, including archived and manual unread, while preserving execution states', async () => {
+  const rows = [PLANNER_CARD,
+    assistantRow({ title: 'Unread reply', lastNotifiableTurnAtMs: 30 }),
+    fixtureSession('archived', TRACK.id, { title: 'Archived reply', archivedAtMs: 50, lastNotifiableTurnAtMs: 40 }),
+    fixtureSession('manual', TRACK.id, { title: 'Manual unread' }),
+    fixtureSession('running', TRACK.id, { title: 'Running chat', status: 'running', lastNotifiableTurnAtMs: 20 }),
+    fixtureSession('failed', TRACK.id, { title: 'Failed chat', status: 'unknown', lastNotifiableTurnAtMs: 25 }),
+    fixtureSession('attention', TRACK.id, { title: 'Question chat', lastNotifiableTurnAtMs: 15 }),
+  ];
+  const receipts = createReadReceiptsKernel({ baselineMs: 0, receipts: [
+    { kind: 'conversation', targetId: 'manual', readThroughMs: 0, manualUnread: true },
+  ] });
+  const { client } = setup(request => request.path === '/api/v1/tracks/w1'
+    ? ok({ ...fixtureSnapshot(TRACK, rows), openAsks: [{ id: 'question', trackId: TRACK.id, sessionId: 'attention',
+      status: 'open', delivery: 'wake', questions: [{ question: 'Continue?', options: [], isMultiSelect: false }], createdAtMs: 5 }] })
+    : undefined, undefined, receipts);
+  const button = await screen.findByRole('button', { name: 'Mark all read' });
+  const state = () => client.getQueryData<ReadState>(queryKeys.readReceipts())!;
+  const watermarks = rows.filter(row => row.lastNotifiableTurnAtMs != null).map(row => ({
+    sessionId: row.id, lastNotifiableTurnAtMs: row.lastNotifiableTurnAtMs!,
+  }));
+  expect(isTrackUnread(state(), TRACK.id, watermarks)).toBe(true);
+  const indicator = (name: string) => screen.getByRole('button', { name: new RegExp(`^Conversation ${name}`) })
+    .closest('li')!.querySelector('[data-nc-activity]')?.getAttribute('data-nc-activity');
+  expect(indicator('Running chat')).toBe('working');
+  expect(indicator('Failed chat')).toBe('failed');
+  expect(indicator('Question chat')).toBe('attention');
+  // The archived group stays folded; bulk reading must include its unmounted rows.
+  expect(screen.queryByRole('button', { name: 'Conversation Archived reply' })).toBeNull();
+  fireEvent.click(button);
+  await waitFor(() => expect(screen.queryByRole('button', { name: 'Mark all read' })).toBeNull());
+  expect(isTrackUnread(state(), TRACK.id, watermarks)).toBe(false);
+  for (const row of rows) expect(isUnread(state(), 'conversation', row.id, row.lastNotifiableTurnAtMs)).toBe(false);
+  await waitFor(() => {
+    for (const row of rows.slice(1)) expect(receipts.stored('conversation', row.id)).toEqual({
+      kind: 'conversation', targetId: row.id, readThroughMs: row.lastNotifiableTurnAtMs ?? 0, manualUnread: false,
+    });
+  });
+  expect(indicator('Unread reply')).toBeUndefined();
+  expect(indicator('Running chat')).toBe('working');
+  expect(indicator('Failed chat')).toBe('failed');
+  expect(indicator('Question chat')).toBe('attention');
+  expect(receipts.stored('conversation', PLANNER_CARD.id)).toBeUndefined();
+});
