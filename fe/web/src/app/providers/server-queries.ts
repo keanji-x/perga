@@ -6,11 +6,6 @@ import { WEB_COMPAT_VERSION,type ServerVersionInfo } from './public.tsx';
 const serverVersionSchema = z.object({
   pergaV1: z.boolean().optional(),
   authRequired: z.boolean().optional(),
-  assistantProviders: z.boolean().optional(),
-  conversationCreateModel: z.boolean().optional(),
-  conversationInitialInput: z.boolean().optional(),
-  sessionInputReceipts: z.literal(true).optional(),
-  conversationSide: z.boolean().optional(),
   webCompatVersion: z.number(),
   minWebCompatVersion: z.number(),
   syncEventVersion: z.number(),
@@ -26,10 +21,6 @@ export function serverVersionOperation(): ApiOperation<ServerVersionInfo> {
       bootstrapDtoSchema.transform((bootstrap): ServerVersionInfo => ({
         pergaV1: true,
         authRequired: bootstrap.authRequired ?? true,
-        assistantProviders: true,
-        conversationCreateModel: true,
-        conversationInitialInput: true,
-        conversationSide: bootstrap.conversationSide === true,
         webCompatVersion: WEB_COMPAT_VERSION,
         minWebCompatVersion: WEB_COMPAT_VERSION,
         syncEventVersion: 1,

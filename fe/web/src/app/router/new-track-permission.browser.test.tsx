@@ -11,7 +11,6 @@ import { ThemeProvider } from '../theme/public.tsx';
 import { createAppRouter } from './public.tsx';
 import { bootTestCardRuntime } from './test-card-runtime.ts';
 import { renderDailyFixture } from './daily-planner-fixture.tsx';
-import { WEB_COMPAT_VERSION } from '../providers/public.tsx';
 
 afterEach(async () => { cleanup(); document.getElementById('root')?.remove(); await page.viewport(1280, 720); });
 
@@ -94,10 +93,6 @@ it.each([false, true])('renders ACP approvals for a null mode (assistant=%s)', a
   const id = assistant ? 'second-planner' : 'daily-planner';
   const fixture = renderDailyFixture({ initial: '/track/daily?panel=conversations', extraPlanner: assistant,
     plannerProvider: 'acp:opencode', reply: request => {
-      if (request.path === '/api/v1/bootstrap') return { status: 200, statusText: 'OK', body: {
-        assistantProviders: true, conversationInitialInput: true, webCompatVersion: WEB_COMPAT_VERSION,
-        minWebCompatVersion: WEB_COMPAT_VERSION, syncEventVersion: 29, dbInstanceId: 'acp-null-mode',
-      } };
       if (request.path === '/api/v1/bootstrap?scope=managed') return { status: 200, statusText: 'OK', body: {
         version: 'test', providers: [{ provider: 'acp:opencode', available: true, models: [], permissionModes: [
           { id: 'project-plan', label: 'Project plan', description: 'Workspace default', tone: 'neutral', isDefault: true },

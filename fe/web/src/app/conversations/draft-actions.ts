@@ -9,6 +9,7 @@ import type { ConversationCreationSource } from './contracts.ts';
 
 /** The identity and dispatched body move together through rekey/markSent only. */
 type DraftEdit = Partial<Pick<ConversationDraft, 'text' | 'creating' | 'error' | 'remedy'>>;
+type ManagedProviderAnswers = readonly ManagedProviderAvailability[] | undefined;
 
 export type ConversationDraftActionInput = Readonly<{
   registry: Pick<ConversationRegistry, 'editDraft' | 'startDraft' | 'acceptDraft' | 'discardDraft' | 'draftOf' | 'editNewConversationComposer'>;
@@ -16,12 +17,8 @@ export type ConversationDraftActionInput = Readonly<{
   creating: boolean;
   source: ConversationCreationSource;
   sourceScopeId: string;
-  supportsSideConversation: boolean;
-  supportsDraftModel: boolean;
-  supportsInitialInput: boolean;
-  supportsAssistantProviders: boolean;
   defaultProvider?: import('../../../../core/api/schemas.ts').AgentProvider;
-  managedProviders: readonly ManagedProviderAvailability[] | undefined;
+  managedProviders: ManagedProviderAnswers;
   recheckManagedProviders: () => Promise<readonly ManagedProviderAvailability[]>;
   openDraft: () => void;
   closeView: () => void;
@@ -32,7 +29,7 @@ export type ConversationDraftActionInput = Readonly<{
 /** A command assembly for this render's draft. Construction has no side effects;
  * dispatched attempts retain their original scope/key and settle through Registry. */
 export function createConversationDraftActions({ registry, draft, creating, source, sourceScopeId,
-  supportsSideConversation, supportsDraftModel, supportsInitialInput, supportsAssistantProviders, defaultProvider, managedProviders, recheckManagedProviders, openDraft, closeView, onGone, onAdopt,
+  defaultProvider, managedProviders, recheckManagedProviders, openDraft, closeView, onGone, onAdopt,
 }: ConversationDraftActionInput) {
   /* Every draft write goes through one of these three, each a whole-object update,
        and each a no-op when the draft it was computed from is no longer the one held. */
@@ -101,24 +98,11 @@ export function createConversationDraftActions({ registry, draft, creating, sour
 
   /* The draft's own send: it runs while there is no card, and its text lives in the
        registry's draft entry until the row it created is adopted. */
-  const refuseOfflineDraft = (attempt: ConversationDraft, text: string, answers = managedProviders): boolean => {
-    if (!supportsInitialInput) {
-      amendDraft(attempt, { text, error: 'This server does not support first-message receipts. Update or reconnect before sending.', remedy: 'retry' });
-      return true;
-    }
-    const providerProblem = !supportsAssistantProviders
-      ? 'This server does not support Assistant provider selection. Update or reconnect before sending.'
-      : attempt.submitted === null ? managedProviderProblem(answers, attempt.provider) : null;
+  const refuseOfflineDraft = (attempt: ConversationDraft, text: string, answers: ManagedProviderAnswers): boolean => {
+    const providerProblem = attempt.submitted === null && answers !== undefined
+      ? managedProviderProblem(answers, attempt.provider) : null;
     if (providerProblem !== null) {
       amendDraft(attempt, { text, error: providerProblem, remedy: 'retry' });
-      return true;
-    }
-    if (attempt.side !== undefined && !supportsSideConversation) {
-      amendDraft(attempt, { text, error: 'This server does not report side conversation support. Update or reconnect before retrying.', remedy: 'retry' });
-      return true;
-    }
-    if ((attempt.model.model !== null || attempt.model.reasoning_effort !== null) && !supportsDraftModel) {
-      amendDraft(attempt, { text, error: 'This server does not support choosing the first message’s model yet.', remedy: 'retry' });
       return true;
     }
     if (onlineManager.isOnline()) return false;
@@ -127,7 +111,7 @@ export function createConversationDraftActions({ registry, draft, creating, sour
   };
 
   /** Retry frozen submissions under their original key; only an explicit new conversation rekeys. */
-  const createDraft = (from: ConversationDraft, text: string, recheck: ConversationDraft['remedy'], answers = managedProviders) => {
+  const createDraft = (from: ConversationDraft, text: string, recheck: ConversationDraft['remedy'], answers: ManagedProviderAnswers) => {
     const { create } = source;
     /* The draft this send is for, fixed here: a send that outlives its draft changes nothing. */
     let attempt = from;
@@ -162,7 +146,7 @@ export function createConversationDraftActions({ registry, draft, creating, sour
     })();
   };
 
-  const sendDraft = (text: string, answers = managedProviders) => {
+  const sendDraft = (text: string, answers: ManagedProviderAnswers) => {
     if (creating || draft === null) return false;
     /* The server refuses `text.trim().is_empty()` but counts `chars()` on the
            untrimmed text, in Unicode scalar values: so the blank check trims, the
@@ -226,10 +210,10 @@ export function createConversationDraftActions({ registry, draft, creating, sour
   const sendAsNewConversation = () => {
     if (creating || draft === null || draft.text === null) return false;
     const text = draft.text;
-    if (refuseOfflineDraft(draft, text)) return false;
+    if (refuseOfflineDraft(draft, text, managedProviders)) return false;
     amendDraft(draft, { creating: true, error: null, remedy: null });
     /* An explicit new-conversation choice starts a fresh idempotent submission. */
-    createDraft(draft, text, 'new-conversation');
+    createDraft(draft, text, 'new-conversation', managedProviders);
     return true;
   };
 
@@ -237,15 +221,13 @@ export function createConversationDraftActions({ registry, draft, creating, sour
      local takeover, not a dispatched/accepted POST or capability confirmation. */
   const retryDraft = () => {
     if (creating || draft === null || draft.text === null) return false;
-    if (draft.submitted !== null) return sendDraft(draft.submitted.text);
+    if (draft.submitted !== null) return sendDraft(draft.submitted.text, managedProviders);
     const text = draft.text;
     if (!onlineManager.isOnline()) return false;
     amendDraft(draft, { creating: true });
-    void recheckManagedProviders().then(answers => {
+    void recheckManagedProviders().catch(() => undefined).then(answers => {
       amendDraft(draft, { creating: false });
       sendDraft(text, answers);
-    }).catch(() => {
-      amendDraft(draft, { creating: false, error: 'Managed provider capabilities are unavailable. Reconnect before sending.', remedy: 'retry' });
     });
     return true;
   };
@@ -257,5 +239,5 @@ export function createConversationDraftActions({ registry, draft, creating, sour
     if (draft !== null && draft.submitted === null) registry.discardDraft(draft);
   };
 
-  return { start, startWithMessage, withDraft, sendDraft, retryDraft, sendAsNewConversation, closeDrawer };
+  return { start, startWithMessage, withDraft, sendDraft: (text: string) => sendDraft(text, managedProviders), retryDraft, sendAsNewConversation, closeDrawer };
 }

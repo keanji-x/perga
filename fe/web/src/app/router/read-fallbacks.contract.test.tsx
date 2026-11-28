@@ -1,7 +1,6 @@
 import { fixtureSnapshot, fixtureTrack } from './session-contract-fixture.ts';
 import { prepareReportDocument } from '../../features/report/document/preparation.ts';
 // @vitest-environment jsdom
-import { WEB_COMPAT_VERSION } from '../providers/public.tsx';
 import { onlineManager, QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { RouterProvider, createMemoryHistory } from '@tanstack/react-router';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
@@ -187,7 +186,6 @@ describe('degraded workspace reads stay usable', () => {
   it('finishes an offline conversation submission without waiting for delivery reconciliation', async () => {
     const creates: ApiRequest[] = [];
     const { client } = renderRoute('/track/w1', (request) => {
-      if (request.path === '/api/v1/bootstrap') return ok({ webCompatVersion: WEB_COMPAT_VERSION, minWebCompatVersion: WEB_COMPAT_VERSION, syncEventVersion: 29, dbInstanceId: 'test', assistantProviders: true, conversationInitialInput: true });
       if (request.path.startsWith('/api/v1/bootstrap?scope=managed')) return ok({ version: 'test', providers: [{ provider: 'codex', available: true, version: null, reason: null, models: [] }], templates: [], areas: [] });
       if (request.path === '/api/v1/areas') return ok(areas.slice(0, 1));
       if (request.path === '/api/v1/areas/c1/tracks?includeClosed=true') return ok([track]);
@@ -219,7 +217,6 @@ describe('degraded workspace reads stay usable', () => {
   it('keeps a create undispatched when connectivity drops between the click and its mutation', async () => {
     const creates: ApiRequest[] = [];
     const { client } = renderRoute('/track/w1', (request) => {
-      if (request.path === '/api/v1/bootstrap') return ok({ webCompatVersion: WEB_COMPAT_VERSION, minWebCompatVersion: WEB_COMPAT_VERSION, syncEventVersion: 29, dbInstanceId: 'test', assistantProviders: true, conversationInitialInput: true });
       if (request.path.startsWith('/api/v1/bootstrap?scope=managed')) return ok({ version: 'test', providers: [{ provider: 'codex', available: true, version: null, reason: null, models: [] }], templates: [], areas: [] });
       if (request.path === '/api/v1/areas') return ok(areas.slice(0, 1));
       if (request.path === '/api/v1/areas/c1/tracks?includeClosed=true') return ok([track]);

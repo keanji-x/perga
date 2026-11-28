@@ -118,7 +118,6 @@ it('shows first-message sending feedback while conversation creation is held', a
   const view = mount({ input: response.promise });
   try {
     fireEvent.click(await screen.findByRole('button', { name: 'New conversation' }));
-    await waitFor(() => expect(view.client.getQueryData(['server-version'])).toMatchObject({ assistantProviders: true }));
     await waitFor(() => expect(view.client.getQueryData(['managed-providers'])).toHaveLength(1));
     await type('The first local message');
     fireEvent.keyDown(field(), { key: 'Enter' });
