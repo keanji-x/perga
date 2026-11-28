@@ -106,7 +106,7 @@ describe('a lost answer shows the write’s fixed state, never transport text', 
       await areaMenu('Edit area');
       await userEvent.clear(screen.getByRole('textbox', { name: /^Name/ }));
       await userEvent.type(screen.getByRole('textbox', { name: /^Name/ }), 'Renamed');
-      await userEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+      await userEvent.click(screen.getByRole('button', { name: 'Save' }));
     }, 'The area update is unconfirmed.'],
     /* The creates keep S0's key handling; a lost answer is their fixed unconfirmed state. */
     ['track create', '/', async () => {
@@ -117,7 +117,7 @@ describe('a lost answer shows the write’s fixed state, never transport text', 
     ['area create', '/', async () => {
       await userEvent.click(await screen.findByRole('button', { name: 'New area' }));
       await userEvent.type(screen.getByRole('textbox', { name: /^Name/ }), 'Two');
-      await userEvent.click(screen.getByRole('button', { name: 'Create area' }));
+      await userEvent.click(screen.getByRole('button', { name: 'Create' }));
     }, 'Creation could not be confirmed. Try again to safely check the same area.'],
   ];
 

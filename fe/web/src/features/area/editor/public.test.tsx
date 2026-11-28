@@ -20,7 +20,7 @@ function renderForm(overrides: Partial<AreaEditorFormProps> = {}) {
     listDirectory: vi.fn((path?: string) =>
       Promise.resolve({ path: path ?? '/', parent: null, entries: [] })),
     nameInputRef: { current: null },
-    submitLabel: 'Save changes',
+    submitLabel: 'Save',
     onCancel: vi.fn(),
     onSubmit,
     ...overrides,
@@ -43,19 +43,21 @@ describe('AreaEditorForm', () => {
         <AreaEditorForm
           initial={{ name: 'Work', defaultCwd: null }}
           submitting={false} locked={false} error={null}
-          cancelLabel="Cancel" submitLabel="Save changes"
+          cancelLabel="Cancel" submitLabel="Save"
           listDirectory={() => Promise.resolve({ path: '/srv/ legal-space ', parent: null, entries: [] })}
           nameInputRef={{ current: null }} onCancel={vi.fn()} onSubmit={onSubmit}
         />
       </Dialog>,
     );
     expect(screen.queryByRole('button', { name: /template|isolation/i })).toBeNull();
-    const opener = screen.getByRole('button', { name: 'Default folder: Perga workspace' });
+    const opener = screen.getByRole('button', { name: 'Default folder' });
     await userEvent.click(opener);
+    await userEvent.click(await screen.findByRole('menuitem', { name: 'Choose folder…' }));
     await userEvent.click(await screen.findByRole('button', { name: 'Select this directory' }));
-    await waitFor(() => expect(document.activeElement).toBe(opener));
-    expect(opener.isConnected).toBe(true);
-    await userEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+    const boundFolder = await screen.findByRole('button', { name: /^Default folder: \/srv\// });
+    expect(boundFolder).toBe(opener);
+    await waitFor(() => expect(document.activeElement).toBe(boundFolder));
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }));
     expect(onSubmit).toHaveBeenCalledWith({
       name: 'Work', defaultCwd: '/srv/ legal-space ',
     });
@@ -66,30 +68,32 @@ describe('AreaEditorForm', () => {
       initial: { name: '  ', defaultCwd: null },
       listDirectory: () => Promise.resolve({ path: '/home/kenji/projects/perga', parent: '/home/kenji/projects', entries: [] }),
     });
-    await userEvent.click(screen.getByRole('button', { name: 'Default folder: Perga workspace' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Default folder' }));
+    await userEvent.click(await screen.findByRole('menuitem', { name: 'Choose folder…' }));
     await userEvent.click(await screen.findByRole('button', { name: 'Select this directory' }));
     expect(screen.getByDisplayValue('perga')).toBe(screen.getByRole('textbox', { name: 'Name' }));
   });
 
-  it('names the SSH target for an Area using a managed workspace', () => {
+  it('names the SSH target for an Area without a linked folder', () => {
     renderForm({
       initial: { name: 'Remote Area', defaultCwd: null, executionTargetId: 'build-box' },
       executionTargets: [{ id: 'build-box', label: 'Build machine', kind: 'ssh', isDefault: false, destination: 'dev@example.test', removable: true }],
     });
-    const folder = screen.getByRole('button', { name: 'Default folder: Perga workspace · Build machine' });
-    expect(folder.textContent).toContain('Default folder · Managed by Perga · Build machine');
+    const folder = screen.getByRole('button', { name: 'Default folder · Build machine' });
+    expect(folder.textContent).toBe('Default · Build machine');
   });
 
   it('pushes the directory browser into its host Dialog instead of nesting a modal', async () => {
     renderForm();
     const opener = screen.getByRole('button', { name: 'Default folder: /srv/work' });
     await userEvent.click(opener);
+    await userEvent.click(await screen.findByRole('menuitem', { name: /^Change folder…/ }));
+    expect(await screen.findByRole('dialog', { name: 'Choose a directory' })).toBeTruthy();
     expect(screen.getAllByRole('dialog')).toHaveLength(1);
-    expect(screen.getByRole('dialog', { name: 'Choose a directory' })).toBeTruthy();
     const path = await screen.findByRole('combobox', { name: 'Directory path' });
     await waitFor(() => expect(document.activeElement).toBe(path));
     await userEvent.click(screen.getByRole('button', { name: 'Cancel' }));
-    expect(screen.getByRole('dialog', { name: 'Edit Work' })).toBeTruthy();
+    expect(await screen.findByRole('dialog', { name: 'Edit Work' })).toBeTruthy();
     await waitFor(() => expect(document.activeElement).toBe(opener));
   });
 
@@ -104,7 +108,7 @@ describe('AreaEditorForm', () => {
       initial: { name: 'Work', defaultCwd: '/srv/ work ' },
       onSubmit,
     });
-    await userEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }));
     expect(onSubmit).toHaveBeenCalledWith({
       name: 'Work', defaultCwd: '/srv/ work ',
     });
@@ -136,13 +140,14 @@ describe('AreaEditorForm', () => {
       ],
       listDirectoryForTarget,
       onCreateExecutionTarget,
-      submitLabel: 'Create area',
+      submitLabel: 'Create',
       onSubmit,
     });
 
     // Open folder picker -> machine capsules live at the top of the directory dialog.
-    await userEvent.click(screen.getByRole('button', { name: 'Default folder: Perga workspace' }));
-    expect(screen.getByRole('button', { name: 'Local (kenji)', pressed: true })).toBeTruthy();
+    await userEvent.click(screen.getByRole('button', { name: 'Default folder' }));
+    await userEvent.click(await screen.findByRole('menuitem', { name: 'Choose folder…' }));
+    expect(await screen.findByRole('button', { name: 'Local (kenji)', pressed: true })).toBeTruthy();
 
     // Switch to existing SSH target capsule.
     await userEvent.click(screen.getByRole('button', { name: 'jasper (local ssh)' }));
@@ -162,7 +167,7 @@ describe('AreaEditorForm', () => {
 
     // Confirm directory selection on the newly added machine.
     await userEvent.click(await screen.findByRole('button', { name: 'Select this directory' }));
-    await userEvent.click(screen.getByRole('button', { name: 'Create area' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Create' }));
     expect(onSubmit).toHaveBeenCalledWith({
       name: 'Remote Area',
       defaultCwd: '/home/gpu-box/work',

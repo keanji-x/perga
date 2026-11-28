@@ -42,7 +42,7 @@ describe('creating an Area after navigation changes', () => {
         await page.getByRole('button', { name: 'Switch area, Product', exact: true }).click();
         await page.getByRole('menuitem', { name: 'New area', exact: true }).click();
         await page.getByRole('textbox', { name: /^Name/ }).fill('Research');
-        await page.getByRole('button', { name: 'Create area', exact: true }).click();
+        await page.getByRole('button', { name: 'Create', exact: true }).click();
         await expect.poll(() => creating).toBe(true);
         const readsBeforeSuccess = areaReads;
         if (navigation === 'Back') host.history.back();
@@ -89,7 +89,7 @@ describe('creating an Area before its list is available', () => {
       await page.getByRole('button', { name: 'Open workspace' }).click();
       await page.getByRole('button', { name: 'New area', exact: true }).click();
       await page.getByRole('textbox', { name: /^Name/ }).fill('Research');
-      await page.getByRole('button', { name: 'Create area', exact: true }).click();
+      await page.getByRole('button', { name: 'Create', exact: true }).click();
       await expect.poll(() => router.state.location.pathname).toBe('/area/c3/new');
       await expect.poll(() => reads).toBeGreaterThanOrEqual(2);
       await page.getByRole('button', { name: 'Switch area, Research', exact: true }).findElement();
@@ -98,7 +98,10 @@ describe('creating an Area before its list is available', () => {
       await expect.element(page.getByRole('status').getByText('Loading Area…')).toBeVisible();
       expect(page.getByRole('main').getByRole('alert').query()).toBeNull();
       await expect.element(page.getByRole('button', { name: 'Create track', exact: true })).toBeDisabled();
-      await expect.element(page.getByRole('button', { name: /^Repo: research.*\(\/srv\/research\)$/ })).toBeVisible();
+      await page.getByRole('button', { name: 'Track options', exact: true }).click();
+      const options = page.getByRole('dialog', { name: 'Track options', exact: true });
+      await expect.element(options.getByRole('button', { name: /^Repo: research.*\(\/srv\/research\)$/ })).toBeVisible();
+      await userEvent.keyboard('{Escape}');
       // Area creation does not expose a proactive template picker.
       await expect.element(page.getByRole('button', { name: /^Template:/ })).not.toBeInTheDocument();
       releaseReads();
@@ -129,7 +132,7 @@ describe('creating an Area before its list is available', () => {
       await page.getByRole('button', { name: 'Open workspace' }).click();
       await page.getByRole('button', { name: 'New area', exact: true }).click();
       await page.getByRole('textbox', { name: /^Name/ }).fill('Research');
-      await page.getByRole('button', { name: 'Create area', exact: true }).click();
+      await page.getByRole('button', { name: 'Create', exact: true }).click();
       await expect.poll(() => router.state.location.pathname).toBe('/area/c3/new');
       const composer = page.getByRole('combobox', { name: 'What this track should do' });
       await composer.fill('Keep my research plan');

@@ -105,9 +105,9 @@ it('opens the actual NewTrack folder picker from its inline folder host', async 
   render(<NewTrackForm area={{ id: 'work', name: 'Work' }} submitting={false} error={null}
     initialCwd={null}
     listDirectory={() => Promise.resolve({ path: '/', parent: null, entries: [] })} onSubmit={vi.fn()} />);
-  const folder = screen.getByRole('button', { name: 'Workspace: Managed' });
+  const folder = screen.getByRole('button', { name: 'Default folder' });
   await userEvent.click(folder);
-  await page.getByRole('menuitem', { name: /^Choose folder…/ }).click();
+  await page.getByRole('menuitem', { name: 'Choose folder…' }).click();
   expect(folder.parentElement!.getAnimations()).toHaveLength(0);
   const node = screen.getByRole('dialog');
   expect(node.getAnimations()).toHaveLength(1);
@@ -155,7 +155,7 @@ function AreaEntry({ empty }: { empty: boolean }) {
       <AreaEditorForm initial={{ name: '', defaultCwd: null }} submitting={false} locked={false}
         cancelLabel="Cancel" error={null}
         listDirectory={() => Promise.resolve({ path: '/', parent: null, entries: [] })}
-        nameInputRef={input} submitLabel="Create area" onCancel={() => setOrigin(null)} onSubmit={vi.fn()} />
+        nameInputRef={input} submitLabel="Create" onCancel={() => setOrigin(null)} onSubmit={vi.fn()} />
     </Dialog></>;
 }
 it.each([false, true])('uses the actual Sidebar creation source with the Area form and immediate child stack (empty=%s)', async empty => {
@@ -170,7 +170,8 @@ it.each([false, true])('uses the actual Sidebar creation source with the Area fo
   const node = await anchorIs(action.parentElement!);
   const name = page.getByRole('textbox', { name: 'Name' });
   await name.fill('Work draft');
-  await page.getByRole('button', { name: /^Default folder:/ }).click();
+  await page.getByRole('button', { name: 'Default folder' }).click();
+  await page.getByRole('menuitem', { name: 'Choose folder…' }).click();
   await expect.element(page.getByRole('dialog', { name: 'Choose a directory' })).toBeVisible();
   expect(screen.getByRole('dialog')).toBe(node);
   await userEvent.keyboard('{Escape}');

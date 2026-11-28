@@ -166,9 +166,9 @@ describe('AppShell Area editor flow', () => {
     expect(within(dialog).queryByRole('button', { name: /template/i })).toBeNull();
     expect(within(dialog).queryByText(/Could not load templates/)).toBeNull();
     expect(within(dialog).queryByText(/isolation/i)).toBeNull();
-    expect(within(dialog).getByRole('button', { name: 'Default folder: Perga workspace' })).toBeTruthy();
+    expect(within(dialog).getByRole('button', { name: 'Default folder' })).toBeTruthy();
     await userEvent.type(within(dialog).getByRole('textbox', { name: /^Name/ }), 'Simple');
-    await userEvent.click(within(dialog).getByRole('button', { name: 'Create area' }));
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Create' }));
     await waitFor(() => expect(harness.create).toHaveBeenCalledWith(expect.objectContaining({
       name: 'Simple', default_cwd: null,
     }), expect.any(String)));
@@ -218,13 +218,13 @@ describe('AppShell Area editor flow', () => {
     await userEvent.click(screen.getByRole('button', { name: 'New area' }));
     const input = screen.getByRole<HTMLInputElement>('textbox', { name: /^Name/ });
     await userEvent.type(input, 'Too large');
-    await userEvent.click(screen.getByRole('button', { name: 'Create area' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Create' }));
     expect((await screen.findByRole('alert')).textContent).toContain('Payload Too Large');
     expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull();
     expect(input.getAttribute('aria-disabled')).toBeNull();
     await userEvent.clear(input);
     await userEvent.type(input, 'Corrected');
-    await userEvent.click(screen.getByRole('button', { name: 'Create area' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Create' }));
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'New area' })).toBeNull());
     expect(writes).toHaveLength(2);
     expect(writes[0]?.headers?.['Idempotency-Key']).toEqual(expect.any(String));
@@ -239,7 +239,7 @@ describe('AppShell Area editor flow', () => {
     await userEvent.click(screen.getByRole('button', { name: 'New area' }));
     const input = screen.getByRole<HTMLInputElement>('textbox', { name: /^Name/ });
     await userEvent.type(input, 'Keep original');
-    await userEvent.click(screen.getByRole('button', { name: 'Create area' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Create' }));
     expect((await screen.findByRole('alert')).textContent).toContain('Creation could not be confirmed');
     expect(input.getAttribute('aria-disabled')).toBe('true');
     await userEvent.click(screen.getByRole('button', { name: 'Try again' }));
@@ -262,7 +262,7 @@ describe('AppShell Area editor flow', () => {
     const input = screen.getByRole<HTMLInputElement>('textbox', { name: /^Name/ });
     await userEvent.clear(input);
     await userEvent.type(input, 'Changed');
-    await userEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }));
     expect((await screen.findByRole('alert')).textContent).toContain(text);
     expect(writes).toHaveLength(1);
     expect(writes[0]).toMatchObject({ method: 'PATCH', path: '/api/v1/areas/c1', body: { name: 'Changed' } });
@@ -278,7 +278,7 @@ describe('AppShell Area editor flow', () => {
     const name = within(dialog).getByRole<HTMLInputElement>('textbox', { name: 'Name' });
     expect(name.required).toBe(true);
     await userEvent.type(name, 'Reading');
-    await userEvent.click(screen.getByRole('button', { name: 'Create area' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Create' }));
 
     await waitFor(() => expect(harness.create).toHaveBeenCalledTimes(1));
     const body = harness.create.mock.calls[0]?.[0] as Record<string, unknown>;
@@ -296,7 +296,7 @@ describe('AppShell Area editor flow', () => {
     renderShell();
     await userEvent.click(screen.getByRole('button', { name: 'New area' }));
     await userEvent.type(screen.getByRole('textbox', { name: /^Name/ }), 'Keep one');
-    await userEvent.click(screen.getByRole('button', { name: 'Create area' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Create' }));
     await screen.findByRole('alert');
     const [body, key] = harness.create.mock.calls[0] as [unknown, string];
     expect(key).toEqual(expect.any(String));
@@ -317,7 +317,7 @@ describe('AppShell Area editor flow', () => {
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'New area' })).toBeNull());
     await userEvent.click(screen.getByRole('button', { name: 'New area' }));
     await userEvent.type(screen.getByRole('textbox', { name: /^Name/ }), 'Keep one');
-    await userEvent.click(screen.getByRole('button', { name: 'Create area' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Create' }));
     await waitFor(() => expect(harness.create).toHaveBeenCalledTimes(4));
     expect(harness.create.mock.calls[3]?.[1]).not.toBe(key);
   });
@@ -331,14 +331,14 @@ describe('AppShell Area editor flow', () => {
     renderShell();
     await userEvent.click(screen.getByRole('button', { name: 'New area' }));
     await userEvent.type(screen.getByRole('textbox', { name: /^Name/ }), 'Reused');
-    await userEvent.click(screen.getByRole('button', { name: 'Create area' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Create' }));
     const alert = await screen.findByRole('alert');
     expect(alert.textContent).toContain('belongs to a different request');
     expect(alert.textContent).not.toContain('Try again');
     expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull();
     expect(screen.getByRole<HTMLInputElement>('textbox', { name: /^Name/ }).getAttribute('aria-disabled')).toBeNull();
     const reusedKey: unknown = harness.create.mock.calls[0]?.[1];
-    await userEvent.click(screen.getByRole('button', { name: 'Create area' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Create' }));
     await waitFor(() => expect(harness.create).toHaveBeenCalledTimes(2));
     expect(harness.create.mock.calls[1]?.[1]).not.toBe(reusedKey);
   });
@@ -352,14 +352,14 @@ describe('AppShell Area editor flow', () => {
     renderShell();
     await userEvent.click(screen.getByRole('button', { name: 'New area' }));
     await userEvent.type(screen.getByRole('textbox', { name: /^Name/ }), 'Deleted');
-    await userEvent.click(screen.getByRole('button', { name: 'Create area' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Create' }));
     await userEvent.click(await screen.findByRole('button', { name: 'Try again' }));
     await waitFor(() => expect(harness.create).toHaveBeenCalledTimes(2));
     const alert = await screen.findByRole('alert');
     await waitFor(() => expect(alert.textContent).toContain('was deleted'));
     expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull();
     const spentKey: unknown = harness.create.mock.calls[1]?.[1];
-    await userEvent.click(screen.getByRole('button', { name: 'Create area' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Create' }));
     await waitFor(() => expect(harness.create).toHaveBeenCalledTimes(3));
     expect(harness.create.mock.calls[2]?.[1]).not.toBe(spentKey);
   });
@@ -369,21 +369,21 @@ describe('AppShell Area editor flow', () => {
     renderShell();
     await userEvent.click(screen.getByRole('button', { name: 'New area' }));
     await userEvent.type(screen.getByRole('textbox', { name: /^Name/ }), 'Before');
-    await userEvent.click(screen.getByRole('button', { name: 'Create area' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Create' }));
     await screen.findByRole('alert');
     const input = screen.getByRole<HTMLInputElement>('textbox', { name: /^Name/ });
     expect(input.getAttribute('aria-disabled')).toBeNull();
     await userEvent.clear(input);
     await userEvent.type(input, 'Corrected');
     harness.create.mockRejectedValueOnce(new Error('Response lost'));
-    await userEvent.click(screen.getByRole('button', { name: 'Create area' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Create' }));
     const discard = await screen.findByRole('button', { name: 'Discard draft' });
     const unresolvedKey: unknown = harness.create.mock.calls[1]?.[1];
     await userEvent.click(discard);
     await userEvent.click(screen.getByRole('button', { name: 'New area' }));
     expect(screen.getByRole<HTMLInputElement>('textbox', { name: /^Name/ }).value).toBe('');
     await userEvent.type(screen.getByRole('textbox', { name: /^Name/ }), 'Corrected');
-    await userEvent.click(screen.getByRole('button', { name: 'Create area' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Create' }));
     await waitFor(() => expect(harness.create).toHaveBeenCalledTimes(3));
     expect(harness.create.mock.calls[2]?.[1]).not.toBe(unresolvedKey);
   });
@@ -397,7 +397,7 @@ describe('AppShell Area editor flow', () => {
     const name = screen.getByRole<HTMLInputElement>('textbox', { name: /^Name/ });
     await userEvent.clear(name);
     await userEvent.type(name, 'Studio');
-    await userEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }));
 
     await waitFor(() => expect(harness.update).toHaveBeenCalledWith('c1', { name: 'Studio' }));
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Edit Work' })).toBeNull());
@@ -410,8 +410,9 @@ describe('AppShell Area editor flow', () => {
     };
     renderShell();
     await openDesktopEditor();
-    await userEvent.click(screen.getByRole('button', { name: 'Use a new Perga workspace' }));
-    await userEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Default folder: /srv/work' }));
+    await userEvent.click(await screen.findByRole('menuitem', { name: 'Default' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }));
 
     await waitFor(() => expect(harness.update).toHaveBeenCalledWith('c1', {
       default_cwd: null,
@@ -424,7 +425,7 @@ describe('AppShell Area editor flow', () => {
     renderShell();
     await userEvent.click(screen.getByRole('button', { name: 'New area' }));
     await userEvent.type(screen.getByRole('textbox', { name: /^Name/ }), 'Still here');
-    await userEvent.click(screen.getByRole('button', { name: 'Create area' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Create' }));
 
     const busy = await screen.findByRole<HTMLButtonElement>('button', { name: 'Saving…' });
     expect(busy.getAttribute('aria-busy')).toBe('true');
@@ -442,7 +443,7 @@ describe('AppShell Area editor flow', () => {
     harness.create.mockRejectedValueOnce(new Error('Area write failed'));
     await userEvent.click(await screen.findByRole('button', { name: 'New area' }));
     await userEvent.type(screen.getByRole('textbox', { name: /^Name/ }), 'Still here');
-    await userEvent.click(screen.getByRole('button', { name: 'Create area' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Create' }));
     /* An unknown answer is the fixed state, never the error's own text (#2131). */
     expect((await screen.findByRole('alert')).textContent).toBe('Creation could not be confirmed. Try again to safely check the same area.');
     expect(screen.getByRole<HTMLInputElement>('textbox', { name: /^Name/ }).value).toBe('Still here');
@@ -455,7 +456,7 @@ describe('AppShell Area editor flow', () => {
     await userEvent.click(screen.getByRole('menuitem', { name: 'New area' }));
     expect(screen.getAllByRole('dialog')).toHaveLength(1);
     await userEvent.type(screen.getByRole('textbox', { name: /^Name/ }), 'Launch');
-    await userEvent.click(screen.getByRole('button', { name: 'Create area' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Create' }));
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
     expect(harness.go).toHaveBeenCalledWith({ name: 'new-track', areaId: 'c-created' });
   });

@@ -1,115 +1,34 @@
-// Shared directory control; callers own the path and directory browsing.
-import type { ReactNode } from 'react';
-import { Button } from '@astryxdesign/core/Button';
-import { Icon as AstryxIcon } from '@astryxdesign/core/Icon';
-import { Icon } from '../../../ui/icon/public.tsx';
-import styles from './default-pills.module.css';
-
 export function basenameOf(path: string): string {
   const trimmed = path.replace(/\/+$/, '');
   return trimmed === '' ? '/' : trimmed.slice(trimmed.lastIndexOf('/') + 1);
 }
 
+export function compactPathDescription(path: string, maxLength = 42): string {
+  if (path.length <= maxLength) return path;
+  const parts = path.split('/').filter(Boolean);
+  if (parts.length >= 2) {
+    const tail = parts.slice(-2).join('/');
+    if (tail.length + 2 <= maxLength) return `…/${tail}`;
+  }
+  return `…${path.slice(-(maxLength - 1))}`;
+}
+
 export function folderLabelParts({
   value,
-  emptyLabel = 'Perga workspace',
   controlLabel = 'Folder',
   modeSuffix,
   showLabel = false,
 }: Readonly<{
   value: string;
   showLabel?: boolean;
-  emptyLabel?: string;
   controlLabel?: string;
   modeSuffix?: string;
 }>): Readonly<{ visibleLabel: string; accessibleName: string }> {
+  const suffix = modeSuffix ? ` · ${modeSuffix}` : '';
+  if (value === '') return { visibleLabel: `Default${suffix}`, accessibleName: `Default folder${suffix}` };
+
   const prefix = showLabel ? `${controlLabel}: ` : '';
-  const suffix = value !== '' && modeSuffix !== undefined && modeSuffix !== '' ? ` · ${modeSuffix}` : '';
-  const visibleLabel = `${prefix}${value === '' ? emptyLabel : `${basenameOf(value)}${suffix}`}`;
-  const accessibleName = value === '' ? `${controlLabel}: ${emptyLabel}`
-    : showLabel ? `${visibleLabel} (${value})` : `${controlLabel}: ${value}${suffix}`;
+  const visibleLabel = `${prefix}${basenameOf(value)}${suffix}`;
+  const accessibleName = showLabel ? `${visibleLabel} (${value})` : `${controlLabel}: ${value}${suffix}`;
   return { visibleLabel, accessibleName };
-}
-
-export function FolderClearButton({
-  label,
-  isDisabled = false,
-  onClear,
-}: Readonly<{
-  label: string;
-  isDisabled?: boolean;
-  onClear: () => void;
-}>) {
-  return (
-    <Button
-      type="button"
-      variant="ghost"
-      size="sm"
-      isIconOnly
-      className={styles.clearButton}
-      icon={<AstryxIcon icon="close" size="sm" />}
-      label={label}
-      isDisabled={isDisabled}
-      onClick={onClear}
-    />
-  );
-}
-
-export function FolderPillGroup({
-  clearLabel,
-  isDisabled = false,
-  onClear,
-  showClear,
-  children,
-}: Readonly<{
-  clearLabel: string;
-  isDisabled?: boolean;
-  onClear: () => void;
-  showClear: boolean;
-  children: ReactNode;
-}>) {
-  return (
-    <span className={showClear ? styles.pillGroup : undefined} data-nc-folder-pill-group={showClear ? '' : undefined}>
-      {children}
-      {showClear && <FolderClearButton label={clearLabel} isDisabled={isDisabled} onClear={onClear} />}
-    </span>
-  );
-}
-
-export function FolderPill({
-  value, emptyLabel = 'Perga workspace', controlLabel = 'Folder', modeSuffix, clearLabel, showLabel = false,
-  buttonId, onBrowse, onClear, isDisabled = false,
-}: Readonly<{
-  value: string;
-  showLabel?: boolean;
-  emptyLabel?: string;
-  controlLabel?: string;
-  modeSuffix?: string;
-  clearLabel: string;
-  buttonId?: string;
-  isDisabled?: boolean;
-  onBrowse: () => void;
-  onClear: () => void;
-}>) {
-  const { visibleLabel, accessibleName } = folderLabelParts({
-    value, emptyLabel, controlLabel, modeSuffix, showLabel,
-  });
-  return (
-    <FolderPillGroup clearLabel={clearLabel} isDisabled={isDisabled} onClear={onClear} showClear={value !== ''}>
-      <Button
-        type="button"
-        id={buttonId}
-        variant="secondary"
-        size="sm"
-        isDisabled={isDisabled}
-        className={styles.trigger}
-        aria-haspopup="dialog"
-        aria-label={accessibleName}
-        icon={<Icon name="folder" size="sm" />}
-        label={visibleLabel}
-        onClick={onBrowse}
-        {...{ title: accessibleName }}
-      />
-    </FolderPillGroup>
-  );
 }

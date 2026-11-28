@@ -77,5 +77,5 @@ describe('the composer focus ring', () => {
 });
 
 function trigger(): HTMLButtonElement {
-  return screen.getByRole('button', { name: 'Workspace: Managed' });
+  return screen.getByRole('button', { name: 'Default folder' });
 }

@@ -44,13 +44,13 @@ export function EmbeddedReadingHost({ id, label, hidden, children, footer, cente
   const overlay = useRef<HTMLDivElement>(null);
   const ports = useMemo(() => ({ key: 'embedded', navigation, overlay }), []);
   const hostRef = useReadingHostRef<HTMLElement>(ports);
-  return <section ref={hostRef} className={`${styles.host} ${centeredFooter ? `${styles.centered} ${centeredStyles.page} ${centeredStyles.composer}` : ''}`} data-nc-centered-footer={centeredFooter ? '' : undefined} aria-label={label} hidden={hidden} data-nc-embedded-reading="" data-nc-conversation-region={hidden ? undefined : id}>
+  return <section ref={hostRef} className={`${styles.host} ${centeredFooter ? `${styles.centered} ${centeredStyles.page}` : ''}`} data-nc-centered-footer={centeredFooter ? '' : undefined} aria-label={label} hidden={hidden} data-nc-embedded-reading="" data-nc-conversation-region={hidden ? undefined : id}>
       <h2 className={styles.title}>{label}</h2>
       <div className={`${styles.viewport} ${centeredFooter ? centeredStyles.column : ''}`}>
         <div className={styles.scroll} data-nc-drawer-scroll={hidden ? undefined : ''}><div className={styles.column}>{children}</div></div>
         <div ref={overlay} className={styles.overlay} data-nc-chat-scroll-overlay={hidden ? undefined : ''} />
       </div>
-      <div className={`${styles.footer} ${centeredFooter ? centeredStyles.column : ''}`}>{footer}</div>
+      <div className={`${styles.footer} ${centeredStyles.composer} ${centeredFooter ? centeredStyles.column : centeredStyles.compact}`}>{footer}</div>
       <div ref={navigation} className={styles.navigation} />
     </section>;
 }

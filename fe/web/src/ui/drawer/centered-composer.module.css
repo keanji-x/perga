@@ -55,54 +55,8 @@
     color: var(--text);
   }
 
-  /*
-   * Flat, not floating.
-   *
-   * `ChatComposer` hangs a `--shadow-low` off its body and swaps it for
-   * `--shadow-med` on hover and focus-within — correct where it was designed
-   * to sit, docked at the bottom of a scrolling transcript, where the shadow is
-   * what separates it from the messages sliding under it. Here there is nothing
-   * to slide under it: it is the only object on the page. The shadow made it
-   * read as a floating panel over an empty document, and the hover swap made
-   * the one thing on screen twitch when the pointer crossed it.
-   *
-   * Nothing replaces it *at rest*. The body carries astryx's popover
-   * background, which is already a step off the page, and that is the whole
-   * edge this shape wants: a hairline was tried here first and read as a second
-   * box drawn around a box.
-   *
-   * Focus is the exception, and it is not decoration. `ChatComposerInput` sets
-   * `outline: none` on the editable (`ChatComposerInput.tsx`), so that
-   * `:focus-within` shadow was the composer's **only** focus indicator —
-   * removing it left a keyboard user with no way to see where they are, which
-   * is WCAG 2.4.7 and which axe-core does not test for, so `axe-smoke` stayed
-   * green through it. The ring below restores the affordance without bringing
-   * the resting shadow back. It is `--accent` at 2px to match `base.css`'s
-   * global `:focus-visible`, and `inset` so focus costs no layout.
-   *
-   * Written as a descendant rule in `@layer ui` rather than a component
-   * override: the shadow is on an inner StyleX class with no prop behind it
-   * (`ChatComposer.tsx` — `styles.body`), so there is nothing to pass in. The
-   * layer order in `styles/entry.css` puts `ui` after `astryx`, so this
-   * wins without `!important` and without a specificity fight.
-   *
-   * Two shapes were rejected, and both for reasons worth keeping:
-   *
-   *  * `:global(.astryx-chat-composer)` — the obvious way to name the
-   *    component, and stylelint rejects it outright (`:global` is not a known
-   *    pseudo-class to `stylelint-config-recommended`, and this file would be
-   *    the only use of it in the app).
-   *  * Re-declaring astryx's `--shadow-low` / `--shadow-med` on the wrapper,
-   *    which is the *documented* theming seam and is the wrong tool here: those
-   *    are inherited custom properties, so flattening them at the wrapper also
-   *    flattens the model menu's popup, which is a floating layer and needs
-   *    its shadow.
-   *
-   * `[data-density]:has([contenteditable]) >` selects the composer root: astryx reflects its visual
-   * props as data attributes (`themeProps`). Requiring the editable keeps
-   * nested chips and popup menus out; only direct children of that root are
-   * flattened. Descendant matching supports reading hosts with motion wrappers.
-   */
+  /* Astryx reflects density on the composer root. Use its editable to isolate
+     the writing surface from nested toolbars and menus. */
   .composer [data-density]:has([contenteditable]) > * {
     box-shadow: none;
   }
@@ -117,6 +71,10 @@
     transition: box-shadow var(--motion-quick) var(--ease-feedback);
   }
 
+  .composer.compact [data-density] > *:has([contenteditable]) {
+    padding: var(--space-3) var(--space-4);
+  }
+
   .composer [data-density]:has([contenteditable]) > *:has([contenteditable="true"]:focus) {
     box-shadow: var(--shadow-float), 0 0 0 2px var(--accent-soft);
   }
@@ -125,6 +83,11 @@
   .composer [contenteditable="true"] {
     min-block-size: 88px;
     min-block-size: 4lh;
+  }
+
+  /* Reserve the same writing space while a send temporarily disables editing. */
+  .composer.compact [contenteditable]:not([data-astryx-token]) {
+    min-block-size: 2lh;
   }
 
   .send,

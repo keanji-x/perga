@@ -51,6 +51,12 @@ it('hands the live mark between the status row and an executing tool without dup
   const props = { hasPendingMessages: false, canContinue: false, cards: {}, stalled: false, conversation };
   const { container, rerender } = render(<ChatThread {...props} turns={done} lastSessionTurn={RUNNING_TURN} />);
   indicatorBesideStatus(container);
+  const meta = within(screen.getByRole('status', { name: 'Current response status' }));
+  expect(meta.queryByRole('separator')).toBeNull();
+  const actions = meta.getByRole('group', { name: 'Response actions' });
+  expect(getComputedStyle(actions).opacity).toBe('0');
+  expect(within(actions).getByRole('button', { name: 'Copy reply (unavailable)' })).toBeTruthy();
+  expect(within(actions).getByRole('button', { name: 'Regenerate (unavailable)' })).toBeTruthy();
   const running: ConversationActivity = { ...thought('tool'), verb: 'Calling tool', state: 'running' };
   rerender(<ChatThread {...props} turns={[...done, running]} lastSessionTurn={RUNNING_TURN} />);
   expect(container.querySelector('[data-nc-current-meta] [data-nc-activity="working"]')).toBeNull();
@@ -90,5 +96,7 @@ it.each([false, true])('shows a static, truthful status for unfinished calls aft
   expect(icon).toBeDefined();
   for (const label of within(entry).queryAllByText('Running', { exact: true })) expect(label.checkVisibility()).toBe(false);
   expect(container.querySelector('[data-nc-live] [role="progressbar"]')).toBeNull();
-  expect(within(screen.getByRole('status', { name: 'Current response status' })).getByText('Stopped')).toBeTruthy();
+  const meta = within(screen.getByRole('status', { name: 'Current response status' }));
+  expect(meta.getByText('Stopped')).toBeTruthy();
+  expect(meta.getByRole('separator')).toBeTruthy();
 });

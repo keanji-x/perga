@@ -96,7 +96,7 @@ export function ThreadStatusNotice({ historical = false, ariaLabel, messageActio
   return <div className={`${styles.notice} ${tone === 'warning' ? styles.warning : tone === 'error' ? styles.error : ''}`}
     role="status" aria-label={ariaLabel ?? (historical ? 'Historical response status' : 'Current response status')} data-nc-current-meta={historical ? undefined : ""} data-nc-turn={outcome === undefined ? undefined : 'outcome'}
     data-nc-turn-outcome={outcome}>
-    <Divider />
+    {(historical || outcome !== undefined) && <Divider />}
     <div className={styles.row}>
       <div ref={stateRef} className={styles.state} data-nc-meta-state="" tabIndex={-1}
         onFocus={(event) => { lastFocused.current = event.target; }} onBlur={(event) => {

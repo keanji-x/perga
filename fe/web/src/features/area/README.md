@@ -6,7 +6,7 @@ Area is a workspace grouping, not a page or a conversation scope.
 | --- | --- |
 | `palette.ts` | INV-DUP-006 — the canonical Area colour table, consumed by AppShell's shared new-Area flow. |
 | `editor/public.tsx` | `<AreaEditorForm>` — the shared New/Edit form for name and optional directory; hosted in the shell's Dialog. |
-| `default-pills/public.tsx` | The shared borderless Folder control used by both Area editor and New Track composer. |
+| `default-pills/public.tsx` | Shared folder basename, path description, and label helpers for Area and New Track. |
 | `new-track/public.tsx` | `<NewTrackForm>` — the route-owned create composer for a Track in one Area. |
 
 The desktop rail owns Area disclosure and management. The muted Area row
@@ -18,9 +18,9 @@ confirmation.
 The same Dialog creates and edits an Area with a name and optional folder.
 Neither operation reads templates. Editing changes only name and directory;
 an existing `default_template_id` is preserved by omitting it from the patch.
-An empty folder gives each new Track its own managed Perga workspace. A saved
-folder is the exact directory preselected for an attached Track. The opening
-name and directory snapshot stays fixed while the draft is open.
+The footer folder menu selects **Default** for a managed workspace or lets the
+user choose a directory. The saved directory is inherited by new Tracks. The
+opening name and directory snapshot stays fixed while the draft is open.
 
 On mobile, the Areas sheet keeps the same hierarchy as a list drill-in:
 `Areas → Tracks → Track page`. Its root header opens the same New Area Dialog,
@@ -54,6 +54,7 @@ creates a managed workspace. The Repo menu defaults attached directories to
 Conversation agents use the source folder in that mode. Task workers require
 an explicit upgrade to a worktree.
 
-The Repo menu opens the shared directory picker through Others. On the New
+Both folder dropdowns offer **Default** to clear the directory and
+**Choose folder…** or **Change folder…** to open the shared picker. On the New
 Track route the picker owns a modal. Inside the Area editor it pushes a view
 onto the existing dialog.

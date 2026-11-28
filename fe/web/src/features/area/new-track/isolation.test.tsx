@@ -17,7 +17,7 @@ it.each(['/repo', null])('defaults to worktree isolation for folder %s', async (
     : { message: 'Plan', cwd, isolation: 'worktree' });
   if (cwd !== null) {
     await userEvent.click(screen.getByRole('button', { name: 'Repo: repo (/repo)' }));
-    await userEvent.click(await screen.findByRole('menuitem', { name: /Perga workspace/ }));
+    await userEvent.click(await screen.findByRole('menuitem', { name: /^Default$/ }));
     await userEvent.click(screen.getByRole('button', { name: 'Create track' }));
     expect(onSubmit).toHaveBeenLastCalledWith({ message: 'Plan' });
   }
@@ -61,14 +61,19 @@ it('switches between Worktree and Bare folder modes in the Repo popover and chan
   expect(onSubmit).toHaveBeenLastCalledWith({ message: 'Edit in source', cwd: '/repo-2', isolation: 'none' });
 });
 
-it('shows only the managed workspace as selected until a folder is bound', async () => {
+it('shows Default as selected before choosing a folder', async () => {
   render(<NewTrackForm area={{ id: 'work', name: 'Work' }} submitting={false} error={null}
     initialCwd={null}
-    listDirectory={vi.fn()} onSubmit={vi.fn()} />);
+    listDirectory={() => Promise.resolve({ path: '/', parent: null, entries: [] })} onSubmit={vi.fn()} />);
 
-  await userEvent.click(screen.getByRole('button', { name: 'Workspace: Managed' }));
+  await userEvent.click(screen.getByRole('button', { name: 'Default folder' }));
   const menu = await screen.findByRole('menu');
-  expect(within(menu).getAllByRole('menuitem')).toHaveLength(2);
-  expect(within(menu).getByRole('menuitem', { name: /^Perga workspace.*Selected/ })).toBeTruthy();
-  expect(within(menu).getByRole('menuitem', { name: /^Choose folder…/ })).toBeTruthy();
+  const items = within(menu).getAllByRole('menuitem');
+  expect(items).toEqual([
+    within(menu).getByRole('menuitem', { name: /^Default.*Selected$/ }),
+    within(menu).getByRole('menuitem', { name: 'Choose folder…' }),
+  ]);
+  await userEvent.click(items[1]);
+  expect(await screen.findByRole('dialog', { name: 'Choose a directory' })).toBeTruthy();
+  expect(screen.queryByRole('menu')).toBeNull();
 });

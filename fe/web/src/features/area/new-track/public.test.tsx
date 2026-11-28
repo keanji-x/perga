@@ -21,7 +21,7 @@ const LISTING: DirectoryListing = {
 const TASK_LABEL = 'What this track should do';
 const TASK_PLACEHOLDER = 'What should this track do?';
 
-const FOLDER_CHIP_NAME = 'Workspace: Managed';
+const FOLDER_CHIP_NAME = 'Default folder';
 
 
 function renderForm(overrides: Partial<Parameters<typeof NewTrackForm>[0]> = {}) {
@@ -46,7 +46,7 @@ function folderChip(): HTMLButtonElement {
 
 async function pickTheListedFolder(): Promise<void> {
   await userEvent.click(folderChip());
-  await userEvent.click(await screen.findByRole('menuitem', { name: /^Choose folder…/ }));
+  await userEvent.click(await screen.findByRole('menuitem', { name: 'Choose folder…' }));
   // `Select this directory` only enables once the path input and the listing agree.
   await screen.findByDisplayValue('/srv/app/');
   await userEvent.click(screen.getByRole('button', { name: 'Select this directory' }));
@@ -66,6 +66,15 @@ async function fillMessage(value = 'Ship the thing') {
 
 /** The collapsed Start from control, matched on the label prefix only. */
 describe('NewTrackForm asks only what the track starts from', () => {
+  it('names the inherited SSH target on the Default folder pill', () => {
+    renderForm({
+      initialExecutionTargetId: 'build-box',
+      executionTargets: [{ id: 'build-box', label: 'Build machine', kind: 'ssh', isDefault: false, destination: 'dev@example.test', removable: true }],
+    });
+
+    expect(screen.getByRole('button', { name: 'Default folder · Build machine' }).textContent).toBe('Default · Build machine');
+  });
+
   it('names a single Area in the page header without a switcher', () => {
     renderForm();
     const header = screen.getByRole('banner');
@@ -239,7 +248,7 @@ describe('NewTrackForm asks only what the track starts from', () => {
     // The chip opens on Enter rather than creating a track.
     folderChip().focus();
     await userEvent.keyboard('{Enter}');
-    expect(await screen.findByRole('menuitem', { name: /^Choose folder…/ })).toBeTruthy();
+    expect(await screen.findByRole('menuitem', { name: 'Choose folder…' })).toBeTruthy();
     expect(onSubmit).not.toHaveBeenCalled();
   });
 
@@ -274,7 +283,7 @@ describe('NewTrackForm asks only what the track starts from', () => {
     await fillMessage('Ship the thing');
     folderChip().focus();
     await userEvent.keyboard('{Enter}');
-    expect(await screen.findByRole('menuitem', { name: /^Choose folder…/ })).toBeTruthy();
+    expect(await screen.findByRole('menuitem', { name: 'Choose folder…' })).toBeTruthy();
     expect(onSubmit).not.toHaveBeenCalled();
   });
 
@@ -317,7 +326,7 @@ describe('The folder is optional, and its absence is the managed default', () =>
     // Nothing about the folder gates the submit, before or after the picker has opened.
     expect(submitButton().getAttribute('aria-disabled')).toBeNull();
     await userEvent.click(folderChip());
-    await userEvent.click(await screen.findByRole('menuitem', { name: /^Choose folder…/ }));
+    await userEvent.click(await screen.findByRole('menuitem', { name: 'Choose folder…' }));
     await screen.findByDisplayValue('/srv/app/');
     await userEvent.keyboard('{Escape}');
     await userEvent.click(submitButton());
@@ -344,7 +353,7 @@ describe('The folder is optional, and its absence is the managed default', () =>
     renderForm();
     expect(screen.queryByRole('dialog')).toBeNull();
     await userEvent.click(folderChip());
-    await userEvent.click(await screen.findByRole('menuitem', { name: /^Choose folder…/ }));
+    await userEvent.click(await screen.findByRole('menuitem', { name: 'Choose folder…' }));
     const picker = await screen.findByRole('dialog');
     expect(picker.getAttribute('aria-modal')).toBe('true');
     expect(picker.getAttribute('aria-label')).toBe('Choose a directory');
@@ -369,22 +378,16 @@ describe('The folder is optional, and its absence is the managed default', () =>
   });
 
   /* Create time is the only entry into the attached choice, so the way back lives in the Repo menu. */
-  it('drops back to the managed default when Perga workspace is selected from the Repo menu', async () => {
+  it('drops back to the managed default when the folder is removed from the Repo menu', async () => {
     const { onSubmit } = renderForm();
     await fillMessage();
     await pickTheListedFolder();
-    expect(screen.queryByRole('button', { name: 'Use a Perga workspace instead' })).toBeNull();
     await userEvent.click(screen.getByRole('button', { name: 'Repo: app (/srv/app)' }));
-    await userEvent.click(await screen.findByRole('menuitem', { name: /Perga workspace/ }));
+    await userEvent.click(await screen.findByRole('menuitem', { name: /^Default$/ }));
     await userEvent.click(submitButton());
     const [draft] = onSubmit.mock.calls[0] as [Record<string, unknown>];
     expect(draft).toEqual({ message: 'Ship the thing' });
     expect(Object.hasOwn(draft, 'cwd')).toBe(false);
-  });
-
-  it('offers no way back before a folder is chosen — there is nothing to clear', () => {
-    renderForm();
-    expect(screen.queryByRole('button', { name: 'Use a Perga workspace instead' })).toBeNull();
   });
 
   /* `ui/` primitives may not know a transport exists and `features/**` may not
@@ -392,7 +395,7 @@ describe('The folder is optional, and its absence is the managed default', () =>
   it('reads the directory through the injected port', async () => {
     const { props } = renderForm();
     await userEvent.click(folderChip());
-    await userEvent.click(await screen.findByRole('menuitem', { name: /^Choose folder…/ }));
+    await userEvent.click(await screen.findByRole('menuitem', { name: 'Choose folder…' }));
     await screen.findByDisplayValue('/srv/app/');
     expect(props.listDirectory).toHaveBeenCalled();
   });
