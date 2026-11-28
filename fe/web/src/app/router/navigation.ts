@@ -2,21 +2,21 @@
 
 import { trimPathRight,useNavigate,useRouter,useRouterState,type RouterHistory } from '@tanstack/react-router';
 import { useCallback,useMemo } from 'react';
+import { useCompactViewport } from '../../ui/viewport/public.ts';
 
+import { useAppHistory } from './app-history.tsx';
 import { useDraftBackOwner,type NavigationSource } from './draft-back-owner.tsx';
-import type { MobilePanel,TrackSearch,TrackSource } from './track-search.ts';
+import type { MobilePanel,TrackSearch } from './track-search.ts';
 import { useTrackViews } from './track-view-state.tsx';
 
 import { formatFileLine, parseFileLine, isFilePath, type FileLineLocation } from '../../../../core/domain/report-file.ts';
 
-export type { MobilePanel,TrackSearch,TrackSource } from './track-search.ts';
+export type { MobilePanel,TrackSearch } from './track-search.ts';
 
-/** `ncPanelPushed` tells close to `back()` rather than `replace()`: `replace` never merges with the previous entry, and `back()` on a cold deep link would leave the app. */
+/** Desktop file history retains its existing file and panel transition markers. */
 declare module '@tanstack/history' {
   interface HistoryState {
     ncPanelPushed?: boolean;
-    /** New-track Back restores the report that opened the draft; cold links stay in the app. */
-    ncNewTrackPushed?: boolean;
     /** A plain Track selection resumes its saved viewport; explicit targets reveal themselves. */
     ncResumeTrackView?: boolean;
     /** Explicit report-anchor activation, independent of file/panel navigation. */
@@ -35,11 +35,13 @@ export const PLANNER_OPEN_STATE_KEY = 'ncOpenPlanner';
 
 export type NavTarget =
   | Readonly<{ name: 'today'; day?: string; view?: 'today' }>
+  | Readonly<{ name: 'workspace' }>
+  | Readonly<{ name: 'area'; areaId: string }>
   | Readonly<{ name: 'memory' }>
   | Readonly<{ name: 'area-memory'; areaId: string }>
   /** Starting a track is a route, not a dialog; the track row is minted on submit, not on entering the route. */
   | Readonly<{ name: 'new-track'; areaId: string }>
-  /** `blockId` rides in the hash; `cardId`/`filePath`/`panel`/`from` become `?card=`/`?file=`/`?panel=`/`?from=`. */
+  /** `blockId` rides in the hash; `cardId`/`filePath`/`panel` become `?card=`/`?file=`/`?panel=`. */
   | Readonly<{
     name: 'track';
     trackId: string;
@@ -48,7 +50,6 @@ export type NavTarget =
     filePath?: string;
     fileLine?: number | string;
     panel?: MobilePanel;
-    from?: TrackSource;
     openPlanner?: boolean;
   }>
   | Readonly<{ name: 'settings' }>
@@ -70,6 +71,8 @@ function trackPath(trackId: string, alias?: TrackRouteAlias): string {
 export function pathFor(target: NavTarget): string {
   switch (target.name) {
     case 'today': return '/';
+    case 'workspace': return '/workspace';
+    case 'area': return `/area/${encodeURIComponent(target.areaId)}`;
     case 'memory': return '/memory';
     case 'area-memory': return `/area/${encodeURIComponent(target.areaId)}/memory`;
     case 'new-track': return `/area/${encodeURIComponent(target.areaId)}/new`;
@@ -97,7 +100,7 @@ export function useGo(alias?: TrackRouteAlias): (target: NavTarget, options?: Go
       // All fields are built from the target, never spread from the previous
       // location: "not passed" means "cleared".
       const search: Record<string, unknown> = target.name === 'track'
-        ? buildTrackSearch({ card: target.cardId, file: target.filePath, line: target.fileLine, panel: target.panel, from: target.from })
+        ? buildTrackSearch({ card: target.cardId, file: target.filePath, line: target.fileLine, panel: target.panel })
         : target.name === 'today'
           ? {
             ...(target.day !== undefined ? { day: target.day } : {}),
@@ -118,15 +121,11 @@ export function useGo(alias?: TrackRouteAlias): (target: NavTarget, options?: Go
         ? { [PLANNER_OPEN_STATE_KEY]: true }
         : undefined;
       const switchingDraft = target.name === 'new-track' && isNewTrackPath(source.pathname);
-      const draftState = target.name === 'new-track'
-        ? { ncNewTrackPushed: switchingDraft ? source.state.ncNewTrackPushed === true : options?.replace !== true }
-        : undefined;
       void navigate({
         to: destination,
         hash,
         search,
         replace: switchingDraft || options?.replace,
-        ...(draftState === undefined ? {} : { state: draftState }),
         ...(target.name === 'track' ? { state: { ...state, ncResumeTrackView: resumeTrack,
           ...(target.blockId === undefined ? {} : { ncReportAnchorIntent: Array.from(crypto.getRandomValues(new Uint32Array(4))).join('-') }) } } : {}),
       });
@@ -136,24 +135,27 @@ export function useGo(alias?: TrackRouteAlias): (target: NavTarget, options?: Go
   }, [navigate, router, views, owner, alias]);
 }
 
-function isNewTrackPath(path: string): boolean {
-  return routeParamFromPath(path, '/area/') !== undefined && path.endsWith('/new');
+export function isNewTrackPath(path: string): boolean {
+  return /^\/area\/[^/]+\/new$/.test(trimPathRight(path)) && routeParamFromPath(path, '/area/') !== undefined;
 }
 
-/** An explicit entry marker prevents cold draft links from navigating outside the app. */
-export function useNewTrackBack(): (() => void) | null {
-  const history = useRouter().history as RouterHistory;
+/** Route controls pop within this mount's history, with an in-app cold-link exit. */
+export function useAppBack(alias?: TrackRouteAlias) {
+  const router = useRouter();
+  const history = router.history as RouterHistory;
   const owner = useDraftBackOwner();
-  const location = useRouterState({ select: (state) => state.location });
-  const go = useGo();
-  const back = useCallback(() => {
-    if (location.state.ncNewTrackPushed === true && history.canGoBack()) {
-      if (owner === null) throw new Error('Draft Back requires app router context');
-      owner.back();
-    }
-    else go({ name: 'today' }, { replace: true });
-  }, [go, history, location.state.ncNewTrackPushed, owner]);
-  return isNewTrackPath(location.pathname) ? back : null;
+  const go = useGo(alias);
+  const { stack, canGoBack, previousEntry, lastAction } = useAppHistory();
+  const pop = useCallback(() => {
+    if (stack?.snapshot().canGoBack !== true) return false;
+    if (owner !== null && isNewTrackPath(router.parseLocation(history.location).pathname)) owner.back();
+    else history.back();
+    return true;
+  }, [history, owner, router, stack]);
+  const goBack = useCallback((fallback: NavTarget) => {
+    if (!pop()) go(fallback, { replace: true });
+  }, [go, pop]);
+  return { canGoBack, previousEntry, lastAction, goBack, pop, stepsBackOutOf: stack?.stepsBackOutOf };
 }
 
 /**
@@ -196,16 +198,15 @@ export function usePlannerOpenIntent(trackId: string): PlannerOpenIntent {
 
 /** `card`, `file` and `panel` are mutually exclusive: a persisted card wins, then a transient file, then a panel. */
 function buildTrackSearch(fields: Readonly<{
-  card?: string; file?: string; line?: number | string; panel?: MobilePanel; from?: TrackSource;
+  card?: string; file?: string; line?: number | string; panel?: MobilePanel;
 }>): TrackSearch {
-  const search: { card?: string; file?: string; line?: number | string; panel?: MobilePanel; from?: TrackSource } = {};
+  const search: { card?: string; file?: string; line?: number | string; panel?: MobilePanel } = {};
   if (fields.card !== undefined) search.card = fields.card;
   else if (fields.file !== undefined) {
     search.file = fields.file;
     const line = trackFileLine(fields.line);
     if (line !== undefined) search.line = line;
   } else if (fields.panel !== undefined) search.panel = fields.panel;
-  if (fields.from !== undefined) search.from = fields.from;
   return search;
 }
 
@@ -271,28 +272,13 @@ export function panelFromSearchString(searchStr: string): MobilePanel | null {
   return asMobilePanel(rawParamFromSearchString(searchStr, 'panel'));
 }
 
-export function fromFromSearchString(searchStr: string): TrackSource | null {
-  return asTrackSource(rawParamFromSearchString(searchStr, 'from'));
-}
-
 export function panelFromLocation(location: SearchCarrier): MobilePanel | null {
   return asMobilePanel(rawParamFromLocation(location, 'panel'));
-}
-
-export function fromFromLocation(location: SearchCarrier): TrackSource | null {
-  return asTrackSource(rawParamFromLocation(location, 'from'));
 }
 
 export function asMobilePanel(value: string | null): MobilePanel | null {
   switch (value) {
     case 'outline': case 'cards': case 'tasks': case 'conversations': return value;
-    default: return null;
-  }
-}
-
-export function asTrackSource(value: string | null): TrackSource | null {
-  switch (value) {
-    case 'pages': case 'area': return value;
     default: return null;
   }
 }
@@ -330,23 +316,16 @@ export function useRoutePanel(): MobilePanel | null {
   return useRouterState({ select: (state) => panelFromLocation(state.location) });
 }
 
-/** The surface the reader came from, or `null` (callers default to `pages`). */
-export function useRouteFrom(): TrackSource | null {
-  return useRouterState({ select: (state) => fromFromLocation(state.location) });
-}
-
 /** `validateSearch` for `/track/$trackId`; a repeated key arrives as an array and is dropped. */
 export function validateTrackSearch(search: Record<string, unknown>): TrackSearch {
   const card = search.card;
   const file = search.file;
   const panel = search.panel;
-  const from = search.from;
   return buildTrackSearch({
     card: typeof card === 'string' && card !== '' ? card : undefined,
     file: typeof file === 'string' && isFilePath(file) ? file : undefined,
     line: trackFileLine(search.line),
     panel: asMobilePanel(typeof panel === 'string' ? panel : null) ?? undefined,
-    from: asTrackSource(typeof from === 'string' ? from : null) ?? undefined,
   });
 }
 
@@ -409,11 +388,10 @@ export function routeParamFromPath(path: string, prefix: '/area/' | '/track/'): 
  * navigation produces, not the one it reads.
  */
 export function trackSearchFromLocation(location: SearchCarrier): TrackSearch {
-  const search: { card?: string; file?: string; line?: number | string; panel?: MobilePanel; from?: TrackSource } = {};
+  const search: { card?: string; file?: string; line?: number | string; panel?: MobilePanel } = {};
   const card = cardIdFromLocation(location);
   const file = filePathFromLocation(location);
   const panel = panelFromLocation(location);
-  const from = fromFromLocation(location);
   if (card !== null) search.card = card;
   if (file !== null) {
     search.file = file;
@@ -421,7 +399,6 @@ export function trackSearchFromLocation(location: SearchCarrier): TrackSearch {
     if (line !== undefined) search.line = line;
   }
   if (panel !== null) search.panel = panel;
-  if (from !== null) search.from = from;
   return search;
 }
 
@@ -431,7 +408,6 @@ export type TrackSearchPatch = Readonly<{
   file?: string | undefined;
   line?: number | string | undefined;
   panel?: MobilePanel | undefined;
-  from?: TrackSource | undefined;
 }>;
 
 /**
@@ -452,7 +428,6 @@ export function sameTrackSearch(
     file: Object.hasOwn(patch, 'file') ? patch.file : current.file,
     line: Object.hasOwn(patch, 'file') || Object.hasOwn(patch, 'line') ? patch.line : current.line,
     panel: Object.hasOwn(patch, 'panel') ? patch.panel : current.panel,
-    from: Object.hasOwn(patch, 'from') ? patch.from : current.from,
   });
 }
 
@@ -473,7 +448,7 @@ export function useGoSameTrack(alias?: TrackRouteAlias): GoSameTrack {
       go(
         {
           name: 'track', trackId: expectedTrackId, cardId: patch.card,
-          filePath: patch.file, fileLine: patch.line, panel: patch.panel, from: patch.from,
+          filePath: patch.file, fileLine: patch.line, panel: patch.panel,
         },
         options,
       );
@@ -516,8 +491,11 @@ export type TrackFileNavigation = Readonly<{
 /** The label follows the same history guard as closeFile. */
 export function useRouteFileBackPath(): string | null {
   const history = useRouter().history as RouterHistory;
-  return useRouterState({ select: (state) => hasFilePushedMarker(state.location.state)
+  const compact = useCompactViewport();
+  const { previousEntry } = useAppHistory();
+  const desktopPath = useRouterState({ select: (state) => hasFilePushedMarker(state.location.state)
     && history.canGoBack() ? readFileBackPath(state.location.state) ?? null : null });
+  return compact ? (previousEntry === null ? null : filePathFromLocation(previousEntry)) : desktopPath;
 }
 
 /** Distinct files push; same-file jumps and surface switches replace. */
@@ -526,6 +504,9 @@ export function useTrackFileNavigation(alias?: TrackRouteAlias): TrackFileNaviga
   const history = router.history as RouterHistory;
   const navigate = useNavigate();
   const go = useGo(alias);
+
+  const compact = useCompactViewport();
+  const { pop } = useAppBack(alias);
 
   const openFile = useCallback((expectedTrackId: string, path: string, options?: FileOpenOptions) => {
     const location = router.parseLocation(history.location);
@@ -573,7 +554,8 @@ export function useTrackFileNavigation(alias?: TrackRouteAlias): TrackFileNaviga
 
   const closeFile = useCallback((expectedTrackId: string) => {
     const location = router.parseLocation(history.location);
-    if (hasFilePushedMarker(location.state) && history.canGoBack()) {
+    if (compact && pop()) return;
+    if (!compact && hasFilePushedMarker(location.state) && history.canGoBack()) {
       history.back();
       return;
     }
@@ -588,7 +570,7 @@ export function useTrackFileNavigation(alias?: TrackRouteAlias): TrackFileNaviga
       hash: true,
       replace: true,
     });
-  }, [go, history, navigate, router, alias]);
+  }, [compact, go, history, navigate, pop, router, alias]);
 
   return { openFile, closeFile };
 }
@@ -598,15 +580,9 @@ export type TrackPanelNavigation = Readonly<{
   closePanel: (expectedTrackId: string) => void;
 }>;
 
-/**
- * Opening a panel pushes a marked entry, panel-to-panel replaces it, close pops
- * the marked entry; a cold `?panel=` deep link has no marker, so close replaces
- * (an unconditional `back()` would walk out of the app).
- */
+/** Panel-to-panel switches replace the open panel. Closing follows the app's history floor. */
 export function useTrackPanelNavigation(alias?: TrackRouteAlias): TrackPanelNavigation {
-  // `useRouter()` is registered as `AnyRouter`, so its `history` widens to
-  // `any`; naming the type back is what keeps `canGoBack`/`back` checked.
-  const history = useRouter().history as RouterHistory;
+  const { pop } = useAppBack(alias);
   const navigate = useNavigate();
   const go = useGo(alias);
   const location = useRouterState({ select: (state) => state.location });
@@ -637,10 +613,7 @@ export function useTrackPanelNavigation(alias?: TrackRouteAlias): TrackPanelNavi
   }, [go, location, navigate, alias]);
 
   const closePanel = useCallback((expectedTrackId: string) => {
-    if (hasPanelPushedMarker(location.state) && history.canGoBack()) {
-      history.back();
-      return;
-    }
+    if (pop()) return;
     const search = sameTrackSearch(location, expectedTrackId, { panel: undefined }, alias);
     if (search === null) {
       go({ name: 'track', trackId: expectedTrackId }, { replace: true });
@@ -652,7 +625,7 @@ export function useTrackPanelNavigation(alias?: TrackRouteAlias): TrackPanelNavi
       hash: true,
       replace: true,
     });
-  }, [go, history, location, navigate, alias]);
+  }, [go, location, navigate, pop, alias]);
 
   return { openPanel, closePanel };
 }

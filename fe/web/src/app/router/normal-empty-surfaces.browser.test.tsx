@@ -9,7 +9,8 @@ import { afterEach, expect, it } from 'vitest';
 import { page, userEvent } from 'vitest/browser';
 import { createUiPreferences } from '../providers/ui-preferences.tsx';
 import { renderDailyFixture } from './daily-planner-fixture.tsx';
-import { MobileTracks } from '../shell/mobile/tracks.tsx';
+import { AreaLevelTwo } from '../shell/mobile/area-level-two.tsx';
+import { WorkspaceLevelOne } from '../shell/mobile/workspace-level-one.tsx';
 import { ChatEmpty } from '../../features/chat/thread/public.tsx';
 import { ReportDocument } from '../../features/report/document/public.tsx';
 it('catalog historical day without Track', async () => {
@@ -68,7 +69,14 @@ it('catalog heading-only report mobile', async () => {
 });
 it.each(['areas','tracks'] as const)('catalog mobile navigation %s', async view => {
   await page.viewport(390,844);
-  mount(<MobileTracks {...navigationActions()} view={view} areas={view === 'areas' ? [] : [area]} tracksByArea={new Map()} areaId={view === 'areas' ? undefined : area.id} currentTrackId={undefined} onSelectArea={noop} onOpenTrack={noop} isUnread={() => false} readError={null} readLoading={false} onRetryRead={noop} />);
+  const props = {
+    ...navigationActions(), areas: view === 'areas' ? [] : [area], tracksByArea: new Map(),
+    scrollRef: null, backLabel: 'Focus', onClosedExpandedChange: noop,
+    onOpenTrack: noop, isUnread: () => false, readError: null, readLoading: false, onRetryRead: noop,
+  };
+  mount(view === 'areas'
+    ? <WorkspaceLevelOne {...props} onSelectArea={noop} onOpenToday={noop} onOpenMemory={noop} />
+    : <AreaLevelTwo {...props} areaId={area.id} onOpenAreaMemory={noop} />);
   await expect.element(page.getByText(view === 'areas' ? 'No areas yet' : 'No tracks in this area')).toBeVisible();
   await shot(view === 'areas' ? '07-mobile-no-areas' : '08-mobile-no-tracks', [view === 'areas' ? 'No areas yet' : 'No tracks in this area']);
 });

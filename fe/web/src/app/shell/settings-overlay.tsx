@@ -3,8 +3,7 @@ import { useSystemUpgrade } from '../providers/system-upgrade.tsx';
 // shell's persistent route stage so section routes keep one surface. The URL selects the section.
 
 import { useQuery } from '@tanstack/react-query';
-import { useRouter,useRouterState,type RouterHistory } from '@tanstack/react-router';
-import { useEffect,useLayoutEffect,useRef } from 'react';
+import { useRouter, type RouterHistory } from '@tanstack/react-router';
 
 import type { ApiTransportPort } from '../../../../core/api/types.ts';
 import type { UnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
@@ -23,10 +22,12 @@ import { MobileHeader } from '../../ui/mobile-header/public.tsx';
 import { useCompactViewport } from '../../ui/viewport/public.ts';
 import { agentProvidersQueryOptions,useAgentProvidersRecheck } from '../providers/agent-providers.ts';
 import { appSettingsQueryOptions, usePatchAppSettings } from '../providers/app-settings.ts';
+import type { Area } from '../../../../core/domain/area.ts';
 import { managedProvidersQueryOptions } from '../providers/managed-providers.ts';
 import { useCurrentUser } from '../auth/current-user.tsx';
 import { setupOwnerWithTransport } from '../auth/login.ts';
-import { useCurrentPath,useGo,type NavTarget } from '../router/navigation.ts';
+import { mobileBackLabel } from '../router/mobile-back.ts';
+import { useAppBack,useCurrentPath,useGo,type NavTarget } from '../router/navigation.ts';
 import { useTheme } from '../theme/public.tsx';
 import styles from './settings-page.module.css';
 
@@ -50,52 +51,25 @@ export type SettingsOverlayProps = Readonly<{
 
 /** One Dialog body for a visit; compact presentation uses a full-page surface.
  * React retains the same pane host across responsive changes. */
-export function SettingsOverlay({ transport, unauthorized, onOwnerSetupComplete }: SettingsOverlayProps) {
+export function SettingsOverlay({ transport, unauthorized, onOwnerSetupComplete, areas }: SettingsOverlayProps & { areas: readonly Area[] }) {
   const go = useGo();
   const router = useRouter();
   const path = useCurrentPath();
-  const href = useRouterState({ select: (state) => state.location.href });
   const section = settingsSectionForPath(path);
   const compact = useCompactViewport();
   const mobileIndex = compact && path === '/settings';
   const history = router.history as RouterHistory;
-  // Coordinates belong to this mounted shell and public history actions only.
-  const position = useRef(0);
-  useLayoutEffect(() => history.subscribe(({ action }) => {
-    if (action.type === 'PUSH' || action.type === 'FORWARD') position.current += 1;
-    else if (action.type === 'BACK') position.current -= 1;
-    else if (action.type === 'GO') position.current += action.index;
-  }), [history]);
-  const returnLocation = useRef<Readonly<{ href: string; index: number }> | null>(null);
-  const indexLocation = useRef<number | null>(null);
-  useEffect(() => {
-    if (section === null) {
-      returnLocation.current = { href, index: position.current };
-      indexLocation.current = null;
-    } else if (path === '/settings') indexLocation.current = position.current;
-  }, [href, path, section]);
+  const { previousEntry, goBack, stepsBackOutOf } = useAppBack();
+  const fallback: NavTarget = mobileIndex ? { name: 'today' } : { name: 'settings' };
+  const mobileBack = () => goBack(fallback);
   const leaveSettings = () => {
-    const previous = returnLocation.current;
-    const distance = previous === null ? 0 : position.current - previous.index;
-    // Only pop entries after a workspace entry this mounted shell observed.
-    // Section pushes made on desktop belong to the same visit if resized.
-    if (distance > 0 && history.canGoBack()) {
-      history.go(-distance);
+    if (compact) {
+      mobileBack();
       return;
     }
-    // A cold settings link, or a replaced workspace entry, has no owned
-    // entry to pop. Keep that exit inside the app without guessing at Back.
-    void router.navigate({ to: previous?.href ?? '/', replace: true });
-  };
-  const backToIndex = () => {
-    const previous = indexLocation.current;
-    const distance = previous === null ? 0 : position.current - previous;
-    if (distance > 0 && history.canGoBack()) {
-      history.go(-distance);
-      return;
-    }
-    // Cold category links and desktop shortcuts have no observed index entry.
-    go({ name: 'settings' }, { replace: true });
+    const distance = stepsBackOutOf?.((entry) => settingsSectionForPath(entry.pathname) !== null) ?? 0;
+    if (distance > 0) history.go(-distance);
+    else go({ name: 'today' }, { replace: true });
   };
   if (section === null) return null;
   return <Dialog purpose="form" origin={{ kind: 'surface-center' }} open onClose={leaveSettings}
@@ -103,7 +77,7 @@ export function SettingsOverlay({ transport, unauthorized, onOwnerSetupComplete 
     <section className={compact ? styles.page : styles.desktopFrame} data-nc-settings-page={compact ? '' : undefined} aria-label="Settings">
       <div hidden={!compact}>
         <MobileHeader title={mobileIndex ? 'Settings' : settingsSection(section).label} level={1}
-          backLabel={mobileIndex ? 'workspace' : 'Settings'} onBack={mobileIndex ? leaveSettings : backToIndex} />
+          backLabel={mobileBackLabel(previousEntry, mobileIndex ? 'Focus' : 'Settings', areas)} onBack={mobileBack} />
       </div>
       <div className={compact ? styles.content : styles.desktopContent}>
         <SettingsSurface section={section}

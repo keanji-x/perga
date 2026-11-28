@@ -71,16 +71,18 @@ import { useTrackMutations } from '../providers/track-mutations.ts';
 import { trackToolsQueryOptions } from '../providers/track-queries.ts';
 import { areaListQueryOptions } from '../providers/workspace-queries.ts';
 import { useUiPreferences } from '../providers/ui-preferences.tsx';
-import { useMobileConversationOwner,useMobileHeaderActionsHost,useMobileHeaderTitleHost,useOpenMobileSection } from '../shell/public.tsx';
+import { useMobileHeaderActionsHost,useMobileHeaderTitleHost } from '../shell/public.tsx';
+import { mobileBackLabel, useMobileShellBack } from './mobile-back.ts';
+import { visibleAreas } from '../../../../core/domain/area.ts';
 import { TrackSelector } from '../shell/mobile/track-selector.tsx';
 import dailyStyles from './daily-planner.module.css';
 import { deriveEmptyTrackCenter, type CenteredStagePresentation } from './centered-stage.tsx';
 import mobileChatStyles from './mobile-chat.module.css';
 import {
 renderedMobilePanel,
-useGo,useGoSameTrack,
+useAppBack,useGo,useGoSameTrack,
 usePlannerOpenIntent,
-useRouteCardId,useRouteFileBackPath,useRouteFileLine,useRouteFilePath,useRouteFrom,useRouteHash,
+useRouteCardId,useRouteFileBackPath,useRouteFileLine,useRouteFilePath,useRouteHash,
 useRoutePanel,
 useTrackFileNavigation,
 useTrackPanelNavigation
@@ -120,8 +122,9 @@ export function TrackRouteBody({
   const canReopenTrack = !isMemoryTrack && snapshot.track.closedAtMs != null;
   const canCloseTrack = !isMemoryTrack && !canReopenTrack;
   const mobileAreaId = isMemoryTrack ? (typeof memoryAreaId === 'string' ? memoryAreaId : null) : track.areaId;
-  const areasQuery = useQuery({ ...areaListQueryOptions(transport, unauthorized), enabled: mobileAreaId !== null });
-  const mobileAreaName = mobileAreaId === null ? undefined : areasQuery.data?.find((area) => area.id === mobileAreaId)?.name;
+  const areasQuery = useQuery({ ...areaListQueryOptions(transport, unauthorized), enabled: mobileAreaId !== null && memoryAreaId !== false });
+  const areas = visibleAreas(areasQuery.data ?? []);
+  const mobileAreaName = mobileAreaId === null ? undefined : areas.find((area) => area.id === mobileAreaId)?.name;
   const alias = useMemo(() => trackPath === undefined ? undefined : { trackId: track.id, path: trackPath }, [track.id, trackPath]);
   const toolsQuery = useQuery(trackToolsQueryOptions(transport, snapshot.track.id, unauthorized));
   const rawCards = useMemo(() => (toolsQuery.data ?? []).map((terminal, index) => terminalPanelItem(terminal, 100 + index)), [toolsQuery.data]);
@@ -151,15 +154,18 @@ export function TrackRouteBody({
     canReopen: canReopenTrack, canClose: canCloseTrack, closed: { pending: closedPending, setClosed }, stop,
   }), [canReopenTrack, canCloseTrack, closedPending, setClosed]);
   const conversationMutations = useTrackConversationMutations(transport, track.id, unauthorized);
-  const openMobileSection = useOpenMobileSection();
-  const openReportArea = mobileAreaId === null ? undefined
-    : () => openMobileSection({ kind: 'tracks', areaId: mobileAreaId, returnTo: 'report' }, 'opener');
-  const openMobileWorkspace = () => openMobileSection({ kind: 'areas', areaId: undefined });
-  const openMobileArea = mobileAreaName !== undefined ? openReportArea
-    : mobileReportTitleOnScroll && memoryAreaId !== false ? openMobileWorkspace : undefined;
+  const go = useGo(alias);
+  const openReportArea = memoryAreaId === false ? undefined : () => {
+    chat.close();
+    go(mobileAreaId !== null && mobileAreaName !== undefined
+      ? { name: 'area', areaId: mobileAreaId } : { name: 'workspace' });
+  };
+  const openMobileArea = mobileAreaName !== undefined || mobileReportTitleOnScroll ? openReportArea : undefined;
   const mobileHeaderActionsHost = useMobileHeaderActionsHost();
   const mobileHeaderTitleHost = useMobileHeaderTitleHost();
-  const go = useGo(alias);
+  const { previousEntry, pop } = useAppBack(alias);
+  const shellBack = useMobileShellBack(areas, memoryAreaId === false);
+  const surfaceBackLabel = mobileBackLabel(previousEntry, 'Report', areas);
   const goSameTrack = useGoSameTrack(alias);
   const fileNavigation = useTrackFileNavigation(alias);
   const { openPanel, closePanel } = useTrackPanelNavigation(alias);
@@ -214,10 +220,6 @@ export function TrackRouteBody({
   const routePanel = useRoutePanel();
   /* Whether `?panel=` describes anything at all on this viewport. */
   const compactViewport = useCompactViewport();
-  /* `?from=` is a property of this visit, so every same-track move hands it back
-   * explicitly (`go` clears what it is not given); crossing tracks drops it. */
-  const routeFrom = useRouteFrom() ?? undefined;
-  const mobileBackToArea = mobileAreaId !== null && (isMemoryTrack || routeFrom === 'area');
   const cardRegistry = cardRuntime.registry;
   const trackCardHost = useMemo(
     () => createCardHost(cardRegistry, {
@@ -357,7 +359,6 @@ export function TrackRouteBody({
     },
   );
   const centerActive = chat.embeddedActive;
-  useMobileConversationOwner(track.id, chat.close);
   /* The cards this route can open, asked of the registry through the list the board
    * draws. A worker card whose kind no entry claims is `unknown` and its `?card=`
    * is bounced; its task keeps its `workerCardId` regardless, because the TASKS
@@ -418,9 +419,8 @@ export function TrackRouteBody({
   useTrackReportArrival(arrivalAnchorId, reportAnchorIntent, reportPresentation.current);
   const openReportLink = (target: ReportLinkTarget) => {
     if (target.trackId === track.id) {
-      // Same track: a move within the report, so the return surface survives and the
-      // panel closes.
-      go({ name: 'track', trackId: target.trackId, blockId: target.blockId ?? undefined, from: routeFrom });
+      // A report anchor opens the report itself.
+      go({ name: 'track', trackId: target.trackId, blockId: target.blockId ?? undefined });
       return;
     }
     // Another track: a real navigation. Nothing carries over.
@@ -449,12 +449,13 @@ export function TrackRouteBody({
   };
 
   const closeBoard = () => {
-    go({ name: 'track', trackId: track.id, from: routeFrom }, { replace: true });
+    if (compactViewport && pop()) return;
+    go({ name: 'track', trackId: track.id }, { replace: true });
   };
   const closeFile = () => { fileNavigation.closeFile(track.id); };
 
   const openReportAnchor = (blockId: string) => {
-    go({ name: 'track', trackId: track.id, blockId, from: routeFrom });
+    go({ name: 'track', trackId: track.id, blockId });
   };
   const openRelatedTrack = (trackId: string) => { go({ name: 'track', trackId }); };
 
@@ -487,7 +488,7 @@ export function TrackRouteBody({
             registry.requestOpen(cardId, { focusComposer: false });
             return;
           }
-          go({ name: 'track', trackId: track.id, cardId, from: routeFrom });
+          go({ name: 'track', trackId: track.id, cardId });
         }}
         onOpenSourceLink={openReportSource}
         fileRoot={track.agentCwd}
@@ -566,8 +567,8 @@ export function TrackRouteBody({
       mobileAreaName={mobileAreaName}
       mobileReportTitleOnScroll={mobileReportTitleOnScroll}
       onOpenMobileArea={openMobileArea}
-      mobileTitleReadView={(controls) => <TrackSelector track={track} controls={controls}
-        onOpenTracks={openReportArea ?? openMobileWorkspace} />}
+      mobileTitleReadView={openReportArea === undefined ? undefined : (controls) => <TrackSelector track={track} controls={controls}
+        onOpenTracks={openReportArea} />}
       track={track}
       onOpenOriginTrack={openRelatedTrack}
       canReopenTrack={canReopenTrack}
@@ -588,7 +589,7 @@ export function TrackRouteBody({
         paths={recentFilePaths}
         onOpen={(path) => openReportFile({ path })}
       />}
-      onOpenCard={(cardId) => { if (!compactViewport && workbench.cardIds.has(cardId)) { workbench.reveal(cardId); return; } go({ name: 'track', trackId: track.id, cardId, from: routeFrom }); }}
+      onOpenCard={(cardId) => { if (!compactViewport && workbench.cardIds.has(cardId)) { workbench.reveal(cardId); return; } go({ name: 'track', trackId: track.id, cardId }); }}
       onDeleteCard={cardDeletion.request}
       onSetWorkbench={(cardId, inWorkbench) => {
 
@@ -605,7 +606,7 @@ export function TrackRouteBody({
           onRemoveCard={(id) => cardDeletion.request(id, { kind: 'surface-center' })}
           onClose={knownCard ? closeBoard : undefined}
         />}
-      onCloseBoard={knownCard ? closeBoard : undefined}
+      onCloseBoard={knownCard || (compactViewport && requestedCardId !== null) ? closeBoard : undefined}
       fileViewer={fileViewer}
       /* Gated on the viewport too: the effect above cannot have run yet on a desktop
                cold start, and one render "open" is one render with the desktop panel `inert`. */
@@ -615,10 +616,9 @@ export function TrackRouteBody({
       })}
       onOpenPanel={(kind) => { openPanel(track.id, kind); }}
       onClosePanel={() => { closePanel(track.id); }}
-      mobileBackLabel={mobileBackToArea ? 'Tracks' : 'Workspace'}
-      onMobileBack={() => openMobileSection(mobileBackToArea
-        ? { kind: 'tracks', areaId: mobileAreaId }
-        : { kind: 'areas', areaId: undefined })}
+      mobileBackLabel={shellBack.backLabel}
+      onMobileBack={shellBack.onBack}
+      mobileSurfaceBackLabel={surfaceBackLabel}
       report={<>
         {reportHeader}
         {effectiveCenter !== undefined && <div className={mobileChatStyles.embeddedSlot} hidden={!centerActive}>

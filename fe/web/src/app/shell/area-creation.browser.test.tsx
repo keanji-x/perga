@@ -48,7 +48,7 @@ describe('creating an Area after navigation changes', () => {
         if (navigation === 'Back') host.history.back();
         else if (navigation === 'same-URL push') history.push(history.location.href);
         else history.replace(history.location.href);
-        const destination = navigation === 'Back' ? '/track/w1' : '/area/c1/new';
+        const destination = navigation === 'Back' ? '/area/c1' : '/area/c1/new';
         await expect.poll(() => router.state.status === 'idle' && router.state.location.pathname === destination).toBe(true);
         history.flush();
         const entry = history.location.state.__TSR_key;
@@ -57,13 +57,7 @@ describe('creating an Area after navigation changes', () => {
         await expect.poll(() => areaReads).toBeGreaterThan(readsBeforeSuccess);
         expect(router.state.location.pathname).toBe(destination);
         expect(history.location.state.__TSR_key).toBe(entry);
-        if (destination === '/track/w1') {
-          await page.getByRole('button', { name: 'Back to Focus', exact: true }).click();
-          await page.getByRole('button', { name: 'Open workspace', exact: true }).click();
-        } else {
-          await page.getByRole('button', { name: 'Back to Tracks', exact: true }).click();
-          await page.getByRole('button', { name: 'Back to Workspace', exact: true }).click();
-        }
+        await router.navigate({ to: '/workspace' });
         await expect.element(page.getByRole('button', { name: 'Research', exact: true })).toBeVisible();
       } finally { releaseCreate(); cleanup(); history.destroy(); }
     } finally { releaseCreate(); host.close(); }

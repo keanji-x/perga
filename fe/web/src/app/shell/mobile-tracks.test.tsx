@@ -4,7 +4,8 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Area } from '../../../../core/domain/area.ts';
 import { NEUTRAL_ACTIVITY, type Track } from '../../../../core/domain/track.ts';
-import { MobileTracks } from './mobile/tracks.tsx';
+import { AreaLevelTwo } from './mobile/area-level-two.tsx';
+import { WorkspaceLevelOne } from './mobile/workspace-level-one.tsx';
 
 afterEach(cleanup);
 
@@ -17,11 +18,11 @@ const track: Track = {
   pinnedAt: null, closedAt: null, createdAt: 0, updatedAt: 0, ...NEUTRAL_ACTIVITY,
 };
 
-describe('MobileTracks', () => {
+describe('Mobile workspace pages', () => {
   it('has one Area header, a More edit action, and grouped actions above the selected Track', async () => {
     const onEditArea = vi.fn(); const onOpenTrack = vi.fn(); const onBack = vi.fn(); const onNewTrack = vi.fn();
-    render(<MobileTracks view="tracks" areas={[area]} tracksByArea={new Map([['c1', [track]]])} areaId="c1" currentTrackId="w1"
-      onBack={onBack} onNewTrack={onNewTrack} onOpenSettings={vi.fn()} onCreateArea={vi.fn()} onSelectArea={vi.fn()} onEditArea={onEditArea} onOpenTrack={onOpenTrack}
+    render(<AreaLevelTwo backLabel="Workspace" scrollRef={null} onClosedExpandedChange={vi.fn()} onOpenAreaMemory={vi.fn()} areas={[area]} tracksByArea={new Map([['c1', [track]]])} areaId="c1" currentTrackId="w1"
+      onBack={onBack} onNewTrack={onNewTrack} onEditArea={onEditArea} onOpenTrack={onOpenTrack}
       isUnread={() => false} readError={null} readLoading={false} onRetryRead={vi.fn()} />);
     const header = screen.getByRole('heading', { name: 'Product' }).closest('header');
 
@@ -49,11 +50,11 @@ describe('MobileTracks', () => {
     expect(onBack).toHaveBeenCalledOnce();
   });
 
-  it('never reveals a system Area and still offers onboarding when no user Area is selected', async () => {
-    const onCreateArea = vi.fn(); const onNewTrack = vi.fn(); const onEditArea = vi.fn();
-    const onBack = vi.fn(); const onOpenSettings = vi.fn();
-    render(<MobileTracks view="tracks" areas={[{ ...area, kind: 'system' }]} tracksByArea={new Map([['c1', [track]]])}
-      areaId="c1" currentTrackId={undefined} onBack={onBack} onNewTrack={onNewTrack} onOpenSettings={onOpenSettings} onCreateArea={onCreateArea} onSelectArea={vi.fn()}
+  it('disables Area actions when the selected Area is unavailable', async () => {
+    const onNewTrack = vi.fn(); const onEditArea = vi.fn();
+    const onBack = vi.fn();
+    render(<AreaLevelTwo backLabel="Workspace" scrollRef={null} onClosedExpandedChange={vi.fn()} onOpenAreaMemory={vi.fn()} areas={[]} tracksByArea={new Map([['c1', [track]]])}
+      areaId="c1" currentTrackId={undefined} onBack={onBack} onNewTrack={onNewTrack}
       onEditArea={onEditArea} onOpenTrack={vi.fn()} isUnread={() => false} readError={null} readLoading={false} onRetryRead={vi.fn()} />);
     expect(screen.queryByRole('button', { name: 'Product' })).toBeNull();
     expect(screen.queryByRole('button', { name: /^Responsive mobile UI\b/ })).toBeNull();
@@ -65,15 +66,14 @@ describe('MobileTracks', () => {
     expect(onEditArea).not.toHaveBeenCalled();
     await userEvent.click(screen.getByRole('button', { name: 'Back to Workspace' }));
     expect(onBack).toHaveBeenCalledOnce();
-    expect(onOpenSettings).not.toHaveBeenCalled();
   });
 
   it('offers the Area list, New area, and Library Today/Memory navigation without workspace filters', async () => {
     const onCreateArea = vi.fn();
     const onOpenToday = vi.fn();
     const onOpenMemory = vi.fn();
-    render(<MobileTracks view="areas" areas={[]} tracksByArea={new Map()} areaId={undefined} currentTrackId={undefined}
-      onBack={vi.fn()} onNewTrack={vi.fn()} onOpenSettings={vi.fn()} onCreateArea={onCreateArea} onSelectArea={vi.fn()} onEditArea={vi.fn()} onOpenTrack={vi.fn()}
+    render(<WorkspaceLevelOne backLabel="Focus" scrollRef={null} onClosedExpandedChange={vi.fn()} areas={[]} tracksByArea={new Map()}
+      onBack={vi.fn()} onOpenSettings={vi.fn()} onCreateArea={onCreateArea} onSelectArea={vi.fn()} onOpenTrack={vi.fn()}
       onOpenToday={onOpenToday} onOpenMemory={onOpenMemory}
       isUnread={() => false} readError={null} readLoading={false} onRetryRead={vi.fn()} />);
     expect(screen.getByRole('button', { name: 'New area' }).closest('header')).toBeNull();
@@ -92,8 +92,8 @@ describe('MobileTracks', () => {
 
   it('preserves read failure recovery instead of displaying a false empty list', async () => {
     const onRetryRead = vi.fn();
-    render(<MobileTracks view="tracks" areas={[area]} tracksByArea={new Map()} areaId="c1" currentTrackId={undefined}
-      onBack={vi.fn()} onNewTrack={vi.fn()} onOpenSettings={vi.fn()} onCreateArea={vi.fn()} onSelectArea={vi.fn()} onEditArea={vi.fn()} onOpenTrack={vi.fn()}
+    render(<AreaLevelTwo backLabel="Workspace" scrollRef={null} onClosedExpandedChange={vi.fn()} onOpenAreaMemory={vi.fn()} areas={[area]} tracksByArea={new Map()} areaId="c1" currentTrackId={undefined}
+      onBack={vi.fn()} onNewTrack={vi.fn()} onEditArea={vi.fn()} onOpenTrack={vi.fn()}
       isUnread={() => false} readError="Tracks are unavailable" readLoading={false} onRetryRead={onRetryRead} />);
     expect(screen.getByRole('alert').textContent).toContain('Tracks are unavailable');
     expect(screen.queryByText('这个 Area 还没有 Track')).toBeNull();
@@ -104,8 +104,8 @@ describe('MobileTracks', () => {
   it('announces overlay activity and unread receipts without status icons', () => {
     const row = (name: RegExp) => screen.getByRole('button', { name });
     const mount = (overrides: Partial<Track>, unread = false) => (
-      <MobileTracks view="tracks" areas={[area]} tracksByArea={new Map([['c1', [{ ...track, ...overrides }]]])} areaId="c1" currentTrackId={undefined}
-        onBack={vi.fn()} onNewTrack={vi.fn()} onOpenSettings={vi.fn()} onCreateArea={vi.fn()} onSelectArea={vi.fn()} onEditArea={vi.fn()} onOpenTrack={vi.fn()}
+      <AreaLevelTwo backLabel="Workspace" scrollRef={null} onClosedExpandedChange={vi.fn()} onOpenAreaMemory={vi.fn()} areas={[area]} tracksByArea={new Map([['c1', [{ ...track, ...overrides }]]])} areaId="c1" currentTrackId={undefined}
+        onBack={vi.fn()} onNewTrack={vi.fn()} onEditArea={vi.fn()} onOpenTrack={vi.fn()}
         isUnread={() => unread} readError={null} readLoading={false} onRetryRead={vi.fn()} />
     );
 
@@ -145,8 +145,8 @@ describe('MobileTracks', () => {
 });
 
 it('omits owner sharing from mobile navigation menus', async () => {
-  render(<MobileTracks view="tracks" areas={[area]} tracksByArea={new Map([['c1', [track]]])} areaId="c1" currentTrackId="w1"
-    onBack={vi.fn()} onNewTrack={vi.fn()} onOpenSettings={vi.fn()} onCreateArea={vi.fn()} onSelectArea={vi.fn()} onEditArea={vi.fn()} onOpenTrack={vi.fn()}
+  render(<AreaLevelTwo backLabel="Workspace" scrollRef={null} onClosedExpandedChange={vi.fn()} onOpenAreaMemory={vi.fn()} areas={[area]} tracksByArea={new Map([['c1', [track]]])} areaId="c1" currentTrackId="w1"
+    onBack={vi.fn()} onNewTrack={vi.fn()} onEditArea={vi.fn()} onOpenTrack={vi.fn()}
     trackActions={() => ({ areaPinned: false, onSetPinned: vi.fn(), onSetAreaPinned: vi.fn(), onMarkUnread: vi.fn() })}
     isUnread={() => false} readError={null} readLoading={false} onRetryRead={vi.fn()} />);
   await userEvent.click(screen.getByRole('button', { name: 'Area actions' }));

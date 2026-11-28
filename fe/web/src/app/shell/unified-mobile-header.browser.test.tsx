@@ -6,7 +6,7 @@ import '../../styles/entry.css';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { RouterProvider, createMemoryHistory } from '@tanstack/react-router';
 import { cleanup, render, waitFor } from '@testing-library/react';
-import { page, userEvent, commands } from 'vitest/browser';
+import { page, userEvent } from 'vitest/browser';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { ApiRequest, ApiTransportPort, ApiTransportResponse } from '../../../../core/api/types.ts';
 import { createUnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
@@ -80,8 +80,8 @@ it('reveals the Track title only past the mobile document heading and opens the 
   await page.viewport(390, 844);
   const longTitle = 'Responsive mobile UI with a deliberately long report title that wraps on a phone';
   const router = setup('/track/w1', AREA.name, undefined, longTitle, { longReport: true, viewportRoot: true });
-  const scrollport = await reportScrollport();
-  const shell = page.elementLocator(document.querySelector('[data-nc-workspace-header] header')!);
+  let scrollport = await reportScrollport();
+  const shell = () => page.elementLocator(document.querySelector('[data-nc-workspace-header] header')!);
   const docTitle = await page.getByRole('heading', { name: longTitle, exact: true, level: 1 }).findElement();
   const docHeader = docTitle.closest('header')!;
   const area = page.getByRole('button', { name: 'Open area Product', exact: true });
@@ -93,11 +93,11 @@ it('reveals the Track title only past the mobile document heading and opens the 
   expect(getComputedStyle(areaButton).borderWidth).toBe('0px');
   expect(getComputedStyle(areaButton).backgroundColor).toBe('rgba(0, 0, 0, 0)');
   expect(getComputedStyle(docHeader).borderBottomWidth).toBe('1px');
-  const selector = shell.getByRole('button', { name: `Switch track, ${longTitle}`, exact: true });
+  const selector = () => shell().getByRole('button', { name: `Switch track, ${longTitle}`, exact: true });
   const expectBlank = () => {
-    expect(selector.query()).toBeNull();
-    expect(shell.getByRole('button', { name: /^Switch area,/ }).query()).toBeNull();
-    expect(getComputedStyle(shell.element()).boxShadow).toBe('none');
+    expect(selector().query()).toBeNull();
+    expect(shell().getByRole('button', { name: /^Switch area,/ }).query()).toBeNull();
+    expect(getComputedStyle(shell().element()).boxShadow).toBe('none');
   };
   expect(scrollport.scrollTop).toBe(0);
   expectBlank();
@@ -105,31 +105,35 @@ it('reveals the Track title only past the mobile document heading and opens the 
   await area.click();
   await expect.element(page.getByRole('region', { name: 'Open tracks' })).toBeVisible();
   await page.getByRole('button', { name: 'Back to Report' }).click();
-  await expect.element(area).toHaveFocus();
+  await expect.element(area).toBeVisible();
+  scrollport = await reportScrollport();
   expect(router.state.location.pathname).toBe('/track/w1');
 
-  const boundary = docHeader.getBoundingClientRect().bottom - scrollport.getBoundingClientRect().top;
+  const currentHeader = area.element().closest('header')!;
+  const boundary = currentHeader.getBoundingClientRect().bottom - scrollport.getBoundingClientRect().top;
   scrollport.scrollTop = boundary - 8;
   await settlePaint();
   expect(scrollport.scrollTop).toBeGreaterThan(0);
   expectBlank();
   scrollport.scrollTop = boundary + 8;
-  await expect.element(selector).toBeVisible();
-  expect(docHeader.getBoundingClientRect().bottom).toBeLessThan(scrollport.getBoundingClientRect().top);
-  expect([...document.querySelectorAll('[data-nc-page-title]')]).toEqual([selector.element()]);
-  const label = selector.element().querySelector('span')!;
+  await expect.element(selector()).toBeVisible();
+  expect(currentHeader.getBoundingClientRect().bottom).toBeLessThan(scrollport.getBoundingClientRect().top);
+  expect([...document.querySelectorAll('[data-nc-page-title]')]).toEqual([selector().element()]);
+  const label = selector().element().querySelector('span')!;
   expect(label.scrollWidth).toBeGreaterThan(label.clientWidth);
   expect(getComputedStyle(label)).toMatchObject({ whiteSpace: 'nowrap', textOverflow: 'ellipsis' });
-  expect(getComputedStyle(shell.element()).boxShadow).not.toBe('none');
+  expect(getComputedStyle(shell().element()).boxShadow).not.toBe('none');
 
-  await selector.click();
+  await selector().click();
   await expect.element(page.getByRole('region', { name: 'Open tracks' })).toBeVisible();
   await page.getByRole('button', { name: 'Back to Report' }).click();
-  await expect.element(selector).toHaveFocus();
+  scrollport = await reportScrollport();
+  scrollport.scrollTop = boundary + 8;
+  (await selector().findElement() as HTMLElement).focus();
   await userEvent.keyboard('{F2}');
   await expect.element(page.getByRole('textbox', { name: 'Track title' })).toHaveFocus();
   await userEvent.keyboard('{Escape}');
-  await expect.element(selector).toHaveFocus();
+  await expect.element(selector()).toHaveFocus();
   scrollport.scrollTop = 0;
   await settlePaint();
   expectBlank();
@@ -201,12 +205,12 @@ async function editTrack(): Promise<void> {
 }
 
 describe('Unified mobile headers', () => {
-  it.each([320, 390])('centers the static Memory title with the workspace menu glyph at %ipx', async (width) => {
+  it.each([320, 390])('centers the static Memory title with the Back glyph at %ipx', async (width) => {
     await page.viewport(width, 844);
     setup('/memory', AREA.name, () => undefined, 'Global Memory', { trackAreaId: 'sys_memory' });
     const title = await page.getByRole('heading', { name: 'Global Memory', exact: true, level: 1 }).findElement();
     const shellHeader = page.elementLocator(document.querySelector('[data-nc-workspace-header] header')!);
-    const menu = await shellHeader.getByRole('button', { name: 'Open workspace', exact: true }).findElement();
+    const menu = await shellHeader.getByRole('button', { name: 'Back to Focus', exact: true }).findElement();
     await settlePaint();
 
     const glyphBox = menu.querySelector('svg')!.getBoundingClientRect();
@@ -234,93 +238,14 @@ describe('Unified mobile headers', () => {
     await Promise.all(document.getAnimations().filter((animation) => animation.effect?.getTiming().iterations !== Infinity).map((animation) => animation.finished.catch(() => undefined)));
     await page.screenshot({ path: '../../../../test-results/clean-390-tracks.png' });
     await page.getByRole('button', { name: /^Responsive mobile UI\b/ }).findElement();
-    expect(document.querySelector('[data-nc-workspace-page="tracks"] [aria-label="Workspace actions"]')).toBeNull();
+    expect(document.querySelector('[data-nc-area-scroll] [aria-label="Workspace actions"]')).toBeNull();
     await expect.element(page.getByRole('button', { name: 'New track', exact: true })).toBeVisible();
-    expect(router.state.location.pathname).toBe('/');
+    expect(router.state.location.pathname).toBe('/area/c1');
     await page.getByRole('button', { name: 'Back to Workspace' }).click();
     await page.getByRole('heading', { name: 'Workspace', exact: true }).findElement();
-    await page.getByRole('button', { name: 'Back to workspace' }).click();
-    expect(router.state.location.pathname).toBe('/');
+    await page.getByRole('button', { name: 'Back to Focus' }).click();
+    await expect.poll(() => router.state.location.pathname).toBe('/');
     await page.viewport(1280, 720);
-  });
-
-  it('switches complete Area pages directly and keeps focus inside the active page', async () => {
-    await page.viewport(390, 844);
-    const router = setup('/');
-    await page.getByRole('button', { name: 'Open workspace' }).click();
-    const areas = document.querySelector<HTMLElement>('[data-nc-workspace-page="areas"]')!;
-    const tracks = document.querySelector<HTMLElement>('[data-nc-workspace-page="tracks"]')!;
-    await Promise.all(document.querySelector('#mobile-workspace-navigation')!.getAnimations({ subtree: true })
-      .filter((animation) => animation.effect?.getTiming().iterations !== Infinity)
-      .map((animation) => animation.finished.catch(() => undefined)));
-    await settlePaint();
-    await page.getByRole('button', { name: 'Product', exact: true }).click();
-    await Promise.all(tracks.getAnimations().map((animation) => animation.finished));
-    expect(tracks.getBoundingClientRect().left).toBe(0);
-    expect(tracks.getBoundingClientRect().width).toBe(390);
-    expect(tracks.getBoundingClientRect().height).toBe(844);
-    expect(areas.isConnected).toBe(true); expect(areas.inert).toBe(true);
-    await page.getByRole('button', { name: /^Responsive mobile UI\b/ }).findElement();
-    await page.screenshot({ path: '../../../../test-results/direct-track-file-list.png' });
-    const back = await page.getByRole('button', { name: 'Back to Workspace' }).findElement();
-    (back as HTMLElement).focus();
-    await userEvent.keyboard('{Shift>}{Tab}{/Shift}');
-    expect(tracks.contains(document.activeElement)).toBe(true);
-    await page.elementLocator(back).click();
-    await Promise.all(areas.getAnimations().map((animation) => animation.finished));
-    expect(areas.getBoundingClientRect().left).toBe(0);
-    expect(tracks.inert).toBe(true);
-    expect(router.state.location.pathname).toBe('/');
-    await page.viewport(1280, 720);
-  });
-
-  it('keeps Areas scroll on return, starts Tracks at the top, and handles quick back/forward', async () => {
-    await page.viewport(320, 520);
-    const router = setup('/', AREA.name, () => undefined, 'Responsive mobile UI', { longLists: true });
-    await page.getByRole('button', { name: 'Open workspace' }).click();
-    const areas = document.querySelector<HTMLElement>('[data-nc-workspace-page="areas"]')!;
-    const tracks = document.querySelector<HTMLElement>('[data-nc-workspace-page="tracks"]')!;
-    areas.scrollTop = areas.scrollHeight;
-    await settlePaint();
-    expect(areas.scrollTop).toBeGreaterThan(0);
-    await page.getByRole('button', { name: 'Product', exact: true }).click();
-    const position = areas.scrollTop;
-    await Promise.all(tracks.getAnimations().map((motion) => motion.finished));
-    expect(tracks.scrollTop).toBe(0);
-    tracks.scrollTop = 500; await settlePaint(); expect(tracks.scrollTop).toBe(500);
-    await page.getByRole('button', { name: 'Back to Workspace' }).click();
-    expect(areas.scrollTop).toBe(position);
-    await page.getByRole('button', { name: 'Product', exact: true }).click();
-    await Promise.all(tracks.getAnimations().map((motion) => motion.finished));
-    expect(tracks.scrollTop).toBe(0);
-    expect((await page.getByRole('heading', { name: 'Product', exact: true }).findElement()).closest('header')!.getBoundingClientRect().top).toBe(0);
-    expect(areas.scrollTop).toBe(position);
-    expect(router.state.location.pathname).toBe('/');
-    await page.screenshot({ path: '../../../../test-results/area-page-short-screen.png' });
-    await page.viewport(1280, 720);
-  });
-
-  it('switches whole pages without animation when reduced motion is requested', async () => {
-    await commands.emulateReducedMotion(true);
-    try {
-      await page.viewport(390, 844);
-      expect(window.matchMedia('(prefers-reduced-motion: reduce)').matches).toBe(true);
-      setup('/');
-      await page.getByRole('button', { name: 'Open workspace' }).click();
-      await page.getByRole('button', { name: 'Product', exact: true }).click();
-      await expect.element(page.getByRole('heading', { name: 'Product', exact: true })).toBeVisible();
-      const tracks = document.querySelector<HTMLElement>('[data-nc-workspace-page="tracks"]')!;
-      expect(tracks.getAnimations()).toHaveLength(0);
-      expect(tracks.getBoundingClientRect().left).toBe(0);
-      await page.getByRole('button', { name: 'Back to Workspace' }).click();
-      await expect.element(page.getByRole('heading', { name: 'Workspace', exact: true })).toBeVisible();
-      const areas = document.querySelector<HTMLElement>('[data-nc-workspace-page="areas"]')!;
-      expect(areas.getAnimations()).toHaveLength(0);
-      expect(areas.getBoundingClientRect().left).toBe(0);
-    } finally {
-      await commands.emulateReducedMotion(false);
-      await page.viewport(1280, 720);
-    }
   });
 
   it('keeps the report top bar blank and preserves the desktop rename editor on mobile', async () => {
@@ -360,7 +285,7 @@ describe('Unified mobile headers', () => {
     await page.viewport(1280, 720);
   });
 
-  it.each(['tracks', 'areas'])('uses the Track’s exact Area and exposes %s read failure with a dismissible menu', async (failure) => {
+  it.each(['tracks', 'areas'])('uses the Track’s exact Area and exposes %s read failures on the destination', async (failure) => {
     await page.viewport(320, 844);
     let areasUnavailable = failure === 'areas';
     setup('/track/w1', AREA.name, undefined, 'Second Area track', {
@@ -384,38 +309,10 @@ describe('Unified mobile headers', () => {
     if (failure === 'areas') {
       areasUnavailable = false;
       await retry.click();
-      const dialog = page.getByRole('dialog', { name: 'Tracks and settings' });
-      await expect.element(dialog.getByRole('button', { name: 'Frontend', exact: true })).toBeVisible();
+      await expect.element(page.getByRole('button', { name: 'Frontend', exact: true })).toBeVisible();
     }
-    await userEvent.keyboard('{Escape}');
-    await expect.poll(() => page.getByRole('dialog', { name: 'Tracks and settings' }).query()).toBeNull();
-    await expect.element(page.elementLocator(opener)).toHaveFocus();
-    await expect.element(page.elementLocator(opener)).toHaveAccessibleName('Open area Frontend');
-    await page.viewport(1280, 720);
-  });
-
-  it('keeps both navigation levels local and returns to the original content', async () => {
-    await page.viewport(390, 844);
-    const router = setup('/');
-    const opener = await page.getByRole('button', { name: 'Open workspace' }).findElement();
-    await page.elementLocator(opener).click();
-    const frontend = page.getByRole('button', { name: 'Frontend', exact: true });
-    const back = await page.getByRole('button', { name: 'Back to workspace' }).findElement();
-    (back as HTMLElement).focus();
-    await userEvent.keyboard('{Shift>}{Tab}{/Shift}');
-    expect(document.querySelector('#mobile-workspace-navigation')?.contains(document.activeElement)).toBe(true);
-    await userEvent.keyboard('{Tab}');
-    expect(document.activeElement).toBe(back);
-    await frontend.click();
-    await page.getByRole('heading', { name: 'Frontend', exact: true }).findElement();
-    expect(document.activeElement).not.toBe(document.body);
-    expect(router.state.location.pathname).toBe('/');
-    await page.getByRole('button', { name: 'Back to Workspace' }).click();
-    await page.getByRole('heading', { name: 'Workspace', exact: true }).findElement();
-    expect(document.activeElement).not.toBe(document.body);
-    await page.getByRole('button', { name: 'Back to workspace' }).click();
-    await expect.poll(() => document.activeElement).toBe(opener);
-    expect(router.state.location.pathname).toBe('/');
+    await page.getByRole('button', { name: 'Back to Report', exact: true }).click();
+    await expect.element(page.getByRole('button', { name: 'Open area Frontend', exact: true })).toBeVisible();
     await page.viewport(1280, 720);
   });
 
@@ -503,13 +400,10 @@ describe('Unified mobile headers', () => {
     const router = setup('/track/w1');
     const frames: Array<{ name: string; x: number; y: number; width: number; height: number; left: number; top: number }> = [];
     const record = async (name: string, header: HTMLElement) => {
-      await expect.poll(() => header.closest('#mobile-workspace-navigation')?.getAnimations({ subtree: true })
-        .filter((animation) => animation.effect?.getTiming().iterations !== Infinity)
-        .every((animation) => animation.playState !== 'running') ?? true).toBe(true);
       // Content is inside the Sheet paint owner; waiting on content alone
       // observes no animations while a first entry still translates the header.
       const presentation = header.closest('[data-nc-sheet-panel]')
-        ?? header.closest('[data-nc-mobile-page], [data-nc-drawer], [data-nc-workspace-page]');
+        ?? header.closest('[data-nc-mobile-page], [data-nc-drawer]');
       await Promise.all(presentation?.getAnimations().map((animation) => animation.finished) ?? []);
       await Promise.all(header.getAnimations({ subtree: true }).filter((animation) => animation.effect?.getTiming().iterations !== Infinity)
         .map((animation) => animation.finished.catch(() => undefined)));
@@ -544,9 +438,7 @@ describe('Unified mobile headers', () => {
     expect(page.getByRole('button', { name: /^Switch track,/ }).query()).toBeNull();
     expect(selector.getBoundingClientRect().right).toBeLessThanOrEqual(width - 16);
     await page.elementLocator(selector).click();
-    const trackPage = await page.getByRole('dialog', { name: 'Tracks and settings' }).findElement();
-    await page.getByRole('button', { name: /^Responsive mobile UI\b/ }).findElement();
-    await expect.poll(() => document.querySelector('#mobile-workspace-navigation')!.getAnimations({ subtree: true }).filter(animation => animation.effect?.getTiming().iterations !== Infinity).every(animation => animation.playState !== 'running')).toBe(true);
+    const trackPage = await page.getByRole('region', { name: 'Open tracks' }).findElement();
     expect(trackPage.getBoundingClientRect().left).toBeGreaterThanOrEqual(0);
     expect(trackPage.getBoundingClientRect().right).toBeLessThanOrEqual(width);
     await record('tracks', (await page.getByRole('heading', { name: 'Product', exact: true }).findElement()).closest('header')!);
@@ -570,8 +462,7 @@ describe('Unified mobile headers', () => {
     await expect.poll(() => document.querySelector('[data-nc-mobile-chat-panel]')?.closest('dialog')?.open).toBe(false);
     await page.getByRole('button', { name: 'Back to Report' }).click();
     await expect.poll(() => [...document.querySelectorAll('[data-nc-drawer]')].every((drawer) => !drawer.checkVisibility())).toBe(true);
-    await page.getByRole('button', { name: 'Back to Focus' }).click();
-    await page.getByRole('button', { name: 'Open workspace' }).click();
+    await router.navigate({ to: '/workspace' });
     await page.getByRole('button', { name: 'Settings', exact: true }).click();
     await record('settings', (await page.getByRole('heading', { name: 'Settings', exact: true }).findElement()).closest('header')!);
     expect(frames).toHaveLength(8);

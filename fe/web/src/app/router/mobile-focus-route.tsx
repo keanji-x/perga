@@ -4,14 +4,13 @@ import type { ApiTransportPort } from '../../../../core/api/types.ts';
 import type { UnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
 import { visibleAreas } from '../../../../core/domain/area.ts';
 import type { Track } from '../../../../core/domain/track.ts';
-import { MobileFocusHome } from '../../features/focus/public.tsx';
+import { MobileFocusHome, type MobileFocusView } from '../../features/focus/public.tsx';
 import { TrackTitle } from '../../features/track/title/public.tsx';
 import { workspaceActivityErrorText, workspaceReadErrorText } from '../providers/query-read-feedback.ts';
 import { useReadReceipts } from '../providers/read-receipts.tsx';
 import { useWorkspace } from '../providers/workspace-queries.ts';
-import {
-  useMobileWorkspaceTriggerRef, useOpenMobileSection, useRequestCreateArea,
-} from '../shell/public.tsx';
+import { useRequestCreateArea } from '../shell/public.tsx';
+import { useMobileHistoryView } from './app-history.tsx';
 import { useGo } from './navigation.ts';
 
 /** Mobile home route: binds workspace reads, read receipts, and navigation to the full-bleed Focus feed. */
@@ -27,9 +26,7 @@ export function MobileFocusRoute({
   const workspace = useWorkspace(transport, unauthorized);
   const receipts = useReadReceipts();
   const go = useGo();
-  const openMobileSection = useOpenMobileSection();
   const requestCreateArea = useRequestCreateArea();
-  const workspaceTriggerRef = useMobileWorkspaceTriggerRef();
 
   const shownAreas = visibleAreas(workspace.areas);
   const readError = workspaceReadErrorText(workspace)
@@ -39,6 +36,7 @@ export function MobileFocusRoute({
     || workspace.overlaysLoading
     || receipts.loading
     || [...workspace.tracksLoadingByArea.values()].some(Boolean);
+  const { initialView, rememberView, scrollRef } = useMobileHistoryView<MobileFocusView>(!readLoading);
 
   const retryRead = useCallback(() => {
     workspace.retryAreas();
@@ -82,10 +80,12 @@ export function MobileFocusRoute({
       loading={readLoading}
       error={readError}
       onRetry={retryRead}
-      onOpenWorkspace={() => openMobileSection({ kind: 'areas', areaId: shownAreas[0]?.id }, 'workspace')}
-      workspaceTriggerRef={workspaceTriggerRef}
-      onOpenArea={shareScope === null ? (areaId) => openMobileSection({ kind: 'tracks', areaId, returnTo: 'focus' }, 'opener') : undefined}
-      onOpenTrack={(trackId) => go({ name: 'track', trackId, from: 'pages' })}
+      scrollRef={scrollRef}
+      initialView={initialView}
+      onViewChange={rememberView}
+      onOpenWorkspace={shareScope === null ? () => go({ name: 'workspace' }) : undefined}
+      onOpenArea={shareScope === null ? (areaId) => go({ name: 'area', areaId }) : undefined}
+      onOpenTrack={(trackId) => go({ name: 'track', trackId })}
       renderTrackTitle={(track, content) => <TrackTitle track={track}>{content}</TrackTitle>}
       onNewTrack={handleNewTrack}
       onMarkAllRead={shareScope === null ? handleMarkAllRead : undefined}

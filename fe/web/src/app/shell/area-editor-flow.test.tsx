@@ -36,13 +36,14 @@ const harness = vi.hoisted(() => ({
 }));
 
 vi.mock('@tanstack/react-router', async (importOriginal) => {
-  const { createMemoryHistory } = await importOriginal<typeof import('@tanstack/react-router')>();
-  const history = createMemoryHistory({ initialEntries: ['/'] });
+  const actual = await importOriginal<typeof import('@tanstack/react-router')>();
+  const router = actual.createRouter({ routeTree: actual.createRootRoute(), history: actual.createMemoryHistory({ initialEntries: ['/?view=today'] }) });
   return {
+    ...actual,
     Outlet: () => <div>route</div>,
     useNavigate: () => vi.fn(),
-    useRouter: () => ({ history }),
-    useRouterState: () => undefined,
+    useRouter: () => router,
+    useRouterState: ({ select }: { select: (state: typeof router.state) => unknown }) => select(router.state),
   };
 });
 
@@ -87,8 +88,6 @@ vi.mock('../router/navigation.ts', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../router/navigation.ts')>()),
   useCurrentPath: () => '/',
   useGo: () => harness.go,
-  useNewTrackBack: () => null,
-  useTrackPanelNavigation: () => ({ closePanel: vi.fn() }),
   routeParamFromPath: () => undefined,
 }));
 
@@ -449,34 +448,12 @@ describe('AppShell Area editor flow', () => {
     expect(screen.getByRole<HTMLInputElement>('textbox', { name: /^Name/ }).value).toBe('Still here');
   });
 
-  it('opens the same editor from the centered Area menu and the navigation edit icon', async () => {
+  it('opens the Area editor from the centered mobile title and starts the created draft', async () => {
+    harness.create.mockResolvedValueOnce({ ...harness.area, id: 'c-created', name: 'Launch' });
     renderShell(true);
     await userEvent.click(screen.getByRole('button', { name: 'Switch area, Work' }));
     await userEvent.click(screen.getByRole('menuitem', { name: 'New area' }));
-    expect(screen.getByRole('dialog', { name: 'New area' })).toBeTruthy();
-    await userEvent.click(screen.getByRole('button', { name: 'Cancel' }));
-    await userEvent.click(screen.getByRole('button', { name: 'Open workspace' }));
-    const navigation = screen.getByRole('dialog', { name: 'Tracks and settings' });
-    await userEvent.click(within(navigation).getByRole('button', { name: 'Work' }));
-    expect(within(navigation).getByRole('button', { name: 'Back to Workspace' })).toBeTruthy();
-    await userEvent.click(within(navigation).getByRole('button', { name: 'Area actions' }));
-    await userEvent.click(within(navigation).getByRole('menuitem', { name: 'Edit area Work' }));
-    expect(screen.getByRole('dialog', { name: 'Edit Work' })).toBeTruthy();
     expect(screen.getAllByRole('dialog')).toHaveLength(1);
-  });
-
-  it('suspends compact mobile navigation while the Area editor is open and navigates to the created Area', async () => {
-    harness.create.mockResolvedValueOnce({ ...harness.area, id: 'c-created', name: 'Launch' });
-    renderShell(true);
-    await userEvent.click(screen.getByRole('button', { name: 'Open workspace' }));
-    const navigation = screen.getByRole('dialog', { name: 'Tracks and settings' });
-    expect(screen.getAllByRole('dialog')).toHaveLength(1);
-
-    await userEvent.click(within(navigation).getByRole('button', { name: 'New area' }));
-    expect(screen.getByRole('dialog', { name: 'New area' })).toBeTruthy();
-    expect(screen.getAllByRole('dialog')).toHaveLength(1);
-    expect(navigation.getAttribute('aria-hidden')).toBe('true');
-
     await userEvent.type(screen.getByRole('textbox', { name: /^Name/ }), 'Launch');
     await userEvent.click(screen.getByRole('button', { name: 'Create area' }));
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());

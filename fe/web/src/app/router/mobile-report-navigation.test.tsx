@@ -6,7 +6,7 @@ import { prepareReportDocument } from '../../features/report/document/preparatio
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { RouterProvider, createMemoryHistory } from '@tanstack/react-router';
 import { Profiler, type ProfilerOnRenderCallback } from 'react';
-import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -14,7 +14,6 @@ import type { ApiTransportPort, ApiTransportResponse } from '../../../../core/ap
 import { createUnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
 import { ThemeProvider } from '../theme/public.tsx';
 import { createAppRouter } from './public.tsx';
-import { PANEL_PUSHED_STATE_KEY } from './navigation.ts';
 import { bootTestCardRuntime } from './test-card-runtime.ts';
 
 const AREA = { id: 'c1', name: 'Product', color: '#5B8DEF', sortOrder: 1, kind: 'user', createdAtMs: 1, updatedAtMs: 1 };
@@ -73,7 +72,7 @@ const mobilePanel = () => document.querySelector('[data-nc-mobile-page]');
 const reportEntry = () => screen.getByRole('button', { name: 'Track actions' });
 
 async function openPanel(router: ReturnType<typeof setup>, panel: 'cards' | 'tasks' | 'outline' | 'conversations'): Promise<void> {
-  await act(() => router.navigate({ to: '/track/w1', search: { panel }, state: { [PANEL_PUSHED_STATE_KEY]: true } }));
+  await act(() => router.navigate({ to: '/track/w1', search: { panel } }));
 }
 
 /* A `matchMedia` whose answer can change, with real listeners: widening the window is a reachable gesture. */
@@ -156,54 +155,43 @@ describe('the mobile report panel is the URL (#1191 §2.4)', () => {
     await waitFor(() => { expect(document.activeElement).toBe(reportEntry()); });
   });
 
-  it('takes the panel away when the reader walks off the report', async () => {
-    const router = setup('/track/w1?panel=cards');
-    expect(await screen.findByRole('heading', { name: 'Tools' })).toBeTruthy();
-
-    await userEvent.click(await screen.findByRole('button', { name: 'Open area Product' }));
-    // Leaving the report layer drops the report's panel.
-    await waitFor(() => { expect(href(router)).toBe('/track/w1'); });
-    expect(screen.getByRole('dialog', { name: 'Tracks and settings' })).toBeTruthy();
-  });
-
-  /* `closePanel`'s `back()` branch: an unconditional `replace` does not merge with the entry before it,
-   * so every open-then-leave cycle would stack one more `/track/w1`. The URL is identical at every
-   * step, so only `router.history.length` can tell the two behaviours apart. */
-  it('does not stack a duplicate report entry each time the reader leaves the panel for a sheet', async () => {
+  it('keeps the same report entry after repeated panel Back and Area navigation', async () => {
     const router = setup('/track/w1');
     await screen.findByRole('button', { name: 'Open area Product' });
-    expect(router.history.length).toBe(1);
-
+    expect(router.history.location.state.__TSR_index).toBe(0);
     for (let cycle = 0; cycle < 3; cycle += 1) {
       await openPanel(router, 'cards');
-      await waitFor(() => { expect(href(router)).toBe('/track/w1?panel=cards'); });
-      await userEvent.click(screen.getByRole('button', { name: 'Open area Product' }));
-      await waitFor(() => { expect(href(router)).toBe('/track/w1'); });
-      expect(screen.getByRole('dialog', { name: 'Tracks and settings' })).toBeTruthy();
-      fireEvent.keyDown(document, { key: 'Escape' });
-      await waitFor(() => { expect(screen.queryByRole('dialog', { name: 'Tracks and settings' })).toBeNull(); });
+      const panel = mobilePanel() as HTMLElement;
+      expect(router.history.location.state.__TSR_index).toBe(1);
+      await userEvent.click(await within(panel).findByRole('button', { name: 'Back to Report' }));
+      await waitFor(() => { expect(router.history.location.state.__TSR_index).toBe(0); });
+      await userEvent.click(await screen.findByRole('button', { name: 'Open area Product' }));
+      await screen.findByRole('heading', { name: 'Product' });
+      expect(href(router)).toBe('/area/c1');
+      expect(router.history.location.state.__TSR_index).toBe(1);
+      await userEvent.click(screen.getByRole('button', { name: 'Back to Report' }));
+      await screen.findByRole('button', { name: 'Open area Product' });
+      expect(href(router)).toBe('/track/w1');
+      expect(router.history.location.state.__TSR_index).toBe(0);
     }
-
-    // One report entry and one panel entry, whatever the cycle count.
     expect(router.history.length).toBe(2);
     expect(router.history.canGoBack()).toBe(false);
   });
 
-  /* `panel` cleared, `from` kept, hash written; a `goSameTrack` that preserved `?panel=` would pass every other case. */
   it('sends an outline entry to the block anchor and clears ?panel=', async () => {
-    const router = setup('/track/w1?panel=outline&from=area');
+    const router = setup('/track/w1?panel=outline');
     // Scoped to the sheet: the desktop report rail draws the very same outline.
     const panel = await waitFor(() => { const found = mobilePanel(); expect(found).not.toBeNull(); return found!; });
     await userEvent.click(await within(panel as HTMLElement).findByRole('button', { name: /Findings/ }));
-    await waitFor(() => { expect(href(router)).toBe('/track/w1?from=area#b-1-h1'); });
+    await waitFor(() => { expect(href(router)).toBe('/track/w1#b-1-h1'); });
   });
 
   it('sends a TASKS entry to the block anchor and clears ?panel=', async () => {
-    const router = setup('/track/w1?panel=tasks&from=area');
+    const router = setup('/track/w1?panel=tasks');
     const panel = await waitFor(() => { const found = mobilePanel(); expect(found).not.toBeNull(); return found!; });
     await userEvent.click(await within(panel as HTMLElement).findByText('Waiting', { exact: true }));
     await userEvent.click(await within(panel as HTMLElement).findByRole('button', { name: /ship-it/ }));
-    await waitFor(() => { expect(href(router)).toBe('/track/w1?from=area#b-task'); });
+    await waitFor(() => { expect(href(router)).toBe('/track/w1#b-task'); });
   });
 });
 
@@ -229,10 +217,11 @@ describe('workspace header navigation', () => {
   });
 
   it('opens the current track’s area without a dock', async () => {
-    setup('/track/w1?from=area');
+    const router = setup('/track/w1');
     await userEvent.click(await screen.findByRole('button', { name: 'Open area Product' }));
-    expect(screen.getByRole('dialog', { name: 'Tracks and settings' })).toBeTruthy();
-    expect(screen.getByRole('heading', { name: 'Product' })).toBeTruthy();
+    await screen.findByRole('heading', { name: 'Product' });
+    expect(href(router)).toBe('/area/c1');
+    expect(screen.queryByRole('dialog', { name: 'Tracks and settings' })).toBeNull();
     expect(document.querySelector('nav[aria-label="Primary"]')).toBeNull();
   });
 
@@ -241,9 +230,10 @@ describe('workspace header navigation', () => {
     await userEvent.click(await screen.findByRole('button', { name: 'Switch area, Product' }));
     await userEvent.click(screen.getByRole('menuitem', { name: 'Second' }));
     await waitFor(() => { expect(href(router)).toBe('/area/c2/new'); });
-    await userEvent.click(screen.getByRole('button', { name: 'Back to Tracks' }));
-    expect(screen.getByRole('heading', { name: 'Second' })).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Back to Workspace' })).toBeTruthy();
+    await userEvent.click(screen.getByRole('button', { name: 'Back to Second' }));
+    await screen.findByRole('heading', { name: 'Second' });
+    expect(href(router)).toBe('/area/c2');
+    expect(screen.getByRole('button', { name: 'Back to Focus' })).toBeTruthy();
     expect(screen.queryByRole('heading', { name: 'Areas' })).toBeNull();
     await userEvent.click(screen.getByRole('button', { name: /^New track$/ }));
     await waitFor(() => { expect(href(router)).toBe('/area/c2/new'); });
@@ -251,12 +241,13 @@ describe('workspace header navigation', () => {
     expect(await screen.findByRole('button', { name: 'Switch area, Second' })).toBeTruthy();
   });
 
-  it('writes ?from= when navigation opens the track', async () => {
+  it('uses its Area predecessor when navigation opens the track', async () => {
     const router = setup('/');
     await userEvent.click(await screen.findByRole('button', { name: 'Open workspace' }));
-    await userEvent.click(screen.getByRole('button', { name: 'Product' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Product' }));
     await userEvent.click(await screen.findByRole('button', { name: /^Responsive mobile UI\b/ }));
-    await waitFor(() => { expect(href(router)).toBe('/track/w1?from=area'); });
+    await waitFor(() => { expect(href(router)).toBe('/track/w1'); });
+    expect(await screen.findByRole('button', { name: 'Back to Product' })).toBeTruthy();
     expect(document.querySelector('nav[aria-label="Primary"]')).toBeNull();
   });
 

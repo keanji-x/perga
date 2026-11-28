@@ -62,7 +62,7 @@ describe('degraded workspace reads stay usable', () => {
     // Track failures keep a known current Area; Area failures open navigation
     // before one exists, and recovery must attach its newly loaded track list.
     await userEvent.click(await screen.findByRole('button', { name: 'Open workspace' }));
-    const sheet = screen.getByRole('dialog', { name: 'Tracks and settings' });
+    const sheet = screen.getByRole('main');
     if (resource === 'tracks') await userEvent.click(await within(sheet).findByRole('button', { name: 'One' }));
     const alert = await within(sheet).findByRole('alert');
     expect(alert.textContent).toContain(resource === 'areas' ? 'Areas are unavailable.' : 'Tracks are unavailable.');

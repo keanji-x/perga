@@ -6,7 +6,8 @@ import '../../styles/entry.css';
 import { TrackRow } from '../../features/track/row/public.tsx';
 import { renderPage, track } from '../../features/track/page/test-fixtures.tsx';
 import { TrackSelector } from './mobile/track-selector.tsx';
-import { MobileTracks } from './mobile/tracks.tsx';
+import { AreaLevelTwo } from './mobile/area-level-two.tsx';
+import { WorkspaceLevelOne } from './mobile/workspace-level-one.tsx';
 import type { Area } from '../../../../core/domain/area.ts';
 import { TrackTitle } from '../../features/track/title/public.tsx';
 
@@ -24,6 +25,8 @@ function decoration(host: HTMLElement, title = 'Alpha'): string {
 }
 
 const navigation = {
+  backLabel: 'Focus', scrollRef: null, onClosedExpandedChange: () => undefined,
+  onOpenMemory: () => undefined, onOpenToday: () => undefined, onOpenAreaMemory: () => undefined,
   onBack: () => undefined, onNewTrack: () => undefined,
   onCreateArea: () => undefined, onEditArea: () => undefined, onOpenSettings: () => undefined,
 };
@@ -84,7 +87,7 @@ describe('shared Track title in production hosts', () => {
       readError: null, readLoading: false, onRetryRead: vi.fn(), tracksByArea: new Map([[area.id, [closed]]]),
       onOpenTrack, onSelectArea: vi.fn(),
     };
-    const view = render(<div style={{ height: '100dvh' }}><MobileTracks {...props} view="areas" /></div>);
+    const view = render(<div style={{ height: '100dvh' }}><WorkspaceLevelOne {...props} /></div>);
     const library = within(screen.getByRole('region', { name: 'Library' }));
     await userEvent.click(library.getByRole('button', { name: /Closed tracks/ }));
     const title = library.getByText('Alpha');
@@ -93,7 +96,7 @@ describe('shared Track title in production hosts', () => {
     await userEvent.click(entry);
     expect(onOpenTrack).toHaveBeenCalledWith('w1');
     view.unmount();
-    render(<div style={{ height: '100dvh' }}><MobileTracks {...props} view="tracks" /></div>);
+    render(<div style={{ height: '100dvh' }}><AreaLevelTwo {...props} /></div>);
     expect(decoration(screen.getByRole('button', { name: /^Alpha\b.*\bClosed\b/ }))).toBe('line-through');
   });
 });
@@ -156,15 +159,15 @@ describe('a failed inline rename', () => {
 it('keeps the mobile workspace header and creation control reachable in a long workspace list', async () => {
   await page.viewport(390, 844);
   const onCreateArea = vi.fn();
-  render(<div style={{ height: '100dvh' }}><MobileTracks {...navigation} view="areas"
+  render(<div style={{ height: '100dvh', display: 'flex', flexDirection: 'column' }}><WorkspaceLevelOne {...navigation}
     areas={Array.from({ length: 24 }, (_, index) => ({ ...area, id: `area-${index}`, name: `Workspace ${index}` }))}
-    areaId={undefined} tracksByArea={new Map()} currentTrackId={undefined} isUnread={() => false}
+    tracksByArea={new Map()} isUnread={() => false}
     readError={null} readLoading={false} onRetryRead={vi.fn()} onOpenTrack={vi.fn()} onSelectArea={vi.fn()}
     onCreateArea={onCreateArea} /></div>);
-  const list = document.querySelector<HTMLElement>('[data-nc-workspace-page="areas"]')!;
+  const list = document.querySelector<HTMLElement>('[data-nc-workspace-scroll]')!;
   list.scrollTop = list.scrollHeight;
   expect(list.scrollTop).toBeGreaterThan(0);
-  const header = list.querySelector<HTMLElement>('header')!;
+  const header = list.parentElement!.querySelector<HTMLElement>('header')!;
   expect(header.getBoundingClientRect().top).toBe(0);
   list.scrollTop = 0;
   const button = screen.getByRole('button', { name: 'New area' });

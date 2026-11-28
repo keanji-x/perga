@@ -126,7 +126,7 @@ function NewTrackEditor({ transport, unauthorized, memoryEnabled, workspace, are
     }
     // Keep the saved request as a recovery copy while the first message is only in memory.
     if (canForget) store.forget(areaId, { revokeAttachments: false });
-    go({ name: 'track', trackId, openPlanner: true });
+    go({ name: 'track', trackId, openPlanner: true }, { replace: compactViewport });
   };
 
   const submit = (draft: NewTrackDraft) => {

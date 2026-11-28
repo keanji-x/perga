@@ -38,6 +38,7 @@ it('closes switcher before opening a new conversation and opens Settings from Wo
   await expect.poll(() => document.activeElement).toBe(page.getByRole('combobox', { name: 'Message', exact: true }).element());
   expect(document.querySelector('dialog[open][aria-label="Switch conversation"]')).toBeNull();
   await page.getByRole('button', { name: 'Close conversation', exact: true }).click();
+  await page.getByRole('button', { name: 'Back to Focus', exact: true }).click();
   await page.getByRole('button', { name: 'Open workspace', exact: true }).click();
   await page.getByRole('button', { name: 'Settings', exact: true }).click();
   await expect.element(page.getByRole('heading', { name: 'Settings', exact: true })).toBeVisible();

@@ -118,6 +118,7 @@ export type TrackPageProps = Readonly<{
   onOpenPanel?: (panel: MobilePanelKind) => void;
   onClosePanel?: () => void;
   mobileBackLabel?: string;
+  mobileSurfaceBackLabel?: string;
   onMobileBack?: () => void;
   /** Optional app-owned phone header slot; this feature keeps ownership of actions and focus. */
   mobileHeaderActionsHost?: HTMLElement | null;
@@ -173,7 +174,7 @@ export function TrackPage({ isReportEmpty = false, fillReading = false, hideEmpt
   shareLinks, onShareTrack, onStartConversation, onMarkAllConversationsRead, conversationOpen = false, mobilePanelObscured, unread = false, onReply,
   cardsAction, recentFiles, onOpenCard, onDeleteCard, onSetWorkbench, onOpenTask, onOpenOutline, board, onCloseBoard, fileViewer,
   panel = null, onOpenPanel, onClosePanel,
-  mobileBackLabel = 'Workspace', onMobileBack, mobileHeaderActionsHost = null, mobileHeaderTitleHost, mobileAreaName, onOpenMobileArea, mobileReportTitleOnScroll = false, mobileTitleReadView,
+  mobileBackLabel = 'Workspace', mobileSurfaceBackLabel = 'Report', onMobileBack, mobileHeaderActionsHost = null, mobileHeaderTitleHost, mobileAreaName, onOpenMobileArea, mobileReportTitleOnScroll = false, mobileTitleReadView,
   canReopenTrack, canCloseTrack, onRenameTrack, onOpenOriginTrack, closedControl, onDeleteTrack, onTrackDeleted,
 }: TrackPageProps) {
   const compactViewport = useCompactViewport();
@@ -342,7 +343,7 @@ export function TrackPage({ isReportEmpty = false, fillReading = false, hideEmpt
   const mobilePainter = makeMobilePainter({
     // Task reveal owns clearing its panel route; do not close it a second time.
     onOpenTask,
-    backLabel: 'Report',
+    backLabel: mobileSurfaceBackLabel,
     onBack: closeMobilePanel,
   });
 
@@ -540,7 +541,7 @@ export function TrackPage({ isReportEmpty = false, fillReading = false, hideEmpt
             {!titleInHeader && originLink}
           </> : undefined}
           level={1}
-          backLabel={closeSurface === undefined ? mobileBackLabel : (fileViewer?.backLabel ?? 'Report')}
+          backLabel={closeSurface === undefined ? mobileBackLabel : (fileViewer?.backLabel ?? mobileSurfaceBackLabel)}
           onBack={closeSurface ?? onMobileBack}
           backRef={mobileBackRef}
           actions={compactViewport && fileOpen && onReply !== undefined ? (
@@ -627,7 +628,7 @@ export function TrackPage({ isReportEmpty = false, fillReading = false, hideEmpt
             {mobilePanelOpen && (mobilePanelKind === 'outline' ? (
               <MobileListPage
                 title="Outline"
-                backLabel="Report"
+                backLabel={mobileSurfaceBackLabel}
                 onBack={closeMobilePanel}
               >
                 <MobileList>
@@ -660,7 +661,7 @@ export function TrackPage({ isReportEmpty = false, fillReading = false, hideEmpt
                 actions={onMarkAllConversationsRead === undefined ? undefined : <IconButton
                   label="Mark all read" tooltip="Mark all read" icon={<Icon name="check-all" />}
                   variant="ghost" size="lg" onClick={onMarkAllConversationsRead} />}
-                backLabel="Report"
+                backLabel={mobileSurfaceBackLabel}
                 onBack={closeMobilePanel}
               >
                 {conversationList ?? <EmptyState variant="compact" icon={<Icon name="chat" />} title="No conversations yet" description="Conversations started here appear in this list." />}

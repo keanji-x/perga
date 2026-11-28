@@ -5,83 +5,27 @@ import { withFontRoleProbe } from '../../../../tools/styles/font-role-fixture.ts
  * The mobile presentation, rendered on the real `AppShell` over a memory history;
  * this is the file that measures painted boxes.
  */
-import { cleanup, fireEvent } from '@testing-library/react';
+import { cleanup } from '@testing-library/react';
 import { commands, page, userEvent } from 'vitest/browser';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 
 
 
-afterEach(async () => { cleanup(); vi.restoreAllMocks(); await commands.emulateReducedMotion(false); });
+afterEach(async () => { cleanup(); await commands.emulateReducedMotion(false); });
 
 const settlePaint = () => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
 
-it('slides Workspace in and out on the left and pushes its Area in from the right', async () => {
-  await page.viewport(390, 844);
-  setup('/');
-  const opener = await page.getByRole('button', { name: 'Open workspace' }).findElement();
-  const host = document.getElementById('mobile-workspace-navigation')!;
-  const animationFrames = (element: Element) => (element.getAnimations()[0].effect as KeyframeEffect).getKeyframes();
-  const offset = (frame: ComputedKeyframe) => new DOMMatrix(String(frame.transform)).m41;
-
-  fireEvent.click(opener);
-  expect(offset(animationFrames(host)[0])).toBeCloseTo(-390);
-  await host.getAnimations()[0].finished;
-
-  const product = await page.getByRole('button', { name: 'Product', exact: true }).findElement();
-  fireEvent.click(product);
-  const area = host.querySelector('[data-nc-workspace-page="tracks"]')!;
-  expect(offset(animationFrames(area)[0])).toBeCloseTo(390);
-  await area.getAnimations()[0].finished;
-
-  fireEvent.click(await page.getByRole('button', { name: 'Back to Workspace', exact: true }).findElement());
-  await expectNoExitSnapBack(area, 'right');
-  const close = await page.getByRole('button', { name: 'Back to workspace', exact: true }).findElement();
-  fireEvent.click(close);
-  expect(offset(animationFrames(host).at(-1)!)).toBeCloseTo(-390);
-  await expectNoExitSnapBack(host, 'left');
-});
-
-async function expectNoExitSnapBack(element: Element, side: 'left' | 'right'): Promise<void> {
-  const exit = element.getAnimations()[0];
-  const cancel = exit.cancel.bind(exit);
-  const visibleOnRelease: boolean[] = [];
-  vi.spyOn(exit, 'cancel').mockImplementation(() => {
-    cancel();
-    const { left, right } = element.getBoundingClientRect();
-    const offscreen = side === 'left' ? right <= 0 : left >= window.innerWidth;
-    visibleOnRelease.push(getComputedStyle(element).visibility === 'visible' && !offscreen);
-  });
-  exit.finish();
-  await expect.poll(() => getComputedStyle(element).visibility).toBe('hidden');
-  expect(visibleOnRelease).toEqual([false]);
-  expect(element.getAnimations()).toHaveLength(0);
-}
-
-
 async function openTrackNavigation(): Promise<void> {
-  await expect.poll(() => (
-    page.getByRole('button', { name: 'Open workspace' }).query() !== null
-    || page.getByRole('button', { name: 'Open area Product' }).query() !== null
-    || page.getByRole('button', { name: 'Back to Tracks' }).query() !== null
-  )).toBe(true);
-  const workspace = page.getByRole('button', { name: 'Open workspace' });
+  const workspace = page.getByRole('button', { name: 'Open workspace', exact: true });
+  const areaButton = page.getByRole('button', { name: 'Open area Product', exact: true });
+  await expect.poll(() => workspace.query() !== null || areaButton.query() !== null).toBe(true);
   if (workspace.query() !== null) {
     await workspace.click();
-    const navigation = await page.getByRole('dialog', { name: 'Tracks and settings' }).findElement();
-    const current = navigation.querySelector('button[aria-current="location"]') ?? navigation.querySelector('button[aria-label="Product"]');
-    if (!(current instanceof HTMLElement)) throw new Error('Expected the current Area');
-    await page.elementLocator(current).click();
+    await page.getByRole('button', { name: 'Product', exact: true }).click();
   } else {
-    const switcher = page.getByRole('button', { name: 'Open area Product' });
-    if (switcher.query() !== null) {
-      await switcher.click();
-    } else {
-      await page.getByRole('button', { name: 'Back to Tracks' }).click();
-    }
+    await areaButton.click();
   }
-  const pane = document.querySelector('[data-nc-workspace-page="tracks"]')!;
-  await Promise.all(pane.getAnimations().map((animation) => animation.finished));
-  await settlePaint();
+  await expect.element(page.getByRole('region', { name: 'Open tracks', exact: true })).toBeVisible();
 }
 
 async function openSettings(): Promise<void> {
@@ -117,7 +61,7 @@ describe('Track mobile presentation', () => {
     const opener = page.getByRole('button', { name: 'Back to Focus' });
     await page.getByRole('button', { name: 'Open area Product' }).findElement();
     const openerElement = await opener.findElement();
-    const panel = document.querySelector<HTMLElement>('[data-nc-mobile-page]')!;
+    let panel = document.querySelector<HTMLElement>('[data-nc-mobile-page]')!;
     const root = document.querySelector('[data-nc-track-page]')!;
 
     expect(root.getBoundingClientRect().width).toBeLessThanOrEqual(window.innerWidth);
@@ -136,8 +80,7 @@ describe('Track mobile presentation', () => {
     expect(getComputedStyle(reportChatDock).display).not.toBe('none');
 
     await openTrackNavigation();
-    await expect.element(page.getByRole('dialog', { name: 'Tracks and settings' })).toBeVisible();
-    const navigation = await page.getByRole('dialog', { name: 'Tracks and settings' }).findElement();
+    const navigation = await page.getByRole('main').findElement();
     expect(page.getByRole('button', { name: 'Settings', exact: true }).query()).toBeNull();
     const currentTrack = await page.getByRole('button', { name: /^Responsive mobile UI\b/ }).findElement();
     expect(currentTrack.getAttribute('aria-current')).toBe('page');
@@ -153,13 +96,12 @@ describe('Track mobile presentation', () => {
     await page.screenshot({ path: '../../../../test-results/mobile-navigation-polished.png' });
 
     const main = document.querySelector('main')!;
-    expect(main.inert).toBe(true);
-    expect(main.getAttribute('aria-hidden')).toBe('true');
-    expect(getComputedStyle(reportChatDock).display).toBe('none');
-    openerElement.focus();
-    expect(document.activeElement).not.toBe(openerElement);
-    await page.getByRole('button', { name: /^Responsive mobile UI\b/ }).click();
-    expect(document.querySelector('nav[aria-label="Primary"]')).toBeNull();
+    expect(main.inert).toBe(false);
+    expect(reportChatDock.isConnected).toBe(false);
+
+    await page.getByRole('button', { name: 'Back to Report' }).click();
+    await page.getByRole('button', { name: 'Open area Product' }).findElement();
+    panel = document.querySelector<HTMLElement>('[data-nc-mobile-page]')!;
 
     await router.navigate({ to: '/track/w1', search: { panel: 'outline' } });
     await Promise.all(panel.getAnimations().map((animation) => animation.finished));
@@ -295,19 +237,19 @@ describe('Track mobile presentation', () => {
     await page.getByRole('button', { name: 'About', exact: true }).click();
     await page.getByRole('heading', { name: 'About', exact: true }).findElement();
     await page.getByRole('button', { name: 'Back to Settings' }).click();
-    await page.getByRole('button', { name: 'Back to workspace' }).click();
+    await page.getByRole('button', { name: 'Back to Frontend' }).click();
     await expect.poll(() => router.state.location.pathname).toBe('/area/c2/new');
   });
 
-  it('returns from Settings to the latest search on the same workspace path', async () => {
+  it('returns from Settings to the latest report anchor', async () => {
     await page.viewport(390, 844);
-    const router = setup('/track/w1?from=pages');
+    const router = setup('/track/w1#start');
     await page.getByRole('button', { name: 'Open area Product' }).findElement();
-    await router.navigate({ to: '/track/w1', search: { from: 'area' } });
+    await router.navigate({ to: '/track/w1', hash: 'newer' });
     await openSettings();
     await page.getByRole('heading', { name: 'Settings', exact: true }).findElement();
-    await page.getByRole('button', { name: 'Back to workspace' }).click();
-    await expect.poll(() => router.state.location.href).toBe('/track/w1?from=area');
+    await page.getByRole('button', { name: 'Back to Report' }).click();
+    await expect.poll(() => router.state.location.href).toBe('/track/w1#newer');
   });
 
   it('pops the Settings visit across three cycles so hardware Back reaches the earlier workspace', async () => {
@@ -322,7 +264,7 @@ describe('Track mobile presentation', () => {
       await page.getByRole('heading', { name: 'Appearance', exact: true }).findElement();
       await page.getByRole('button', { name: 'Back to Settings' }).click();
       await expect.poll(() => router.state.location.pathname).toBe('/settings');
-      await page.getByRole('button', { name: 'Back to workspace' }).click();
+      await page.getByRole('button', { name: 'Back to Frontend' }).click();
       await expect.poll(() => router.state.location.pathname).toBe('/area/c2/new');
       expect(router.history.location.state.__TSR_index).toBe(1);
       // The forward entries are reused on the next visit, not accumulated as duplicates.
@@ -332,7 +274,7 @@ describe('Track mobile presentation', () => {
     await expect.poll(() => router.state.location.pathname).toBe('/area/c1/new');
   });
 
-  it('pops desktop section pushes as one visit after switching to phone width', async () => {
+  it('pops desktop section visits one entry at a time after switching to phone width', async () => {
     await page.viewport(390, 844);
     const router = setup('/area/c2/new');
     await openSettings();
@@ -346,9 +288,12 @@ describe('Track mobile presentation', () => {
     expect(router.history.location.state.__TSR_index).toBe(3);
     await page.viewport(390, 844);
     await page.getByRole('button', { name: 'Back to Settings' }).click();
+    await expect.poll(() => router.state.location.pathname).toBe('/settings/about');
+    expect(router.history.location.state.__TSR_index).toBe(2);
+    await page.getByRole('button', { name: 'Back to Settings' }).click();
     await expect.poll(() => router.state.location.pathname).toBe('/settings');
     expect(router.history.location.state.__TSR_index).toBe(1);
-    await page.getByRole('button', { name: 'Back to workspace' }).click();
+    await page.getByRole('button', { name: 'Back to Frontend' }).click();
     await expect.poll(() => router.state.location.pathname).toBe('/area/c2/new');
     expect(router.history.location.state.__TSR_index).toBe(0);
   });
@@ -447,8 +392,6 @@ describe('Track mobile presentation', () => {
     const opener = await page.getByRole('button', { name: 'Open workspace' }).findElement();
     await page.elementLocator(opener).click();
     await page.getByRole('button', { name: areaName, exact: true }).click();
-    const pane = document.querySelector('[data-nc-workspace-page="tracks"]')!;
-    await Promise.all(pane.getAnimations().map((animation) => animation.finished));
     await settlePaint();
     const heading = await page.getByRole('heading', { name: areaName, exact: true }).findElement();
     const titleBox = heading.getBoundingClientRect();
@@ -464,9 +407,8 @@ describe('Track mobile presentation', () => {
     }
     await page.screenshot({ path: `../../../../test-results/mobile-navigation-header-${width}.png` });
     await page.getByRole('button', { name: 'Back to Workspace' }).click();
-    await page.getByRole('button', { name: 'Back to workspace' }).click();
-    await expect.poll(() => page.getByRole('dialog', { name: 'Tracks and settings' }).query()).toBeNull();
-    expect(document.activeElement).toBe(opener);
+    await page.getByRole('button', { name: 'Back to Focus' }).click();
+    await expect.element(page.getByRole('heading', { name: 'Focus', exact: true })).toBeVisible();
   });
 
   it('omits unavailable Track actions before a Track exists', async () => {
@@ -488,8 +430,7 @@ describe('Track mobile presentation', () => {
     await page.elementLocator(opener).click();
     await page.getByRole('button', { name: 'Frontend', exact: true }).click();
     await page.getByRole('heading', { name: 'Frontend', exact: true }).findElement();
-    expect(document.activeElement).not.toBe(document.body);
-    expect(router.state.location.pathname).toBe('/');
+    expect(router.state.location.pathname).toBe('/area/c2');
     expect(page.getByRole('button', { name: /^Responsive mobile UI\b/ }).query()).toBeNull();
     await page.getByText('No tracks in this area').findElement();
     await page.getByRole('button', { name: 'Area actions' }).click();
@@ -498,17 +439,16 @@ describe('Track mobile presentation', () => {
     expect((await page.getByRole('textbox', { name: /^Name/ }).findElement() as HTMLInputElement).value).toBe('Frontend');
     await page.getByRole('button', { name: 'Cancel', exact: true }).click();
     await page.getByRole('button', { name: 'Back to Workspace' }).click();
-    await page.getByRole('button', { name: 'Back to workspace' }).click();
-    await expect.poll(() => document.activeElement).toBe(opener);
-    expect(router.state.location.pathname).toBe('/');
-    await page.elementLocator(opener).click();
+    await page.getByRole('button', { name: 'Back to Focus' }).click();
+    await expect.poll(() => router.state.location.pathname).toBe('/');
+    await page.getByRole('button', { name: 'Open workspace', exact: true }).click();
     await page.getByRole('button', { name: 'Frontend', exact: true }).click();
     await page.getByRole('button', { name: 'New track', exact: true }).click();
     await expect.poll(() => router.state.location.pathname).toBe('/area/c2/new');
     await page.getByRole('button', { name: 'Switch area, Frontend' }).findElement();
   });
 
-  it('keeps navigation open when Escape closes its Area editor', async () => {
+  it('keeps Workspace active when Escape closes its Area editor', async () => {
     await page.viewport(320, 740);
     setup('/');
     await openTrackNavigation();
@@ -516,13 +456,11 @@ describe('Track mobile presentation', () => {
     await page.getByRole('button', { name: 'New area', exact: true }).click();
     await page.getByRole('dialog', { name: 'New area', exact: true }).findElement();
     expect(page.getByRole('dialog').elements()).toHaveLength(1);
-    expect(getComputedStyle(document.getElementById('mobile-workspace-navigation')!).visibility).toBe('hidden');
     await userEvent.keyboard('{Escape}');
     expect(page.getByRole('dialog', { name: 'New area', exact: true }).query()).toBeNull();
-    const navigation = await page.getByRole('dialog', { name: 'Tracks and settings' }).findElement();
-    await expect.poll(() => navigation.contains(document.activeElement)).toBe(true);
+    await expect.element(page.getByRole('heading', { name: 'Workspace', exact: true })).toBeVisible();
     await userEvent.keyboard('{Escape}');
-    await expect.poll(() => page.getByRole('dialog', { name: 'Tracks and settings' }).query()).toBeNull();
+    await expect.element(page.getByRole('heading', { name: 'Workspace', exact: true })).toBeVisible();
   });
 
   it('creates a new Area from compact navigation without stacked dialogs and lands on its track creation page', async () => {
@@ -533,7 +471,6 @@ describe('Track mobile presentation', () => {
     await page.getByRole('button', { name: 'New area', exact: true }).click();
     await page.getByRole('dialog', { name: 'New area', exact: true }).findElement();
     expect(page.getByRole('dialog').elements()).toHaveLength(1);
-    expect(getComputedStyle(document.getElementById('mobile-workspace-navigation')!).visibility).toBe('hidden');
     await page.getByRole('textbox', { name: /^Name/ }).fill('Research');
     await page.getByRole('button', { name: 'Create area', exact: true }).click();
     await expect.poll(() => router.state.location.pathname).toBe('/area/c3/new');
@@ -555,9 +492,9 @@ describe('Track mobile presentation', () => {
     await settingsControl.click({ position: { x: 4, y: box.height / 2 } });
     await expect.poll(() => router.state.location.pathname).toBe('/settings');
     await page.getByRole('navigation', { name: 'Settings categories' }).findElement();
-    await page.getByRole('button', { name: 'Back to workspace' }).click();
-    await expect.poll(() => router.state.location.pathname).toBe('/');
-    await openTrackNavigation();
+    await page.getByRole('button', { name: 'Back to Workspace' }).click();
+    await expect.poll(() => router.state.location.pathname).toBe('/workspace');
+    await page.getByRole('button', { name: 'Product', exact: true }).click();
     const create = await page.getByRole('button', { name: 'New track', exact: true }).findElement();
     expect(create.getBoundingClientRect().width).toBeGreaterThanOrEqual(44);
     expect(create.getBoundingClientRect().height).toBeGreaterThanOrEqual(44);
@@ -602,7 +539,7 @@ describe('Track mobile presentation', () => {
     (workspaceButton as HTMLElement).focus();
     expect(workspaceButton.matches(':focus-visible')).toBe(true);
     await page.elementLocator(workspaceButton).click();
-    await page.getByRole('dialog', { name: 'Tracks and settings' }).findElement();
+    await page.getByRole('heading', { name: 'Workspace', exact: true }).findElement();
     const settings = await page.getByRole('button', { name: 'Settings', exact: true }).findElement();
     expect(settings.getBoundingClientRect().height).toBeGreaterThanOrEqual(44);
     await page.screenshot({ path: '../../../../test-results/mobile-contour-feedback.png' });
@@ -668,168 +605,3 @@ it('keeps every mobile Track action label readable within the viewport', async (
 });
 
 // Native playback controls here prove races, never natural screenshots.
-function holdWorkspaceExit(host: HTMLElement) {
-  const animate = host.animate.bind(host);
-  const exits: Animation[] = [];
-  vi.spyOn(host, 'animate').mockImplementation((frames, options) => {
-    const animation = animate(frames, options);
-    queueMicrotask(() => { animation.pause(); animation.currentTime = 0; });
-    exits.push(animation);
-    return animation;
-  });
-  return () => {
-    expect(exits).toHaveLength(1);
-    const exit = exits[0];
-    expect((exit.effect as KeyframeEffect).target).toBe(host);
-    expect(host.getAnimations()).toContain(exit);
-    expect(exit.playState).toBe('paused');
-    return exit;
-  };
-}
-
-function expectPaintOnly(host: HTMLElement) {
-  expect(host.isConnected).toBe(true);
-  expect(getComputedStyle(host).visibility).toBe('visible');
-  expect(host.inert).toBe(true);
-  expect(host.getAttribute('aria-hidden')).toBe('true');
-  for (const attribute of ['aria-modal', 'role', 'data-nc-escape-layer']) expect(host.hasAttribute(attribute)).toBe(false);
-  expect(document.querySelector('main')?.hasAttribute('inert')).toBe(false);
-  expect(document.querySelector('[data-nc-workspace-header]')?.hasAttribute('inert') ?? false).toBe(false);
-}
-
-describe('workspace exit interaction lifetime', () => {
-  it.each([320, 390])('revokes Back permissions before exit paint settles at %ipx', async width => {
-    await page.viewport(width, 844);
-    setup('/');
-    const opener = await page.getByRole('button', { name: 'Open workspace' }).findElement();
-    await page.elementLocator(opener).click();
-    const host = await page.getByRole('dialog', { name: 'Tracks and settings' }).findElement() as HTMLElement;
-    await Promise.all(host.getAnimations().map(animation => animation.finished));
-    const held = holdWorkspaceExit(host);
-    await page.getByRole('button', { name: 'Back to workspace' }).click();
-    const exit = held();
-    expectPaintOnly(host);
-    expect(document.activeElement).toBe(opener);
-    const box = opener.getBoundingClientRect();
-    expect(document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2)?.closest('button')).toBe(opener);
-    let prevented: boolean | undefined;
-    const observe = (event: KeyboardEvent) => { if (event.key === 'Tab') prevented = event.defaultPrevented; };
-    window.addEventListener('keydown', observe);
-    try { await userEvent.keyboard('{Tab}'); } finally { window.removeEventListener('keydown', observe); }
-    expect(prevented).toBe(false);
-    expect(host.contains(document.activeElement)).toBe(false);
-    exit.finish();
-    await expect.poll(() => getComputedStyle(host).visibility).toBe('hidden');
-  });
-
-  it('gives a nested native menu Escape priority and preserves a rapid reopened presentation', async () => {
-    await page.viewport(390, 844);
-    setup('/');
-    await openTrackNavigation();
-    const host = await page.getByRole('dialog', { name: 'Tracks and settings' }).findElement() as HTMLElement;
-    await Promise.all(host.getAnimations().map(animation => animation.finished));
-    await page.getByRole('button', { name: 'Area actions', exact: true }).click();
-    await page.getByRole('menuitem', { name: 'Edit area Product' }).findElement();
-    await userEvent.keyboard('{Escape}');
-    expect(host.inert).toBe(false);
-    expect(host.getAttribute('aria-modal')).toBe('true');
-    const held = holdWorkspaceExit(host);
-    await userEvent.keyboard('{Escape}');
-    const exit = held();
-    expectPaintOnly(host);
-    vi.restoreAllMocks();
-    await page.getByRole('button', { name: 'Open workspace' }).click();
-    expect(exit.playState).toBe('idle');
-    exit.finish();
-    await settlePaint();
-    expect(page.getByRole('dialog', { name: 'Tracks and settings' }).element()).toBe(host);
-    expect(host.inert).toBe(false);
-    expect(host.contains(document.activeElement)).toBe(true);
-  });
-
-  it('releases selection immediately and never steals newer route or editor focus on finish', async () => {
-    await page.viewport(390, 844);
-    const router = setup('/track/w1');
-    await openTrackNavigation();
-    const host = await page.getByRole('dialog', { name: 'Tracks and settings' }).findElement() as HTMLElement;
-    await Promise.all(host.getAnimations().map(animation => animation.finished));
-    const held = holdWorkspaceExit(host);
-    await page.getByRole('button', { name: 'New track', exact: true }).click();
-    const exit = held();
-    expectPaintOnly(host);
-    await expect.poll(() => router.state.location.pathname).toBe('/area/c1/new');
-    const editor = await page.getByRole('combobox', { name: 'What this track should do', exact: true }).findElement();
-    (editor as HTMLElement).focus();
-    expect(document.activeElement).toBe(editor);
-    exit.finish();
-    await expect.poll(() => getComputedStyle(host).visibility).toBe('hidden');
-    expect(document.activeElement).toBe(editor);
-    expect(router.history.location.state.__TSR_index).toBe(1);
-  });
-
-  it('revokes compact scope and cancels its old animation when switching to desktop', async () => {
-    await page.viewport(390, 844);
-    setup('/');
-    await openTrackNavigation();
-    const host = await page.getByRole('dialog', { name: 'Tracks and settings' }).findElement() as HTMLElement;
-    await Promise.all(host.getAnimations().map(animation => animation.finished));
-    const held = holdWorkspaceExit(host);
-    await userEvent.keyboard('{Escape}');
-    const exit = held();
-    await page.viewport(1400, 900);
-    await expect.element(page.getByRole('navigation', { name: 'Workspace', exact: true })).toBeVisible();
-    expect(host.isConnected).toBe(false);
-    expect(document.querySelector('#mobile-workspace-navigation')).toBeNull();
-    expect(host.getAnimations()).toHaveLength(0);
-    expect(exit.playState).toBe('idle');
-    await page.viewport(390, 844);
-    vi.restoreAllMocks();
-    await page.getByRole('button', { name: 'Open workspace' }).click();
-    exit.finish();
-    await settlePaint();
-    const reopened = await page.getByRole('dialog', { name: 'Tracks and settings' }).findElement() as HTMLElement;
-    expect(reopened.inert).toBe(false);
-    expect(reopened.getAttribute('aria-modal')).toBe('true');
-  });
-
-  it('settles reduced motion without waiting for a native completion', async () => {
-    await commands.emulateReducedMotion(true);
-    await page.viewport(320, 844);
-    setup('/');
-    const opener = await page.getByRole('button', { name: 'Open workspace' }).findElement();
-    await page.elementLocator(opener).click();
-    const host = await page.getByRole('dialog', { name: 'Tracks and settings' }).findElement() as HTMLElement;
-    expect(host.getAnimations()).toHaveLength(0);
-    await userEvent.keyboard('{Escape}');
-    expect(host.inert).toBe(true);
-    expect(host.hasAttribute('data-nc-escape-layer')).toBe(false);
-    expect(document.querySelector('main')?.hasAttribute('inert')).toBe(false);
-    expect(document.activeElement).toBe(opener);
-    expect(host.getAnimations()).toHaveLength(0);
-    expect(getComputedStyle(host).visibility).toBe('hidden');
-  });
-});
-
-
-it('returns to the latest report opener and releases Track selection before paint finishes', async () => {
-  await page.viewport(390, 844);
-  const router = setup('/track/w1');
-  const selector = await page.getByRole('button', { name: 'Open area Product' }).findElement();
-  await page.elementLocator(selector).click();
-  const host = await page.getByRole('dialog', { name: 'Tracks and settings' }).findElement() as HTMLElement;
-  await Promise.all(host.getAnimations().map(animation => animation.finished));
-  await userEvent.keyboard('{Escape}');
-  expect(document.activeElement).toBe(selector);
-  await page.elementLocator(selector).click();
-  await Promise.all(host.getAnimations().map(animation => animation.finished));
-  const held = holdWorkspaceExit(host);
-  await page.getByRole('button', { name: /^Responsive mobile UI\b/ }).click();
-  const exit = held();
-  expectPaintOnly(host);
-  expect(router.state.location.pathname).toBe('/track/w1');
-  const newer = await page.getByRole('button', { name: 'Back to Focus' }).findElement();
-  (newer as HTMLElement).focus();
-  exit.finish();
-  await expect.poll(() => getComputedStyle(host).visibility).toBe('hidden');
-  expect(document.activeElement).toBe(newer);
-});

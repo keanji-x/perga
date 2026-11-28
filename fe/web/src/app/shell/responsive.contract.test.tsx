@@ -1,139 +1,44 @@
 // @vitest-environment jsdom
-import { act, cleanup, fireEvent, render as renderDom, screen, waitFor } from '@testing-library/react';
-import type { ReactNode } from 'react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { act, cleanup, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { afterEach, expect, it, vi } from 'vitest';
+import { createReadReceiptsKernel } from '../providers/read-receipts-fixture.tsx';
+import { renderDailyFixture } from '../router/daily-planner-fixture.tsx';
 
-import { AppShell } from './public.tsx';
-import { NewTrackDraftProvider } from '../router/new-track-drafts.tsx';
-import { createUnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
-import type { Area } from '../../../../core/domain/area.ts';
-import { NEUTRAL_ACTIVITY, type Track } from '../../../../core/domain/track.ts';
-import { createUiPreferences, UiPreferencesProvider } from '../providers/ui-preferences.tsx';
-import { createReadReceiptsKernel, readReceiptsFixture } from '../providers/read-receipts-fixture.tsx';
-
-/* Real router/history state, with navigation effects isolated: an empty
- * `useRouter` result hides required history fields. */
-vi.mock('@tanstack/react-router', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@tanstack/react-router')>();
-  const router = actual.createRouter({
-    routeTree: actual.createRootRoute(),
-    // Today uses the shell header. Bare `/` delegates its header to the Focus outlet.
-    history: actual.createMemoryHistory({ initialEntries: ['/?view=today'] }),
-  });
-  return {
-    ...actual,
-    Outlet: () => <div>route</div>,
-    useNavigate: () => vi.fn(),
-    useRouter: () => router,
-    useRouterState: ({ select }: { select: (state: typeof router.state) => unknown }) => select(router.state),
-  };
-});
-// The kernel's read receipts; a case may replace them before it renders.
-let receipts = createReadReceiptsKernel();
-function render(node: ReactNode) {
-  return renderDom(readReceiptsFixture(receipts).wrap(<NewTrackDraftProvider>{node}</NewTrackDraftProvider>));
-}
-
-
-const AREA: Area = {
-  id: 'c1', name: 'Product', color: '#5B8DEF', sort: 1, kind: 'user',
-  defaultTemplateId: null, defaultCwd: null, createdAt: 0, updatedAt: 0,
-};
-const TRACK: Track = {
-  id: 'w1', areaId: 'c1', title: 'Responsive mobile UI', sort: 1, cwd: '/tmp', isolation: 'none', agentCwd: '/tmp',
-  pinnedAt: null, closedAt: null, createdAt: 0, updatedAt: 0, ...NEUTRAL_ACTIVITY,
-};
-// Read when `useWorkspace` is called, so a case may hand the shell its own rows.
-let workspaceTracks: readonly Track[] = [TRACK];
-
-// Authentication notifications have their own real query and browser coverage; this contract isolates navigation.
-vi.mock('./provider-authentication.tsx', () => ({ ProviderAuthenticationNotice: () => null }));
-
-vi.mock('../providers/workspace-queries.ts', async (importOriginal) => ({
-  ...await importOriginal<typeof import('../providers/workspace-queries.ts')>(),
-  useWorkspace: () => ({
-    areas: [AREA], tracks: workspaceTracks, tracksByArea: new Map([['c1', workspaceTracks]]), trackErrorsByArea: new Map(), tracksLoadingByArea: new Map(),
-    areasError: null, overlaysError: null, areasLoading: false, overlaysLoading: false,
-    retryAreas: vi.fn(), retryOverlays: vi.fn(), retryTracks: vi.fn(),
-  }),
-  // Blank-only is a working state, so the rail contract needs nothing more.
-}));
-/* A partial mock: `pathFor`, which the dock's selection rule reads the route
- * table from, stays the real one. */
-vi.mock('../router/navigation.ts', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('../router/navigation.ts')>()),
-  useCurrentPath: () => '/',
-  useGo: () => vi.fn(),
-  useGoSameTrack: () => vi.fn(),
-  routeParamFromPath: () => undefined,
-}));
-vi.mock('./desktop/sidebar.tsx', () => ({ Sidebar: ({ collapsed, onToggleCollapsed }: {
-  collapsed: boolean; onToggleCollapsed: () => void;
-}) => <button type="button" aria-expanded={!collapsed} onClick={onToggleCollapsed}>{collapsed ? 'Expand' : 'Collapse'}</button> }));
-
-afterEach(() => { cleanup(); vi.unstubAllGlobals(); workspaceTracks = [TRACK]; receipts = createReadReceiptsKernel(); });
-
+afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 function compactViewport() {
-  const listeners = new Set<() => void>();
   vi.stubGlobal('matchMedia', vi.fn(() => ({
-    matches: true, media: '', onchange: null,
-    addEventListener: (_: string, listener: () => void) => listeners.add(listener),
-    removeEventListener: (_: string, listener: () => void) => listeners.delete(listener),
-    addListener: vi.fn(), removeListener: vi.fn(), dispatchEvent: vi.fn(),
+    matches: true, addEventListener: vi.fn(), removeEventListener: vi.fn(),
   })));
 }
 
-function memoryStorage() {
-  const values = new Map<string, string>();
-  return { getItem: (key: string) => values.get(key) ?? null, setItem: (key: string, value: string) => { values.set(key, value); } };
-}
-
-describe('compact navigation interaction contracts', () => {
-  it('opens the workspace as a modal side page and Escape returns to content', async () => {
-    compactViewport();
-    const unauthorized = createUnauthorizedChannel({ enqueue: (task) => task() });
-    render(<AppShell transport={{} as never} unauthorized={unauthorized} onOpenSettings={vi.fn()} onOpenPlugins={vi.fn()} onSignOut={vi.fn()} />);
-    expect(screen.queryByRole('navigation', { name: 'Primary' })).toBeNull();
-    const opener = screen.getByRole('button', { name: 'Open workspace' });
-    fireEvent.click(opener);
-    expect(screen.getByRole('dialog', { name: 'Tracks and settings' })).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Settings' })).toBeTruthy();
-    expect(screen.getByRole('heading', { name: 'Areas' })).toBeTruthy();
-    expect(screen.queryByRole('button', { name: /^Responsive mobile UI/ })).toBeNull();
-    fireEvent.click(screen.getByRole('button', { name: 'Product' }));
-    expect(screen.getByRole('button', { name: /^Responsive mobile UI/ })).toBeTruthy();
-    expect(document.querySelector('main')?.hasAttribute('inert')).toBe(true);
-    fireEvent.keyDown(document, { key: 'Escape' });
-    await waitFor(() => { expect(screen.queryByRole('dialog', { name: 'Tracks and settings' })).toBeNull(); });
-    const area = screen.getByRole('button', { name: 'Switch area, Product' });
-    fireEvent.click(area);
-    expect(screen.getByRole('menuitem', { name: 'Product' })).toBeTruthy();
-  });
-
-  /* `MobileTracks` alone cannot show this (its receipt is a prop); only the shell
-   * decides which receipt that prop is. */
-  it('hands the Track list the rail’s read receipt, so a newer completion is unread until it is read', async () => {
-    compactViewport();
-    workspaceTracks = [{ ...TRACK, notifiableSessions: [{ sessionId: 's1', lastNotifiableTurnAtMs: 150 }] }];
-    // The kernel's baseline is 100.
-    receipts = createReadReceiptsKernel({ baselineMs: 100 });
-    const preferences = createUiPreferences(memoryStorage());
-    const unauthorized = createUnauthorizedChannel({ enqueue: (task) => task() });
-    render(<UiPreferencesProvider preferences={preferences}>
-      <AppShell transport={{} as never} unauthorized={unauthorized} onOpenSettings={vi.fn()} onOpenPlugins={vi.fn()} onSignOut={vi.fn()} />
-    </UiPreferencesProvider>);
-    fireEvent.click(screen.getByRole('button', { name: 'Open workspace' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Product' }));
-    const openTracks = screen.getByRole('region', { name: 'Open tracks' });
-    await waitFor(() => expect(openTracks.textContent).toContain('Unread update'));
-    expect(screen.getByRole('button', { name: /^Responsive mobile UI.*Unread update$/ })).toBeTruthy();
-
-    // Read elsewhere; this tab sees it when it is shown again.
-    await receipts.transport.send({ method: 'POST', path: '/api/v1/read-receipts/conversation/s1/read', credentials: 'include', body: { readThroughMs: 150 } });
-    act(() => { window.dispatchEvent(new Event('visibilitychange')); });
-    await waitFor(() => expect(openTracks.textContent).toContain('No updates yet'));
-  });
+it('uses the shell Back slot and keeps Today content reachable on compact widths', async () => {
+  compactViewport();
+  renderDailyFixture({ initial: '/?view=today' });
+  await screen.findByRole('button', { name: 'Back to Focus' });
+  expect(screen.queryByRole('button', { name: 'Open workspace' })).toBeNull();
+  expect(screen.getByRole('main').hasAttribute('inert')).toBe(false);
+  await userEvent.click(screen.getByRole('button', { name: 'Back to Focus' }));
+  expect(await screen.findByRole('button', { name: 'Open workspace' })).toBeTruthy();
 });
 
-vi.mock('../providers/area-mutations.ts', () => ({ useAreaMutations: () => ({ create: vi.fn(), update: vi.fn(), remove: vi.fn() }) }));
-vi.mock('../providers/track-lifecycle-mutations.ts', () => ({ useTrackLifecycleMutations: () => ({ setPinned: vi.fn(), create: vi.fn(), remove: vi.fn() }) }));
+it('reads the same receipt as the desktop rail and updates the mounted Area list', async () => {
+  compactViewport();
+  const receipts = createReadReceiptsKernel({ baselineMs: 100 });
+  renderDailyFixture({ initial: '/area/project-area', receipts, reply: (request) =>
+    request.path.startsWith('/api/v1/overlays?') ? {
+      status: 200, statusText: 'OK', body: { tracks: [{
+        trackId: 'project', areaId: 'project-area', isWorking: false, openAskCount: 0,
+        pendingApprovalCount: 0, hasBlockedSession: false, unreadMailCount: 0,
+        workspaceFailed: false, updatedAtMs: 150, notifiableSessions: [{ sessionId: 's1', lastNotifiableTurnAtMs: 150 }],
+      }] },
+    } : undefined,
+  });
+  const openTracks = await screen.findByRole('region', { name: 'Open tracks' });
+  await waitFor(() => expect(openTracks.textContent).toContain('Unread update'));
+  await receipts.transport.send({
+    method: 'POST', path: '/api/v1/read-receipts/conversation/s1/read', credentials: 'include', body: { readThroughMs: 150 },
+  });
+  act(() => { window.dispatchEvent(new Event('visibilitychange')); });
+  await waitFor(() => expect(openTracks.textContent).toContain('No updates yet'));
+});
