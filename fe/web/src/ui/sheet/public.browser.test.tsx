@@ -45,6 +45,12 @@ async function acquire(handle: HTMLElement) {
 }
 const releaseMouse = () => commands.mouseButton('[data-nc-sheet-handle]', false);
 
+async function pausePair(panel: HTMLElement, footer: HTMLElement) {
+  const pair = [panel.getAnimations()[0], footer.getAnimations()[0]] as const;
+  for (const animation of pair) animation.pause();
+  await Promise.all(pair.map(animation => animation.ready));
+  return pair;
+}
 
 // Seed through the real handle/release path. Only the native timeline is held;
 // no fixture paints the panel or reimplements the spring. The two inputs yield
@@ -304,6 +310,232 @@ it('reverses from native paint and velocity and fences the superseded exit', asy
     update({ open: false }); await expect.poll(() => dialog.open).toBe(false);
     expect(focus).toHaveBeenCalledTimes(1);
   } finally { opener.remove(); }
+});
+
+it('moves the stationary footer by only the remaining panel travel on drag dismissal', async () => {
+  const { panel, handle, footer, settle, update, props } = await mount();
+  await settle();
+  const footerTop = footer.getBoundingClientRect().top;
+  const down = await acquire(handle);
+  try {
+    event(handle, 'pointermove', down.y + 280, down.time + 200, down.id);
+    const panelTop = panel.getBoundingClientRect().top;
+    expect(getComputedStyle(footer).transform).toBe('none');
+    event(handle, 'pointerup', down.y + 280, down.time + 201, down.id);
+    expect(props.onCloseRequest).toHaveBeenCalledWith('handle');
+    update({ open: false });
+    const [exit] = panel.getAnimations();
+    const [footerExit] = footer.getAnimations();
+    exit.pause(); footerExit.pause();
+    await Promise.all([exit.ready, footerExit.ready]);
+    exit.currentTime = footerExit.currentTime = 0;
+    expect(footer.getBoundingClientRect().top).toBe(footerTop);
+    // The fixture accepts dismissal on a separate commit, so momentum may already have advanced.
+    const start = panel.getBoundingClientRect().top;
+    expect(start).toBeCloseTo(panelTop, 0);
+    exit.currentTime = footerExit.currentTime = 60;
+    const displacement = panel.getBoundingClientRect().top - start;
+    expect(displacement).toBeGreaterThan(20);
+    expect(footer.getBoundingClientRect().top - footerTop).toBeCloseTo(displacement, 2);
+  } finally { await releaseMouse(); }
+});
+
+it('clears a tall footer after a deep drag without jumping on release', async () => {
+  const { panel, dialog, handle, footer, settle, update, props } = await mount({
+    footer: <textarea aria-label="Multiline draft" style={{ display: 'block', boxSizing: 'border-box', height: 110 }} />,
+  });
+  await settle();
+  const footerTop = footer.getBoundingClientRect().top;
+  const down = await acquire(handle);
+  try {
+    event(handle, 'pointermove', down.y + 580, down.time + 500, down.id);
+    expect(footer.getBoundingClientRect().top).toBe(footerTop);
+    expect(window.innerHeight - footerTop).toBeGreaterThan(panel.getBoundingClientRect().height - 580);
+    event(handle, 'pointerup', down.y + 580, down.time + 501, down.id);
+    expect(props.onCloseRequest).toHaveBeenCalledWith('handle');
+    update({ open: false });
+    const [exit, footerExit] = await pausePair(panel, footer);
+    exit.currentTime = footerExit.currentTime = 0;
+    expect(footer.getBoundingClientRect().top).toBe(footerTop);
+    exit.currentTime = footerExit.currentTime = Number(exit.effect!.getComputedTiming().duration);
+    expect(footer.getBoundingClientRect().top).toBeGreaterThanOrEqual(window.innerHeight);
+    await act(async () => { exit.finish(); await exit.finished; });
+    expect(dialog.open).toBe(false);
+  } finally { await releaseMouse(); }
+});
+
+it.each(['reopen', 'desktop'] as const)('releases the moving exit footer on %s', async mode => {
+  const destination = document.body.appendChild(document.createElement('div'));
+  const { panel, dialog, footer, settle, update } = await mount({ desktopFooterRef: { current: destination } });
+  try {
+    await settle();
+    const panelTop = panel.getBoundingClientRect().top;
+    const footerTop = footer.getBoundingClientRect().top;
+    update({ open: false });
+    const [exit] = panel.getAnimations();
+    const [footerExit] = footer.getAnimations();
+    exit.pause(); footerExit.pause();
+    await Promise.all([exit.ready, footerExit.ready]);
+    exit.currentTime = footerExit.currentTime = 60;
+    const held = footer.getBoundingClientRect().top;
+    expect(held - footerTop).toBeGreaterThan(20);
+
+    if (mode === 'desktop') {
+      update({ enabled: false });
+      expect(destination.contains(footer)).toBe(true);
+      expect(dialog.open).toBe(false);
+    } else {
+      update({ open: true });
+      const [entry] = panel.getAnimations();
+      const [footerEntry] = footer.getAnimations();
+      expect(footerEntry.startTime).toBe(entry.startTime);
+      entry.pause(); footerEntry.pause();
+      await Promise.all([entry.ready, footerEntry.ready]);
+      entry.currentTime = footerEntry.currentTime = 0;
+      // A trajectory sample and the browser's interpolated paint can differ by a fraction of a pixel.
+      expect(Math.abs(footer.getBoundingClientRect().top - held)).toBeLessThan(1);
+      entry.currentTime = footerEntry.currentTime = 80;
+      expect(footer.getBoundingClientRect().top).toBeGreaterThan(footerTop);
+      expect(footer.getBoundingClientRect().top).toBeLessThan(held);
+      expect(Math.abs(footer.getBoundingClientRect().top - footerTop - (panel.getBoundingClientRect().top - panelTop))).toBeLessThan(1);
+      await act(async () => { entry.finish(); await entry.finished; });
+      expect(panel.getBoundingClientRect().top).toBe(panelTop);
+      expect(footer.getBoundingClientRect().top).toBe(footerTop);
+      expect(dialog.open).toBe(true);
+    }
+    expect(footerExit.playState).toBe('idle');
+    expect(footer.getAnimations()).toHaveLength(0);
+    expect(footer.style.transform).toBe('');
+  } finally { destination.remove(); }
+});
+
+it('holds the returning footer on handle acquisition without pointer movement', async () => {
+  const { panel, handle, footer, settle, update } = await mount();
+  await settle();
+  const rest = footer.getBoundingClientRect().top;
+  update({ open: false });
+  const [exit, footerExit] = await pausePair(panel, footer);
+  exit.currentTime = footerExit.currentTime = 60;
+  update({ open: true });
+  const [entry, footerEntry] = await pausePair(panel, footer);
+  entry.currentTime = footerEntry.currentTime = 80;
+  const held = footer.getBoundingClientRect().top;
+  expect(held - rest).toBeGreaterThan(20);
+
+  const down = await acquire(handle);
+  try {
+    expect(handle.hasPointerCapture(down.id)).toBe(true);
+    expect(footer.getAnimations()).toHaveLength(0);
+    expect(Math.abs(footer.getBoundingClientRect().top - held)).toBeLessThan(1);
+  } finally { await releaseMouse(); }
+  await settle();
+  expect(footer.getBoundingClientRect().top).toBe(rest);
+  expect(footer.style.transform).toBe('');
+});
+
+it('retains the returning footer velocity when the open frame changes', async () => {
+  const { panel, footer, frame, settle, update } = await mount();
+  await settle();
+  update({ open: false });
+  const [exit, footerExit] = await pausePair(panel, footer);
+  exit.currentTime = footerExit.currentTime = 60;
+  update({ open: true });
+  const [entry, footerEntry] = await pausePair(panel, footer);
+  entry.play(); footerEntry.play();
+  await Promise.all([entry.ready, footerEntry.ready]);
+
+  const bottom = () => footer.getBoundingClientRect().bottom;
+  // Measure the previous velocity from native paint around the rebase.
+  entry.currentTime = footerEntry.currentTime = 79; const before = bottom();
+  entry.currentTime = footerEntry.currentTime = 81; const after = bottom();
+  entry.currentTime = footerEntry.currentTime = 80; const held = bottom();
+  const velocity = (after - before) * 500;
+  expect(velocity).toBeLessThan(-500);
+
+  const bottomInsetPx = 120;
+  update({ frame: { heightPx: 500, bottomInsetPx } });
+  const [rebasedPanel, rebasedFooter] = await pausePair(panel, footer);
+  rebasedPanel.currentTime = rebasedFooter.currentTime = 0;
+  const start = bottom();
+  expect(Math.abs(start - (held - bottomInsetPx))).toBeLessThan(1);
+  rebasedPanel.currentTime = rebasedFooter.currentTime = 10;
+  expect(Math.abs((bottom() - start) * 100 - velocity)).toBeLessThan(150);
+  const panelOffset = panel.getBoundingClientRect().top - frame.getBoundingClientRect().top;
+  const footerOffset = bottom() - frame.getBoundingClientRect().bottom;
+  expect(Math.abs(footerOffset - panelOffset)).toBeLessThan(1);
+});
+
+it.each([
+  { position: 1, velocity: 800 }, { position: 0, velocity: 800 }, { position: 0, velocity: 0 },
+])('returns a held footer smoothly after releasing the panel at $position px and $velocity px/s', async ({ position, velocity }) => {
+  const { panel, handle, footer, settle, update } = await mount();
+  await settle();
+  const rest = footer.getBoundingClientRect().top;
+  update({ open: false });
+  const [exit, footerExit] = await pausePair(panel, footer);
+  exit.currentTime = footerExit.currentTime = 60;
+  update({ open: true });
+  const [entry, footerEntry] = await pausePair(panel, footer);
+  entry.currentTime = footerEntry.currentTime = 80;
+  const held = footer.getBoundingClientRect().top;
+  expect(held - rest).toBeGreaterThan(20);
+
+  const controller = vi.mocked(motion.createSheetMotion).mock.results.at(-1)!.value as ReturnType<typeof motion.createSheetMotion>;
+  const hold = vi.spyOn(controller, 'hold');
+  // A zero pointer origin lets the fractional held position cancel exactly.
+  handle.addEventListener('pointerdown', event => {
+    if (velocity === 0) entry.currentTime = Number(entry.effect!.getComputedTiming().duration);
+    Object.defineProperty(event, 'clientY', { value: 0 });
+  }, { once: true });
+  const { time, id } = await acquire(handle);
+  try {
+    const grabbed = hold.mock.results.at(-1)!.value as spring.SpringSample;
+    const y = position - grabbed.value;
+    if (velocity !== 0) {
+      event(handle, 'pointermove', y - 8, time + 200, id);
+      event(handle, 'pointermove', y, time + 210, id);
+    }
+    event(handle, 'pointerup', y, time + 211, id);
+    const release = vi.mocked(spring.playSpring).mock.lastCall!;
+    expect(release[1]).toBe(position);
+    expect(release[3]).toBeCloseTo(velocity, 1);
+    const [panelReturn, footerReturn] = await pausePair(panel, footer);
+    panelReturn.currentTime = footerReturn.currentTime = 0;
+    expect(Math.abs(footer.getBoundingClientRect().top - held)).toBeLessThan(1);
+    let previous = held;
+    for (const phase of [20, 60, 120]) {
+      panelReturn.currentTime = footerReturn.currentTime = phase;
+      const top = footer.getBoundingClientRect().top;
+      expect(top).toBeGreaterThan(rest);
+      expect(top).toBeLessThan(previous);
+      previous = top;
+    }
+    panelReturn.play(); footerReturn.play();
+  } finally { await releaseMouse(); }
+  await settle();
+  expect(footer.getBoundingClientRect().top).toBe(rest);
+  expect(footer.style.transform).toBe('');
+});
+
+it('keeps the active exit and retained frame when the keyboard dismisses', async () => {
+  const { panel, dialog, footer, frame, settle, update } = await mount({ frame: { heightPx: 480, bottomInsetPx: 300 } });
+  await settle();
+  update({ open: false });
+  const [exit, footerExit] = await pausePair(panel, footer);
+  const calls = vi.mocked(spring.playSpring);
+  const count = calls.mock.calls.length;
+  update({ frame: { heightPx: 560, bottomInsetPx: 110 } });
+  update({ frame: { heightPx: 600, bottomInsetPx: 0 } });
+  expect(calls.mock.calls).toHaveLength(count);
+  expect(panel.getAnimations()).toEqual([exit]);
+  expect(footer.getAnimations()).toEqual([footerExit]);
+  expect(frame.getBoundingClientRect().height).toBe(480);
+  expect(frame.getBoundingClientRect().bottom).toBe(700);
+  exit.currentTime = footerExit.currentTime = Number(exit.effect!.getComputedTiming().duration);
+  expect(panel.getBoundingClientRect().top).toBeGreaterThanOrEqual(window.innerHeight);
+  expect(footer.getBoundingClientRect().top).toBeGreaterThanOrEqual(window.innerHeight);
+  await act(async () => { exit.finish(); await exit.finished; });
+  expect(dialog.open).toBe(false);
 });
 
 it('cleans grabbed and settling lifetimes and reduces synchronously, including StrictMode', async () => {
@@ -567,6 +799,20 @@ it('keeps close choice authority while exit waits for a usable layout frame', as
     await expect.poll(() => dialog.open).toBe(false);
     expect(document.activeElement).toBe(external); expect(focus).not.toHaveBeenCalled();
   } finally { controls.remove(); }
+});
+
+it('retries closing on a frame update after the panel becomes visible', async () => {
+  const { panel, dialog, settle, update } = await mount();
+  await settle();
+  panel.style.visibility = 'hidden';
+  update({ open: false });
+  expect(dialog.open).toBe(true);
+  expect(panel.getAnimations()).toHaveLength(0);
+
+  panel.style.visibility = '';
+  update({ frame: { heightPx: 550, bottomInsetPx: 20 } });
+  expect(panel.getAnimations()).toHaveLength(1);
+  await expect.poll(() => dialog.open).toBe(false);
 });
 
 // Formal PR3014 sampler integration; native controls and independent rect/time oracle.

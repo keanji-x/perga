@@ -30,7 +30,7 @@ export function ConversationSurface({ embedded, centerEmptyComposer = false, mob
   const [footerHeight, setFooterHeight] = useState(0);
   const visibleViewport = useVisibleViewport(mobileSheet);
   const restingViewportHeight = useRef(visibleViewport.height);
-  if (!props.open) restingViewportHeight.current = visibleViewport.height;
+  if (!props.open && visibleViewport.bottomInset === 0) restingViewportHeight.current = visibleViewport.height;
   const expandedForInput = (focusInput || editing) && visibleViewport.height < restingViewportHeight.current;
   const [desktopNode, setDesktopNode] = useState<HTMLDivElement | null>(null);
   const [embeddedNode, setEmbeddedNode] = useState<HTMLDivElement | null>(null);

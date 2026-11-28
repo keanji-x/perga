@@ -25,6 +25,10 @@ export type SheetProps = Readonly<{
 type ExitFocus = { node: HTMLDialogElement; revoked: boolean; stop: () => void };
 type Owner = { motion: SheetMotion; gesture: ReturnType<typeof createSheetGesture> };
 
+function exitTarget(panel: HTMLDivElement, frame: SheetFrame) {
+  return panel.getBoundingClientRect().height + Math.max(0, frame.bottomInsetPx);
+}
+
 /** Controlled, nonmodal single Sheet. Owns native lifetime, one paint panel,
  * handle-only leases, retained permissions and one stable footer portal. The
  * caller owns layout frame/contents and refs observe DOM, never write paint. */
@@ -33,6 +37,7 @@ export function Sheet(props: SheetProps) {
   const [host] = useState(() => document.createElement('div'));
   const [dialog, setDialog] = useState<HTMLDialogElement | null>(null);
   const [panel, setPanel] = useState<HTMLDivElement | null>(null);
+  const footerRef = useRef<HTMLDivElement>(null);
   const [present, setPresent] = useState(enabled && open);
   const [attached, setAttached] = useState(false);
   const latest = useRef(props); latest.current = props;
@@ -51,7 +56,7 @@ export function Sheet(props: SheetProps) {
   const clearExitFocus = useCallback(() => {
     exitFocus.current?.stop(); exitFocus.current = null;
   }, []);
-  const requested = useRef<{ enabled: boolean; open: boolean; height: number; bottom: number; panel: HTMLDivElement | null } | null>(null);
+  const requested = useRef<{ enabled: boolean; open: boolean; height: number; bottom: number; panel: HTMLDivElement | null; accepted: boolean } | null>(null);
   const active = enabled && open;
   const reduced = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   const finish = useEffectEvent((token: object, node: HTMLDialogElement) => {
@@ -96,7 +101,7 @@ export function Sheet(props: SheetProps) {
   }, [panel, panelRef]);
   useLayoutEffect(() => {
     if (panel === null) return;
-    const motion = createSheetMotion(panel);
+    const motion = createSheetMotion(panel, () => footerRef.current);
     const gesture = createSheetGesture(motion, () => latest.current.enabled && latest.current.open && Number.isFinite(latest.current.frame.heightPx) && latest.current.frame.heightPx > 0 && panel.isConnected && dialog?.open === true,
       () => latest.current.frame.heightPx, settle, dismiss);
     const current = { motion, gesture }; owner.current = current; requested.current = null;
@@ -111,12 +116,17 @@ export function Sheet(props: SheetProps) {
   }, [panel, dialog, clearExitFocus]);
   useLayoutEffect(() => {
     const prior = requested.current;
-    if (prior?.enabled === enabled && prior.open === open && prior.height === frame.heightPx && prior.bottom === frame.bottomInsetPx && prior.panel === panel) return;
-    requested.current = { enabled, open, height: frame.heightPx, bottom: frame.bottomInsetPx, panel };
+    // An accepted close owns the retained layout and focus intent.
+    if (prior?.enabled === enabled && prior.open === open && prior.panel === panel
+      && (prior.height === frame.heightPx && prior.bottom === frame.bottomInsetPx
+        || prior.accepted && enabled && !open && Number.isFinite(prior.height) && prior.height > 0)) return;
+    const request = { enabled, open, height: frame.heightPx, bottom: frame.bottomInsetPx, panel, accepted: false };
+    requested.current = request;
     const token = {}; intent.current = token;
     if (open || !enabled) clearExitFocus();
     if (!enabled) {
       owner.current?.gesture.revoke();
+      owner.current?.motion.dispose();
       if (dialog?.open) dialog.close();
       setPresent(false); return;
     }
@@ -146,16 +156,19 @@ export function Sheet(props: SheetProps) {
     } else owner.current.gesture.revoke();
     // Frame rebase during a lease retains both q/v and its pointer anchor.
     if (open && owner.current.gesture.dragging()) { owner.current.motion.hold(); return; }
-    owner.current.motion.move(open ? 0 : panel.getBoundingClientRect().height, reduced(), () => { if (!open) finish(token, dialog); });
+    request.accepted = owner.current.motion.move(open ? 0 : exitTarget(panel, retained.current.frame), reduced(),
+      () => { if (!open) finish(token, dialog); }, { exit: !open });
   }, [enabled, open, frame.heightPx, frame.bottomInsetPx, panel, dialog, setPresent, clearExitFocus]);
   useLayoutEffect(() => {
     const preference = window.matchMedia('(prefers-reduced-motion: reduce)');
     const change = () => {
       const current = owner.current;
+      const height = requested.current?.height ?? 0;
       if (!preference.matches || !latest.current.enabled || current === null || panel === null || dialog === null || !dialog.open
-        || !Number.isFinite(latest.current.frame.heightPx) || latest.current.frame.heightPx <= 0) return;
+        || !Number.isFinite(height) || height <= 0) return;
       current.gesture.revoke(); const token = intent.current;
-      current.motion.move(latest.current.open ? 0 : panel.getBoundingClientRect().height, true, () => { if (!latest.current.open) finish(token, dialog); });
+      current.motion.move(latest.current.open ? 0 : exitTarget(panel, retained.current.frame), true,
+        () => { if (!latest.current.open) finish(token, dialog); });
     };
     preference.addEventListener('change', change);
     return () => { preference.removeEventListener('change', change); };
@@ -217,7 +230,7 @@ export function Sheet(props: SheetProps) {
         <div className={styles.content} data-nc-drawer={open || present ? '' : undefined}>{open || present ? visible.children : null}</div>
       </div>
     </div>}
-  </dialog>{createPortal(<div className={enabled ? styles.footer : undefined} data-nc-sheet-footer=""
+  </dialog>{createPortal(<div ref={footerRef} className={enabled ? styles.footer : undefined} data-nc-sheet-footer=""
     inert={enabled && !open} aria-hidden={enabled && !open ? true : undefined}
     style={enabled ? { bottom: visible.frame.bottomInsetPx } : undefined}>{open || (enabled ? present : attached) ? visible.footer : null}</div>, host)}</LayerDepthProvider></>;
 }

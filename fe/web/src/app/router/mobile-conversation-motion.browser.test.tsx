@@ -222,13 +222,28 @@ it('enters the real conversation from a closed mount using visible border-box tr
   expect(panel.getAnimations()).toContain(entry);
 });
 
-it('observes native close before the retained React commit on a fixed completion schedule', async () => {
+it('closes the panel and footer together through the close button, with panel-owned settlement', async () => {
   await page.viewport(320, 844); render(<FocusFixture />);
   const dialog = page.getByRole('dialog', { name: 'Exit focus' }).element() as HTMLDialogElement;
   const panel = document.querySelector<HTMLElement>('[data-nc-mobile-chat-panel]')!;
+  const footer = document.querySelector<HTMLElement>('[data-nc-sheet-footer]')!;
   await expect.poll(() => panel.getAnimations().length).toBe(0);
+  const panelTop = panel.getBoundingClientRect().top;
+  const footerTop = footer.getBoundingClientRect().top;
   act(() => { fireEvent.click(page.getByRole('button', { name: 'Close conversation', exact: true }).element()); });
-  const exit = panel.getAnimations()[0]; exit.pause(); await exit.ready;
+  const [exit] = panel.getAnimations();
+  const [footerExit] = footer.getAnimations();
+  const duration = Number(exit.effect!.getComputedTiming().duration);
+  expect(duration).toBeGreaterThan(0);
+  expect(duration).toBeLessThan(250);
+  expect(footerExit.effect!.getComputedTiming().duration).toBe(duration);
+  expect(footerExit.startTime).toBe(exit.startTime);
+  exit.pause(); footerExit.pause();
+  await Promise.all([exit.ready, footerExit.ready]);
+  exit.currentTime = footerExit.currentTime = duration / 2;
+  const displacement = panel.getBoundingClientRect().top - panelTop;
+  expect(displacement).toBeGreaterThan(20);
+  expect(footer.getBoundingClientRect().top - footerTop).toBeCloseTo(displacement, 2);
   const external = page.getByRole('button', { name: 'External destination' }).element() as HTMLElement;
   external.focus();
   let checkpoint: { open: boolean; content: string | null; focus: Element | null } | undefined;
@@ -239,5 +254,7 @@ it('observes native close before the retained React commit on a fixed completion
   await act(async () => { exit.finish(); await exit.finished; });
   expect(checkpoint).toEqual({ open: false, content: 'Exit focusRetained conversation', focus: external });
   expect(dialog.open).toBe(false); expect(document.activeElement).toBe(external);
+  expect(footerExit.playState).toBe('idle');
+  expect(footer.style.transform).toBe('');
   expect(panel.textContent).not.toContain('Retained conversation');
 });
