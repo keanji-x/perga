@@ -48,9 +48,11 @@ it('retains the requested card when the tools read fails', async () => {
   expect(fixture.router.state.location.search).toHaveProperty('card', 'shell');
 });
 
-it('shows the tools empty state while the aggregate still has a conversation', async () => {
+it('shows the tools empty state when the Workbench is expanded beside a conversation', async () => {
   setupWorkbench();
-  expect((await screen.findByRole('region', { name: 'Workbench' })).textContent).toContain('No tools yet');
+  const workbench = await screen.findByRole('region', { name: 'Workbench' });
+  await userEvent.click(within(workbench).getByRole('button', { name: 'Workbench' }));
+  expect(workbench.textContent).toContain('No tools yet');
   expect(await screen.findByRole('button', { name: 'Conversation Main discussion' })).toBeTruthy();
 });
 

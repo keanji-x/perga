@@ -57,6 +57,7 @@ import { DELETE_CARD_COPY } from '../../features/track/delete-copy.ts';
 import { DeleteConfirmDialog,useDeleteConfirm } from '../../ui/operation-feedback/public.tsx';
 import { useState } from '../../ui/state/public.ts';
 import { useCompactViewport } from '../../ui/viewport/public.ts';
+import { CenteredComposerIntroduction } from '../../ui/drawer/centered-composer-introduction.tsx';
 import {
 useConversationCommands
 } from '../conversations/public.tsx';
@@ -214,7 +215,6 @@ export function TrackRouteBody({
   const routePanel = useRoutePanel();
   /* Whether `?panel=` describes anything at all on this viewport. */
   const compactViewport = useCompactViewport();
-  const centerActive = center !== undefined && !compactViewport;
   /* `?from=` is a property of this visit, so every same-track move hands it back
    * explicitly (`go` clears what it is not given); crossing tracks drops it. */
   const routeFrom = useRouteFrom() ?? undefined;
@@ -231,6 +231,25 @@ export function TrackRouteBody({
   const plannerCard = snapshot.sessions.find(session => session.isLead);
   const registry = useConversationCommands();
   const trackTitle = trackDisplayTitle(track.title);
+  const templateViews = useTrackTemplateViews(transport, track.id, unauthorized);
+  const hasFlowContent = templateViews?.status === 'ready'
+    && templateViews.projection.flow != null
+    && (templateViews.projection.flow.nodes.length > 0 || templateViews.projection.flow.archived.length > 0);
+  const hasTrackReportContent = reportPresentation.hasBody || hasFlowContent;
+  const centerLead = center === undefined && reportEmpty === undefined && !isMemoryTrack
+    && !workspaceWaiting && plannerCard !== undefined && !hasTrackReportContent && !compactViewport;
+  const isUntitled = /^untitled track$/i.test(trackTitle);
+  const effectiveCenter: DailyCenterPresentation | undefined = center ?? (centerLead ? {
+    title: 'Lead',
+    presented: true,
+    onOpenAssistant: () => {},
+    emptyIntroduction: <CenteredComposerIntroduction title={isUntitled ? 'What should this track focus on?' : trackTitle}>
+      Lead compiles your goals, decisions, and progress into a living report here.
+    </CenteredComposerIntroduction>,
+    footerPrefix: null,
+    render: (assistant) => <div className={dailyStyles.center}><div className={dailyStyles.assistant}>{assistant}</div></div>,
+  } : undefined);
+  const centerAvailable = effectiveCenter !== undefined && !compactViewport;
   /* Redeeming the planner-open intent: `armed` is already "this track, this visit",
    * and the planner card's id exists only once the detail has landed. `disarm()`
    * before the open, unconditionally: an intent left armed on this entry would
@@ -330,12 +349,27 @@ export function TrackRouteBody({
         commands: plannerCommands,
       },
     },
-    { workspace: { waiting: workspaceWaiting, notice: workspaceNotice }, defaultRowId: center !== undefined && plannerCard !== undefined ? plannerCard.id : null, onPresent: center?.onOpenAssistant, presented: centerActive ? center?.presented : undefined, embedded: center === undefined ? undefined : { active: centerActive, host: centerHost, footerPrefix: center.footerPrefix, emptyIntroduction: center.emptyIntroduction, label: center.title }, onArchive: conversationMutations.archive, terminal: { workbench, render: () => <TerminalWorkbenchView workbench={workbench} host={trackCardHost}
-      items={workbench.ordinaryHost ? [] : panelItems.filter(item => workbench.cardIds.has(item.card.id))} visible={!compactViewport && workbench.open}
-      onRemove={(id) => cardDeletion.request(id, { kind: 'surface-center' })} /> }, showTrack: false, reportComposer: { ready: true, returnLabel: routePanel === 'conversations' ? 'Conversations' : 'Report' } },
+    {
+      workspace: { waiting: workspaceWaiting, notice: workspaceNotice },
+      defaultRowId: effectiveCenter === undefined ? null : plannerCard?.id ?? null,
+      retainDefaultOnSend: centerLead,
+      onPresent: effectiveCenter?.onOpenAssistant,
+      presented: centerAvailable ? effectiveCenter.presented : undefined,
+      embedDefaultOnly: centerLead,
+      embedded: effectiveCenter === undefined ? undefined : {
+        active: centerAvailable, host: centerHost, footerPrefix: effectiveCenter.footerPrefix,
+        emptyIntroduction: effectiveCenter.emptyIntroduction, label: effectiveCenter.title,
+      },
+      onArchive: conversationMutations.archive,
+      terminal: { workbench, render: () => <TerminalWorkbenchView workbench={workbench} host={trackCardHost}
+        items={workbench.ordinaryHost ? [] : panelItems.filter(item => workbench.cardIds.has(item.card.id))} visible={!compactViewport && workbench.open}
+        onRemove={(id) => cardDeletion.request(id, { kind: 'surface-center' })} /> },
+      showTrack: false,
+      reportComposer: { ready: true, returnLabel: routePanel === 'conversations' ? 'Conversations' : 'Report' },
+    },
   );
+  const centerActive = chat.embeddedActive;
   useMobileConversationOwner(track.id, chat.close);
-  const templateViews = useTrackTemplateViews(transport, track.id, unauthorized);
   /* The cards this route can open, asked of the registry through the list the board
    * draws. A worker card whose kind no entry claims is `unknown` and its `?card=`
    * is bounced; its task keeps its `workerCardId` regardless, because the TASKS
@@ -436,14 +470,17 @@ export function TrackRouteBody({
   };
   const openRelatedTrack = (trackId: string) => { go({ name: 'track', trackId }); };
 
-  const hasFlowContent = templateViews?.status === 'ready'
-    && templateViews.projection.flow != null
-    && (templateViews.projection.flow.nodes.length > 0 || templateViews.projection.flow.archived.length > 0);
-  const hasDailyReportContent = reportPresentation.visible?.preparation.kind !== 'empty' || hasFlowContent;
+  const openConversation = (destination: (typeof rows)[number] | undefined) => {
+    if (destination === undefined) { chat.startConversation(); return; }
+    chat.openConversation(destination);
+  };
+  const emptyState = workspaceWaiting ? 'workspace-waiting'
+    : track.working ? 'working'
+    : rows.some(row => (row.turns ?? 0) > 0 || row.lastTurnCompletedAt != null) ? 'conversing' : 'blank';
 
   const reportRegion = <>
     <TemplateProtocolBar track={track} />
-    {centerActive && !hasDailyReportContent ? null : (
+    {centerActive && !hasTrackReportContent ? null : (
         <TrackReportRegion
         presentation={reportPresentation}
         sourceInsertion={requestedFilePath === null ? sourceInsertion : undefined}
@@ -468,7 +505,10 @@ export function TrackRouteBody({
         fileRoot={track.agentCwd}
         linkPreview={linkPreview}
         outlineEmpty={reportEmpty}
-        empty={reportEmpty === undefined ? <ReportEmpty /> : reportEmpty}
+        empty={reportEmpty === undefined ? (
+          <ReportEmpty state={emptyState} compactViewport={compactViewport}
+            onStartConversation={chat.isOpen ? undefined : () => openConversation(rows.find(row => row.isLead && row.archivedAt == null))} />
+        ) : reportEmpty}
       >{reportEvidence}</TrackReportRegion>
     )}
   </>;
@@ -521,13 +561,16 @@ export function TrackRouteBody({
     <>
     <TrackStage>
     <TrackPage
+      isReportEmpty={report === null}
       fillReading={centerActive}
-      articleMasthead={center === undefined}
+      articleMasthead={effectiveCenter === undefined}
+      hideEmptyPanel={centerLead && centerActive && panelContent === undefined && rows.length <= 1 && panelCards.length === 0
+        && tasks.length === 0 && recentFilePaths.length === 0}
       showWorkspaceIsolation={showWorkspaceIsolation}
       shareLinks={undefined}
       progressDisclosure={progressDisclosure}
       panelHeader={panelContent !== undefined ? <div className={dailyStyles.calendarPanel}>{panelContent}</div> : undefined}
-      panelContent={centerActive && hasDailyReportContent ? <div className={dailyStyles.reportPanel}><PanelModule title="Daily report" icon="file">{reportRegion}</PanelModule></div> : undefined}
+      panelContent={centerActive && hasTrackReportContent ? <div className={dailyStyles.reportPanel}><PanelModule title="Daily report" icon="file">{reportRegion}</PanelModule></div> : undefined}
       mobileReportIntro={mobileReportIntro}
       mobilePanelObscured={!centerActive && chat.isOpen}
       mobileHeaderActionsHost={mobileHeaderActionsHost}
@@ -590,8 +633,8 @@ export function TrackRouteBody({
         : { kind: 'areas', areaId: undefined })}
       report={<>
         {reportHeader}
-        {center !== undefined && <div className={mobileChatStyles.embeddedSlot} hidden={!centerActive}>
-          {center.render(<div ref={setCenterHost} className={mobileChatStyles.embeddedSlot} />)}
+        {effectiveCenter !== undefined && <div className={mobileChatStyles.embeddedSlot} hidden={!centerActive}>
+          {effectiveCenter.render(<div ref={setCenterHost} className={mobileChatStyles.embeddedSlot} />)}
         </div>}
         {!centerActive && <>{(!chat.isOpen || chat.selectedConversationId !== plannerCard?.id) && workspaceNotice}
         {reportRegion}</>}
@@ -603,13 +646,8 @@ export function TrackRouteBody({
       onStartConversation={!centerActive || rows.length > 1 ? chat.startConversation : undefined}
       conversationOpen={!centerActive && chat.isOpen}
       unread={trackReceipts.isTrackUnread(track.id, track.notifiableSessions)}
-      onReply={() => {
-        const destination = priorityConversation(rows, track.cards,
-          row => trackReceipts.isUnread('conversation', row.id, row.lastTurnCompletedAt ?? null));
-        if (destination === undefined) { chat.startConversation(); return; }
-        center?.onOpenAssistant();
-        chat.openConversation(destination);
-      }}
+      onReply={() => openConversation(priorityConversation(rows, track.cards,
+        row => trackReceipts.isUnread('conversation', row.id, row.lastTurnCompletedAt ?? null)))}
       onRenameTrack={isMemoryTrack ? undefined : (title) => trackMutations.patch(track.id, track.areaId, { title }).then(() => undefined)}
       closedControl={closedControl}
       onDeleteTrack={isMemoryTrack ? undefined : (signal) => trackMutations.remove(track.id, track.areaId, signal)}

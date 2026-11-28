@@ -924,6 +924,17 @@ function fieldText(field: HTMLElement): string {
 }
 
 describe('ChatComposer', () => {
+  it('uses a placeholder for the available desktop hints and keeps the short mobile prompt', () => {
+    const onSend = vi.fn();
+    const mentionTrigger = { character: '@', searchSource: { search: () => [], bootstrap: () => [] }, onSelect: () => '' };
+    const { rerender } = render(<ChatComposer onSend={onSend} />);
+    expect(screen.getByText('Write a message, or type / for commands…')).toBeTruthy();
+    rerender(<ChatComposer onSend={onSend} mentionTrigger={mentionTrigger} />);
+    expect(screen.getByText('Write a message, @ to mention, or / for commands…')).toBeTruthy();
+    rerender(<ChatComposer onSend={onSend} mentionTrigger={mentionTrigger} layout="mobile" />);
+    expect(screen.getByText('Write a message…')).toBeTruthy();
+  });
+
   it('uses valid field ARIA when command triggers are added and removed', () => {
     const onSend = vi.fn();
     const onNewConversation = vi.fn();

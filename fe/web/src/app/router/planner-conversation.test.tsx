@@ -2,7 +2,7 @@ import type { SessionItemDto } from '../../../../core/api/perga-v1.ts';
 import { prepareReportDocument } from '../../features/report/document/preparation.ts';
 import { conversationCardId } from './conversation-read-data.ts';
 import { sessionInput,sessionItem,sessionPage,sessionTurn } from './conversation-session-data.ts';
-import { fixtureBootstrap,fixtureSession,fixtureSnapshot,fixtureTrack } from './session-contract-fixture.ts';
+import { fixtureBootstrap,fixtureReport,fixtureSession,fixtureSnapshot,fixtureTrack } from './session-contract-fixture.ts';
 // @vitest-environment jsdom
 import { QueryClient,QueryClientProvider } from '@tanstack/react-query';
 import { RouterProvider } from '@tanstack/react-router';
@@ -33,6 +33,10 @@ const unauthorized = createUnauthorizedChannel({ enqueue: (task) => task() });
 const TRACK_B = { ...TRACK, id: 'w2', title: 'Second track', sortOrder: 2 };
 const CARD_B = { ...CARD, id: 'card-2', trackId: 'w2', title: 'Second chat' };
 const CARD_SAME_TRACK = { ...CARD, id: 'card-other', title: 'Other chat' };
+function trackWithReport(track: ReturnType<typeof fixtureTrack>, sessions: ReturnType<typeof fixtureSession>[]) {
+  return fixtureSnapshot(track, sessions, fixtureReport('# Project notes'));
+}
+
 function ok(body: unknown): ApiTransportResponse {
   return { status: 200, statusText: 'OK', body };
 }
@@ -72,8 +76,8 @@ function setup(reply?: Reply) {
       if (request.path === '/api/v1/areas') return ok([AREA]);
       if (request.path === '/api/v1/areas/c1/tracks?includeClosed=true') return ok([TRACK, TRACK_B]);
       if (request.path === '/api/overlays?entity_kind=track') return ok([]);
-      if (request.path === '/api/v1/tracks/w1') return ok(fixtureSnapshot(TRACK, [fixtureSession(CARD.id, CARD.trackId, { title: CARD.title, isLead: true })]));
-      if (request.path === '/api/v1/tracks/w2') return ok(fixtureSnapshot(TRACK_B, [fixtureSession(CARD_B.id, CARD_B.trackId, { title: CARD_B.title, isLead: true })]));
+      if (request.path === '/api/v1/tracks/w1') return ok(trackWithReport(TRACK, [fixtureSession(CARD.id, CARD.trackId, { title: CARD.title, isLead: true })]));
+      if (request.path === '/api/v1/tracks/w2') return ok(trackWithReport(TRACK_B, [fixtureSession(CARD_B.id, CARD_B.trackId, { title: CARD_B.title, isLead: true })]));
       if ((request.path.includes('/items?') && !request.path.includes('limit=1'))) return ok(historyPage(conversationCardId(request.path), []));
       if (request.path.includes('limit=1')) return ok(historyPage(conversationCardId(request.path), []));
       if (request.path.endsWith('/messages')) return ok(sessionInput(CARD.id));
@@ -131,7 +135,7 @@ async function settleOneSend(requests: ApiRequest[], expected = 1) {
 it('refreshes a mounted agent catalog when its first turn settles', async () => {
   let configured = false;
   const { client } = setup((request) => {
-    if (request.path === '/api/v1/tracks/w1') return ok(fixtureSnapshot(TRACK, [fixtureSession(CARD.id, CARD.trackId, { title: CARD.title, isLead: true, provider: 'opencode' })]));
+    if (request.path === '/api/v1/tracks/w1') return ok(trackWithReport(TRACK, [fixtureSession(CARD.id, CARD.trackId, { title: CARD.title, isLead: true, provider: 'opencode' })]));
     if ((request.path.startsWith('/api/v1/bootstrap?card_id=') || request.path.startsWith('/api/v1/bootstrap?provider='))) return ok(fixtureBootstrap(['opencode'], configured ? ['declared'] : []));
     return undefined;
   });
@@ -147,7 +151,7 @@ it('refreshes a mounted agent catalog when its first turn settles', async () => 
 it('renders local screenshot references from planner history using the agent worktree', async () => {
   const agentRoot = '/tmp/planner-worktree';
   setup((request) => {
-    if (request.path === '/api/v1/tracks/w1') return ok(fixtureSnapshot({ ...TRACK, workspaceDriver: 'vcs-workspace', workspaceSpec: { logicalRoot: '/tmp', worktreePath: agentRoot } }, [fixtureSession(CARD.id, CARD.trackId, { title: CARD.title, isLead: true })]));
+    if (request.path === '/api/v1/tracks/w1') return ok(trackWithReport({ ...TRACK, workspaceDriver: 'vcs-workspace', workspaceSpec: { logicalRoot: '/tmp', worktreePath: agentRoot } }, [fixtureSession(CARD.id, CARD.trackId, { title: CARD.title, isLead: true })]));
     if ((request.path.includes('/items?') && !request.path.includes('limit=1'))) return ok(historyPage(conversationCardId(request.path), [{
       ...messageRows(1)[0],
       payload: { text: `![Screenshot](${agentRoot}/screenshots/page.png)\n\n![Detail](screenshots/detail.png)` },
@@ -306,11 +310,11 @@ it('follows a card swapped out and back, showing the transcript of whichever row
     await screen.findByRole('complementary', { name: 'Planner chat' });
     await waitFor(() => expect(within(drawerElement()).getAllByText(/^reply \d$/)).toHaveLength(3));
 
-    client.setQueryData(queryKeys.trackDetail(TRACK.id), fixtureSnapshot(TRACK, [fixtureSession(CARD_SAME_TRACK.id, CARD_SAME_TRACK.trackId, { title: CARD_SAME_TRACK.title, isLead: true })]));
+    client.setQueryData(queryKeys.trackDetail(TRACK.id), trackWithReport(TRACK, [fixtureSession(CARD_SAME_TRACK.id, CARD_SAME_TRACK.trackId, { title: CARD_SAME_TRACK.title, isLead: true })]));
     fireEvent.click(await screen.findByRole('button', { name: 'Conversation Other chat' }));
     const otherDrawer = await screen.findByRole('complementary', { name: 'Other chat' });
     await waitFor(() => expect(within(otherDrawer).getAllByText(/^reply \d$/)).toHaveLength(3));
-    client.setQueryData(queryKeys.trackDetail(TRACK.id), fixtureSnapshot(TRACK, [fixtureSession(CARD.id, CARD.trackId, { title: CARD.title, isLead: true })]));
+    client.setQueryData(queryKeys.trackDetail(TRACK.id), trackWithReport(TRACK, [fixtureSession(CARD.id, CARD.trackId, { title: CARD.title, isLead: true })]));
     fireEvent.click(await screen.findByRole('button', { name: 'Conversation Planner chat' }));
     await screen.findByRole('complementary', { name: 'Planner chat' });
     await waitFor(() => expect(within(drawerElement()).getAllByText(/^reply \d$/)).toHaveLength(3));
@@ -439,7 +443,7 @@ it('cancels hidden visits and does not let A history schedule work for B or a la
     let releaseNewest!: (response: ApiTransportResponse) => void;
     let release!: (response: ApiTransportResponse) => void;
     const { client, requests } = setup(request => {
-      if (request.path === '/api/v1/tracks/w1') return ok(fixtureSnapshot(TRACK, [fixtureSession(CARD.id, CARD.trackId, { title: CARD.title, isLead: true })]));
+      if (request.path === '/api/v1/tracks/w1') return ok(trackWithReport(TRACK, [fixtureSession(CARD.id, CARD.trackId, { title: CARD.title, isLead: true })]));
       if (!(request.path.includes('/items?') && !request.path.includes('limit=1'))) return undefined;
       if (request.path.includes(CARD_SAME_TRACK.id)) return historyReply([]);
       if (historyPosition(request.path) === '0') return holdNewest ? new Promise(resolve => { releaseNewest = resolve; }) : historyReply(first);
@@ -458,12 +462,12 @@ it('cancels hidden visits and does not let A history schedule work for B or a la
     expect(requests.filter(request => (request.path.includes('/items?') && !request.path.includes('limit=1')))).toHaveLength(2);
     await openConversation();
     await readEarlierWithInput();
-    act(() => { client.setQueryData(queryKeys.trackDetail(TRACK.id), fixtureSnapshot(TRACK, [fixtureSession(CARD_SAME_TRACK.id, CARD_SAME_TRACK.trackId, { title: CARD_SAME_TRACK.title, isLead: true })])); });
+    act(() => { client.setQueryData(queryKeys.trackDetail(TRACK.id), trackWithReport(TRACK, [fixtureSession(CARD_SAME_TRACK.id, CARD_SAME_TRACK.trackId, { title: CARD_SAME_TRACK.title, isLead: true })])); });
     fireEvent.click(await screen.findByRole('button', { name: /Conversation Other chat/ }));
     await screen.findByRole('complementary', { name: 'Other chat' });
     await act(async () => { holdEarlier = false; release(historyReply(middle)); await Promise.resolve(); });
     expect(requests.some(request => historyPosition(request.path) === '61')).toBe(false);
-    act(() => { client.setQueryData(queryKeys.trackDetail(TRACK.id), fixtureSnapshot(TRACK, [fixtureSession(CARD.id, CARD.trackId, { title: CARD.title, isLead: true })])); });
+    act(() => { client.setQueryData(queryKeys.trackDetail(TRACK.id), trackWithReport(TRACK, [fixtureSession(CARD.id, CARD.trackId, { title: CARD.title, isLead: true })])); });
     await openConversation();
     await readEarlierWithInput();
     await waitFor(() => expect(requests.some(request => historyPosition(request.path) === '61')).toBe(true));
@@ -545,7 +549,7 @@ it('ticks the meta row from the run response\'s running turn', async () => {
           return ok(sessionPage(fixtureSession(CARD.id, TRACK.id, { status: 'running' }), [], { ...sessionTurn(CARD.id), startedAtMs: Date.now() - elapsed }));
         }
         return request.path === '/api/v1/tracks/w1'
-          ? ok(fixtureSnapshot(TRACK, [fixtureSession(CARD.id, CARD.trackId, { title: CARD.title, isLead: true })]))
+          ? ok(trackWithReport(TRACK, [fixtureSession(CARD.id, CARD.trackId, { title: CARD.title, isLead: true })]))
           : undefined;
       });
       await openConversationWithTurns();

@@ -28,7 +28,8 @@ export function useTrackReportPresentation(trackId: string, document: ReportDocu
   }, [candidate, presentable, trackId]);
   const report = visible === null ? source.report : visible.preparation.report;
   const outline = visible?.preparation.outline ?? [];
-  return { resource, visible, report, outline, presentable,
+  // A first report still needs its surface for pending and retry UI.
+  return { resource, visible, report, outline, presentable, hasBody: source.report !== null || report !== null,
     current: presentable && resource.status === 'ready' && visible?.source === source };
 }
 

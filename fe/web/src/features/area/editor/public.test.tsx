@@ -61,6 +61,25 @@ describe('AreaEditorForm', () => {
     });
   });
 
+  it('uses the selected folder basename when the Area name is blank', async () => {
+    renderForm({
+      initial: { name: '  ', defaultCwd: null },
+      listDirectory: () => Promise.resolve({ path: '/home/kenji/projects/perga', parent: '/home/kenji/projects', entries: [] }),
+    });
+    await userEvent.click(screen.getByRole('button', { name: 'Default folder: Perga workspace' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Select this directory' }));
+    expect(screen.getByDisplayValue('perga')).toBe(screen.getByRole('textbox', { name: 'Name' }));
+  });
+
+  it('names the SSH target for an Area using a managed workspace', () => {
+    renderForm({
+      initial: { name: 'Remote Area', defaultCwd: null, executionTargetId: 'build-box' },
+      executionTargets: [{ id: 'build-box', label: 'Build machine', kind: 'ssh', isDefault: false, destination: 'dev@example.test', removable: true }],
+    });
+    const folder = screen.getByRole('button', { name: 'Default folder: Perga workspace · Build machine' });
+    expect(folder.textContent).toContain('Default folder · Managed workspace · Build machine');
+  });
+
   it('pushes the directory browser into its host Dialog instead of nesting a modal', async () => {
     renderForm();
     const opener = screen.getByRole('button', { name: 'Default folder: /srv/work' });

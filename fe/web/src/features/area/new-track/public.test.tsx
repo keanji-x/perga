@@ -21,13 +21,13 @@ const LISTING: DirectoryListing = {
 const TASK_LABEL = 'What this track should do';
 const TASK_PLACEHOLDER = 'What should this track do?';
 
-const FOLDER_PLACEHOLDER = 'Perga workspace';
-const FOLDER_CHIP_NAME = `Repo: ${FOLDER_PLACEHOLDER}`;
+const FOLDER_CHIP_NAME = 'Workspace: Managed';
 
 
 function renderForm(overrides: Partial<Parameters<typeof NewTrackForm>[0]> = {}) {
   const onSubmit = vi.fn();
   const props = {
+    area: { id: 'work', name: 'Work' },
     submitting: false,
     error: null,
     initialCwd: null,
@@ -46,7 +46,7 @@ function folderChip(): HTMLButtonElement {
 
 async function pickTheListedFolder(): Promise<void> {
   await userEvent.click(folderChip());
-  await userEvent.click(await screen.findByRole('menuitem', { name: /^Others…/ }));
+  await userEvent.click(await screen.findByRole('menuitem', { name: /^Choose folder…/ }));
   // `Select this directory` only enables once the path input and the listing agree.
   await screen.findByDisplayValue('/srv/app/');
   await userEvent.click(screen.getByRole('button', { name: 'Select this directory' }));
@@ -66,6 +66,14 @@ async function fillMessage(value = 'Ship the thing') {
 
 /** The collapsed Start from control, matched on the label prefix only. */
 describe('NewTrackForm asks only what the track starts from', () => {
+  it('names a single Area in the page header without a switcher', () => {
+    renderForm();
+    const header = screen.getByRole('banner');
+    expect(within(header).getByText('Work')).toBeTruthy();
+    expect(within(header).queryByRole('button')).toBeNull();
+    expect(within(header).queryByRole('heading')).toBeNull();
+  });
+
   /* Create is gated on the sentence and on nothing else, in both directions. */
   it('keeps submit disabled while the composer is empty', () => {
     renderForm();
@@ -123,14 +131,18 @@ describe('NewTrackForm asks only what the track starts from', () => {
     expect(screen.getByText(TASK_PLACEHOLDER)).toBeTruthy();
   });
 
-  it('uses valid field ARIA when mention triggers are added and removed', () => {
+  it('updates the composer placeholder and field ARIA when mention triggers are added and removed', () => {
     const trigger = { character: '@', searchSource: createStaticSource([]), onSelect: () => '' };
     const { props, rerender } = renderForm();
     expect(screen.getByRole('textbox', { name: TASK_LABEL }).getAttribute('aria-multiline')).toBe('true');
     rerender(<NewTrackForm {...props} mentionTrigger={trigger} />);
     expect(screen.getByRole('combobox', { name: TASK_LABEL }).hasAttribute('aria-multiline')).toBe(false);
+    const placeholder = screen.getByText('What should this track do? Type @ for templates or tracks…');
+    expect(placeholder.closest('[data-nc-new-track-message]')).not.toBeNull();
+    expect(screen.queryByText('Type @ for templates or tracks', { exact: true })).toBeNull();
     rerender(<NewTrackForm {...props} />);
     expect(screen.getByRole('textbox', { name: TASK_LABEL }).getAttribute('aria-multiline')).toBe('true');
+    expect(screen.getByText(TASK_PLACEHOLDER)).toBeTruthy();
   });
 
   it('does not swallow Enter or trap Tab when an unmarked static trigger settles empty', async () => {
@@ -227,7 +239,7 @@ describe('NewTrackForm asks only what the track starts from', () => {
     // The chip opens on Enter rather than creating a track.
     folderChip().focus();
     await userEvent.keyboard('{Enter}');
-    expect(await screen.findByRole('menuitem', { name: /^Others…/ })).toBeTruthy();
+    expect(await screen.findByRole('menuitem', { name: /^Choose folder…/ })).toBeTruthy();
     expect(onSubmit).not.toHaveBeenCalled();
   });
 
@@ -262,7 +274,7 @@ describe('NewTrackForm asks only what the track starts from', () => {
     await fillMessage('Ship the thing');
     folderChip().focus();
     await userEvent.keyboard('{Enter}');
-    expect(await screen.findByRole('menuitem', { name: /^Others…/ })).toBeTruthy();
+    expect(await screen.findByRole('menuitem', { name: /^Choose folder…/ })).toBeTruthy();
     expect(onSubmit).not.toHaveBeenCalled();
   });
 
@@ -305,7 +317,7 @@ describe('The folder is optional, and its absence is the managed default', () =>
     // Nothing about the folder gates the submit, before or after the picker has opened.
     expect(submitButton().getAttribute('aria-disabled')).toBeNull();
     await userEvent.click(folderChip());
-    await userEvent.click(await screen.findByRole('menuitem', { name: /^Others…/ }));
+    await userEvent.click(await screen.findByRole('menuitem', { name: /^Choose folder…/ }));
     await screen.findByDisplayValue('/srv/app/');
     await userEvent.keyboard('{Escape}');
     await userEvent.click(submitButton());
@@ -332,7 +344,7 @@ describe('The folder is optional, and its absence is the managed default', () =>
     renderForm();
     expect(screen.queryByRole('dialog')).toBeNull();
     await userEvent.click(folderChip());
-    await userEvent.click(await screen.findByRole('menuitem', { name: /^Others…/ }));
+    await userEvent.click(await screen.findByRole('menuitem', { name: /^Choose folder…/ }));
     const picker = await screen.findByRole('dialog');
     expect(picker.getAttribute('aria-modal')).toBe('true');
     expect(picker.getAttribute('aria-label')).toBe('Choose a directory');
@@ -380,7 +392,7 @@ describe('The folder is optional, and its absence is the managed default', () =>
   it('reads the directory through the injected port', async () => {
     const { props } = renderForm();
     await userEvent.click(folderChip());
-    await userEvent.click(await screen.findByRole('menuitem', { name: /^Others…/ }));
+    await userEvent.click(await screen.findByRole('menuitem', { name: /^Choose folder…/ }));
     await screen.findByDisplayValue('/srv/app/');
     expect(props.listDirectory).toHaveBeenCalled();
   });

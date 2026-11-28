@@ -1,6 +1,43 @@
 /* Centered layout and flat composer treatment belong to ui/drawer/centered-composer.
    This module owns New Track’s content, preferences and trigger menu. */
 @layer features {
+  .page {
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 auto;
+    min-block-size: 0;
+    inline-size: 100%;
+    padding-inline: var(--space-5);
+  }
+
+  .stage { padding-inline: 0; }
+
+  .areaSwitcher {
+    min-inline-size: 0;
+    margin-inline-start: calc(-1 * var(--space-2));
+  }
+
+  .areaSwitcher > button { padding-inline-start: var(--space-2); }
+
+  .areaLabel, .areaSwitcher > button {
+    color: var(--text);
+    font: var(--type-page-title);
+    letter-spacing: var(--type-page-title-tracking);
+  }
+
+  .areaLabel {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+    min-inline-size: 0;
+  }
+
+  .areaLabel > span {
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+
   .editor {
     display: flex;
     flex-direction: column;
@@ -60,6 +97,9 @@
   }
 
   @media (width < 60rem) {
+    .header { display: none; }
+    .page { padding-inline: var(--space-3); }
+
     .input > [contenteditable],
     .input > [aria-hidden="true"] {
       font-size: var(--font-step-3-size);

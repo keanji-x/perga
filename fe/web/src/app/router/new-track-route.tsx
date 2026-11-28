@@ -4,6 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import { useCallback,useEffect,useRef } from 'react';
 import type { ApiTransportPort } from '../../../../core/api/types.ts';
 import type { UnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
+import { visibleAreas, type Area } from '../../../../core/domain/area.ts';
 import { availabilityOf,permissionModesForProvider } from '../../../../core/domain/agent-providers.ts';
 import { ApiError,classifyFailure,NotSentError,refusedText,writeFailureOf } from '../../../../core/domain/failure-class.ts';
 import { resolvePermissionControl } from '../../../../core/domain/planner-permission-mode.ts';
@@ -48,11 +49,12 @@ export function NewTrackRoute({ transport, unauthorized, memoryEnabled = true }:
     return <ErrorBox message="This area could not be found." onRetry={() => go({ name: 'today' })} />;
   }
   return <NewTrackEditor key={session.area.id} transport={transport} unauthorized={unauthorized} memoryEnabled={memoryEnabled}
-    workspace={workspace} session={session} store={store} />;
+    workspace={workspace} area={area} session={session} store={store} />;
 }
 
-function NewTrackEditor({ transport, unauthorized, memoryEnabled, workspace, session, store }: RouteProps & {
+function NewTrackEditor({ transport, unauthorized, memoryEnabled, workspace, area, session, store }: RouteProps & {
   workspace: Workspace;
+  area: Area | undefined;
   session: NewTrackSession;
   store: ReturnType<typeof useNewTrackSession>['store'];
 }) {
@@ -94,7 +96,7 @@ function NewTrackEditor({ transport, unauthorized, memoryEnabled, workspace, ses
     ? savedProvider : availability.data?.find((entry) => entry.status === 'ready')?.provider ?? 'codex';
   const provider = session.request?.body.provider ?? session.provider ?? defaultProvider;
   const available = workspace.areasError === null && !workspace.areasLoading
-    && workspace.areas.some((area) => area.id === areaId);
+    && area !== undefined;
   const liveRef = useRef(true);
   useEffect(() => {
     liveRef.current = true;
@@ -207,6 +209,9 @@ function NewTrackEditor({ transport, unauthorized, memoryEnabled, workspace, ses
   });
 
   return <NewTrackForm
+    area={area ?? session.area}
+    areas={visibleAreas(workspace.areas)}
+    onSelectArea={(nextAreaId) => go({ name: 'new-track', areaId: nextAreaId })}
     workspaceOptions={{ cwd: optionCwd, targetId,
       result: !workspaceOptionsQuery.isError ? workspaceOptionsQuery.data ?? null : null }}
     readNotice={workspace.areasLoading ? <Banner status="info" role="status" title="Loading Area…"

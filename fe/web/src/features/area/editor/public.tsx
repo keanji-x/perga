@@ -10,8 +10,9 @@ import { useId, type FormEvent, type RefObject } from 'react';
 
 import type { CreateExecutionTargetBody, ExecutionTargetDto } from '../../../../../core/domain/area.ts';
 import type { ListDirectory } from '../../../ui/directory-browser/public.tsx';
+import { Icon } from '../../../ui/icon/public.tsx';
 import { useState } from '../../../ui/state/public.ts';
-import { FolderPill } from '../default-pills/public.tsx';
+import { basenameOf, FolderClearButton, folderLabelParts } from '../default-pills/public.tsx';
 import { DirectoryPicker } from '../directory-picker.tsx';
 import styles from './area-editor.module.css';
 
@@ -62,7 +63,14 @@ export function AreaEditorForm(props: AreaEditorFormProps) {
   const [targetId, setTargetId] = useState(initial.executionTargetId ?? 'local');
   const [browsing, setBrowsing] = useState(false);
   const normalizedName = name.trim();
-  const resolvedTargetLabel = executionTargets?.find((target) => target.id === targetId)?.label ?? targetId;
+  const targetLabel = targetId === 'local' ? undefined : executionTargets?.find((target) => target.id === targetId)?.label ?? targetId;
+  const folderBound = cwd !== '';
+  const targetSuffix = targetLabel === undefined ? '' : ` · ${targetLabel}`;
+  const { accessibleName } = folderLabelParts({
+    value: cwd, controlLabel: 'Default folder', emptyLabel: `Perga workspace${targetSuffix}`, modeSuffix: targetLabel,
+  });
+  const folderDetail = `${folderBound ? cwd : 'Managed workspace'}${targetSuffix}`;
+  const fieldsDisabled = submitting || locked;
 
   const submit = (event: FormEvent<HTMLElement>) => {
     event.preventDefault();
@@ -80,6 +88,7 @@ export function AreaEditorForm(props: AreaEditorFormProps) {
   return (
     <VStack as="form" gap={3} className={styles.form} onSubmit={submit}>
       {error !== null && <Banner status="error" role="alert" title={error} data-nc-area-editor-error />}
+      <p className={styles.subtitle}>Group related tracks under a shared workspace.</p>
       <TextInput
         {...NATIVE_REQUIRED_INPUT_PROPS}
         ref={nameInputRef}
@@ -89,38 +98,35 @@ export function AreaEditorForm(props: AreaEditorFormProps) {
         value={name}
         onChange={setName}
         width="100%"
-        isDisabled={submitting || locked}
+        isDisabled={fieldsDisabled}
       />
-      <HStack gap={1} align="center" className={styles.controlRow}>
-        <HStack gap={1} align="center" className={styles.pills}>
-          <FolderPill
-            buttonId={folderId}
-            value={cwd}
-            emptyLabel={targetId !== 'local' ? resolvedTargetLabel : undefined}
-            modeSuffix={targetId !== 'local' ? resolvedTargetLabel : undefined}
-            controlLabel="Default folder"
-            clearLabel="Use a new Perga workspace"
-            isDisabled={submitting || locked}
-            onBrowse={() => setBrowsing(true)}
-            onClear={() => {
-              setCwd('');
-              if (targetEditable) setTargetId('local');
-            }}
-          />
-        </HStack>
-        <HStack gap={1} justify="end" className={styles.actions}>
-          <Button type="button" variant="ghost" label={cancelLabel} isDisabled={submitting} onClick={onCancel} />
-          <Button
-            type="submit"
-            variant="primary"
-            label={submitting ? 'Saving…' : submitLabel}
-            isDisabled={normalizedName === ''}
-            isLoading={submitting}
-            tooltip={submitting
-              ? 'Saving in progress'
-              : normalizedName === '' ? 'Enter a name to save' : submitLabel}
-          />
-        </HStack>
+      <HStack gap={1} align="center">
+        <button type="button" className={styles.folderRow} id={folderId} aria-label={accessibleName}
+          aria-haspopup="dialog" title={accessibleName} disabled={fieldsDisabled} onClick={() => setBrowsing(true)}>
+          <Icon name="folder" size="sm" />
+          <span className={styles.folderText}>
+            <span className={styles.folderName}>{folderBound ? basenameOf(cwd) : 'Perga workspace'}</span>
+            <span className={styles.folderDetail}>Default folder · {folderDetail}</span>
+          </span>
+          <span className={styles.folderCue}>{folderBound ? 'Change' : 'Choose'}</span>
+        </button>
+        {folderBound && <FolderClearButton label="Use a new Perga workspace" isDisabled={fieldsDisabled} onClear={() => {
+          setCwd('');
+          if (targetEditable) setTargetId('local');
+        }} />}
+      </HStack>
+      <HStack gap={1} justify="end">
+        <Button type="button" variant="ghost" label={cancelLabel} isDisabled={submitting} onClick={onCancel} />
+        <Button
+          type="submit"
+          variant="primary"
+          label={submitting ? 'Saving…' : submitLabel}
+          isDisabled={normalizedName === ''}
+          isLoading={submitting}
+          tooltip={submitting
+            ? 'Saving in progress'
+            : normalizedName === '' ? 'Enter a name to save' : submitLabel}
+        />
       </HStack>
       <DirectoryPicker
         open={browsing}
@@ -134,6 +140,7 @@ export function AreaEditorForm(props: AreaEditorFormProps) {
         onCancel={() => setBrowsing(false)}
         onSelect={(path, pickedTargetId) => {
           setCwd(path);
+          setName((current) => current.trim() === '' ? basenameOf(path) : current);
           if (targetEditable && pickedTargetId !== undefined) {
             setTargetId(pickedTargetId);
           }

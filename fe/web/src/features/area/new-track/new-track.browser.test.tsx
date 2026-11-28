@@ -18,6 +18,7 @@ afterEach(() => { cleanup(); document.body.replaceChildren(); });
 function renderForm() {
   return render(
     <NewTrackForm
+      area={{ id: 'work', name: 'Work' }}
       submitting={false}
       error={null}
       initialCwd={null}
@@ -76,5 +77,5 @@ describe('the composer focus ring', () => {
 });
 
 function trigger(): HTMLButtonElement {
-  return screen.getByRole('button', { name: 'Repo: Perga workspace' });
+  return screen.getByRole('button', { name: 'Workspace: Managed' });
 }

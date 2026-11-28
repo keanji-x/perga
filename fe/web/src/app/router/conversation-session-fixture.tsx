@@ -1,6 +1,6 @@
 import type { SessionItemDto, SessionTurnDto } from '../../../../core/api/perga-v1.ts';
 import { renderDailyFixture } from './daily-planner-fixture.tsx';
-import { fixtureSession, fixtureSnapshot, fixtureTrack } from './session-contract-fixture.ts';
+import { fixtureReport, fixtureSession, fixtureSnapshot, fixtureTrack } from './session-contract-fixture.ts';
 
 import { sessionPage, sessionReply } from './conversation-session-data.ts';
 
@@ -18,7 +18,8 @@ export function renderSessionFixture(options: NonNullable<Parameters<typeof rend
       templates: [], areas: [],
     });
     if (request.method === 'GET' && request.path === '/api/v1/tracks/daily') return sessionReply(fixtureSnapshot(
-      fixtureTrack('daily', { title: 'Renamed daily Track', leadSessionId: 'daily-planner' }), [...sessions]));
+      fixtureTrack('daily', { title: 'Renamed daily Track', leadSessionId: 'daily-planner' }), [...sessions],
+      fixtureReport(options.reportBody ?? '# Project notes')));
     if (request.method === 'GET' && request.path === '/api/v1/tracks/daily/sessions') return sessionReply([...sessions]);
     const match = /^\/api\/v1\/sessions\/([^/]+)\/items\?/.exec(request.path);
     if (match !== null) {

@@ -102,12 +102,12 @@ it('keeps actual AddCardMenu focus trigger separate from the NewCard source', as
   await page.screenshot({ path: 'test-results/dialog-card.png' });
 });
 it('opens the actual NewTrack folder picker from its inline folder host', async () => {
-  render(<NewTrackForm submitting={false} error={null}
+  render(<NewTrackForm area={{ id: 'work', name: 'Work' }} submitting={false} error={null}
     initialCwd={null}
     listDirectory={() => Promise.resolve({ path: '/', parent: null, entries: [] })} onSubmit={vi.fn()} />);
-  const folder = screen.getByRole('button', { name: /^Repo:/ });
+  const folder = screen.getByRole('button', { name: 'Workspace: Managed' });
   await userEvent.click(folder);
-  await page.getByRole('menuitem', { name: /^Others…/ }).click();
+  await page.getByRole('menuitem', { name: /^Choose folder…/ }).click();
   expect(folder.parentElement!.getAnimations()).toHaveLength(0);
   const node = screen.getByRole('dialog');
   expect(node.getAnimations()).toHaveLength(1);

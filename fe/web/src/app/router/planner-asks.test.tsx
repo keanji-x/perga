@@ -1,4 +1,4 @@
-import { fixtureSnapshot, fixtureSession, fixtureTrack } from './session-contract-fixture.ts';
+import { fixtureReport, fixtureSnapshot, fixtureSession, fixtureTrack } from './session-contract-fixture.ts';
 import { conversationCardId } from './conversation-read-data.ts';
 import { prepareReportDocument } from '../../features/report/document/preparation.ts';
 // @vitest-environment jsdom
@@ -36,7 +36,7 @@ function setup() {
       if (request.path === '/api/v1/areas') return ok([AREA]);
       if (request.path === '/api/v1/areas/c1/tracks?includeClosed=true') return ok([currentTrack]);
       if (request.path === '/api/v1/tracks/w1') return ok({
-        ...fixtureSnapshot(currentTrack, [fixtureSession(PLANNER.id, TRACK.id, { title: PLANNER.title, isLead: true }), ASSISTANT]),
+        ...fixtureSnapshot(currentTrack, [fixtureSession(PLANNER.id, TRACK.id, { title: PLANNER.title, isLead: true }), ASSISTANT], fixtureReport('# Release notes')),
         openAsks: [ASK],
       });
       if (request.path === '/api/v1/sessions/planner-1/interactions/41/respond') return ok({ id: '41', kind: 'ask' });

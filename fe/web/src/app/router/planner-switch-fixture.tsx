@@ -1,5 +1,5 @@
 import { sessionPage, sessionItem } from './conversation-session-data.ts';
-import { fixtureTrack, fixtureSession, fixtureSnapshot } from './session-contract-fixture.ts';
+import { fixtureReport, fixtureTrack, fixtureSession, fixtureSnapshot } from './session-contract-fixture.ts';
 import type { ApiRequest, ApiTransportResponse } from '../../../../core/api/types.ts';
 import { renderDailyFixture } from './daily-planner-fixture.tsx';
 import { conversationCardId } from './conversation-read-data.ts';
@@ -16,7 +16,7 @@ export function renderPlannerSwitchFixture(options: Readonly<{
     title: index === 0 ? 'Daily Planner conversation' : 'Other conversation', isLead: switched ? index === 1 : index === 0,
   }));
   const receipt = () => ok(track());
-  const snapshot = () => fixtureSnapshot(track(), sessions());
+  const snapshot = () => fixtureSnapshot(track(), sessions(), fixtureReport('# Project notes'));
   const fixture = renderDailyFixture({ initial: options.initial ?? '/track/daily?panel=conversations', extraPlanner: true,
     reply: async request => {
       const custom = await options.reply?.(request);

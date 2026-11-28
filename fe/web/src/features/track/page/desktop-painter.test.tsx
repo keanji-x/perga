@@ -80,7 +80,8 @@ describe('the desktop painter is a faithful projection of a Cards module', () =>
     expect(checkProjection(makeDesktopPainter({}), [cardsModule], mount)).toEqual([]);
   });
 
-  it('with zero rows', () => {
-    expect(checkProjection(makeDesktopPainter({}), [emptyCards], mount)).toEqual([]);
+  it('with zero rows after expanding the Workbench', () => {
+    const painter = makeDesktopPainter({ workbenchDisclosure: { open: true, onOpenChange: vi.fn() } });
+    expect(checkProjection(painter, [emptyCards], mount)).toEqual([]);
   });
 });

@@ -10,7 +10,7 @@ afterEach(cleanup);
 
 it('keeps workspace isolation implicit on touch at 390px', async () => {
   await page.viewport(390, 844);
-  render(<ThemeProvider><NewTrackForm submitting={false} error={null}
+  render(<ThemeProvider><NewTrackForm area={{ id: 'work', name: 'Work' }} submitting={false} error={null}
     initialCwd={null}
     listDirectory={vi.fn()} onSubmit={vi.fn()} /></ThemeProvider>);
   await expect.element(page.getByRole('button', { name: /Workspace isolation/ })).not.toBeInTheDocument();
@@ -19,7 +19,7 @@ it('keeps workspace isolation implicit on touch at 390px', async () => {
 
 it('hands Folder touch ownership to the directory modal and restores reachable options', async () => {
   await page.viewport(390, 844);
-  render(<ThemeProvider><DepthFeedback /><NewTrackForm submitting={false} error={null}
+  render(<ThemeProvider><DepthFeedback /><NewTrackForm area={{ id: 'work', name: 'Work' }} submitting={false} error={null}
     initialCwd="/repo"
     listDirectory={path => Promise.resolve({ path: path ?? '/repo', parent: '/', entries: Array.from({ length: 16 }, (_, i) => ({
       name: `folder-${i}`, path: `/repo/folder-${i}`, isDirectory: true,
@@ -31,7 +31,7 @@ it('hands Folder touch ownership to the directory modal and restores reachable o
       await expect.element(page.getByRole('dialog', { name: 'Track options', exact: true })).toBeVisible();
     }
     await commands.tap('button[aria-label^="Repo:"]');
-    await page.getByRole('menuitem', { name: /^Others…/ }).click();
+    await page.getByRole('menuitem', { name: /^Change folder…/ }).click();
     const dialog = page.getByRole('dialog', { name: 'Choose a directory' });
     await expect.element(dialog).toBeVisible();
     await expect.poll(() => document.querySelectorAll(':popover-open').length).toBe(0);

@@ -1,7 +1,7 @@
 import { DEPLOYMENT_OWNER_USER_ID } from '../../../../core/api/auth.ts';
 import { CurrentUserScope } from '../auth/current-user.tsx';
 import { sessionItemsPageDtoToConversationPage } from '../../../../core/domain/conversation-display.ts';
-import { fixtureBootstrap, fixtureTrack, fixtureSession, fixtureSnapshot, fixtureCreation } from './session-contract-fixture.ts';
+import { fixtureBootstrap, fixtureReport, fixtureTrack, fixtureSession, fixtureSnapshot, fixtureCreation } from './session-contract-fixture.ts';
 import type { AgentSessionDto, SessionItemDto } from '../../../../core/api/perga-v1.ts';
 import { latestHistory } from '../conversations/history.ts';
 import { conversationCardId } from './conversation-read-data.ts';
@@ -58,6 +58,10 @@ const BARE_CONVERSATIONS = '/api/v1/tracks/w2/sessions';
 const isHistoryPath = (path: string) => path.includes('/items?') && !path.includes('limit=1');
 
 type Row = AgentSessionDto;
+function trackWithReport(sessions: Row[]) {
+  return fixtureSnapshot(TRACK, sessions, fixtureReport('# Project notes'));
+}
+
 function assistantRow(overrides: Partial<Row> = {}): Row {
   return { ...ASSISTANT_CARD, ...overrides };
 }
@@ -120,7 +124,7 @@ function setup(reply?: Reply, storage?: UiPreferenceStorage, receipts?: ReadRece
       if (request.path === '/api/v1/areas') return ok([AREA]);
       if (request.path === '/api/v1/areas/c1/tracks?includeClosed=true') return ok([TRACK, BARE_TRACK]);
       if (request.path === '/api/overlays?entity_kind=track') return ok([]);
-      if (request.path === '/api/v1/tracks/w1') return ok(fixtureSnapshot(TRACK, [PLANNER_CARD, assistantRow()]));
+      if (request.path === '/api/v1/tracks/w1') return ok(trackWithReport([PLANNER_CARD, assistantRow()]));
       if (request.path === '/api/v1/tracks/w2') return ok(fixtureSnapshot(BARE_TRACK));
       if (isHistoryPath(request.path)) return ok(historyPage(conversationCardId(request.path), []));
       /* Both card endpoints echo the card in the path, as the kernel does; a fixed id
@@ -292,7 +296,7 @@ it('lists the track\'s assistant conversations beside the planner one', async ()
 
 it('uses fresh server metadata for both unopened conversations without eager history', async () => {
     const { requests } = setup((request) => {
-      if (request.path === '/api/v1/tracks/w1') return ok(fixtureSnapshot(TRACK, [{ ...PLANNER_CARD, title: 'Original planner input' }, assistantRow({ title: 'Original assistant input' })]));
+      if (request.path === '/api/v1/tracks/w1') return ok(trackWithReport([{ ...PLANNER_CARD, title: 'Original planner input' }, assistantRow({ title: 'Original assistant input' })]));
       if (isHistoryPath(request.path)) return ok(historyPage(conversationCardId(request.path), [sessionItem(ASSISTANT_CARD.id, 900, 'Latest page input', 'user')]));
       return undefined;
     });
@@ -310,7 +314,7 @@ it('uses fresh server metadata for both unopened conversations without eager his
 it('keeps the name derived from confirmed turns after the drawer closes', async () => {
     let historyAvailable = true;
     const { client } = setup((request) => request.path === '/api/v1/tracks/w1'
-      ? ok(fixtureSnapshot(TRACK, [PLANNER_CARD, ...[assistantRow({ title: 'Named from history' })]]))
+      ? ok(trackWithReport([PLANNER_CARD, ...[assistantRow({ title: 'Named from history' })]]))
       : isHistoryPath(request.path)
       ? historyAvailable
         ? ok(historyPage(conversationCardId(request.path), [sessionItem(ASSISTANT_CARD.id, 1, 'Named from history', 'user')]))
@@ -603,7 +607,7 @@ it('[F5] reconciles a resumed send whose first attempt was stored and drained, a
     let accept = false;
     let title: string | null = null;
     const { client } = setup((request) => {
-      if (request.path === '/api/v1/tracks/w1') return ok(fixtureSnapshot(TRACK, [PLANNER_CARD, ...[assistantRow({ title })]]));
+      if (request.path === '/api/v1/tracks/w1') return ok(trackWithReport([PLANNER_CARD, ...[assistantRow({ title })]]));
       if (isHistoryPath(request.path)) return ok(historyPage(conversationCardId(request.path), rows));
       if (!request.path.endsWith('/messages')) return undefined;
       if (!accept) throw new Error('response dropped');
@@ -713,7 +717,7 @@ it('lets another conversation be written while one conversation’s send is out'
     let answer!: () => void;
     const answered = new Promise<void>((done) => { answer = done; });
     const { requests } = scriptedSetup(() => storedTurn(), async request => {
-      if (request.path === '/api/v1/tracks/w1') return ok(fixtureSnapshot(TRACK, [PLANNER_CARD, ...[assistantRow({ title: 'Original prompt' })]]));
+      if (request.path === '/api/v1/tracks/w1') return ok(trackWithReport([PLANNER_CARD, ...[assistantRow({ title: 'Original prompt' })]]));
       if (request.path.endsWith('/messages')) { await answered; return inputAccepted(); }
       return undefined;
     });
@@ -845,7 +849,7 @@ it('keeps an in-flight draft locked across a route remount', async () => {
     let landed: Row | null = null;
     const { requests, router } = setup((request) => {
       if (request.path === '/api/v1/tracks/w1' && request.method === 'GET' && landed !== null) {
-        return ok(fixtureSnapshot(TRACK, [PLANNER_CARD, ...[assistantRow(), landed]]));
+        return ok(trackWithReport([PLANNER_CARD, ...[assistantRow(), landed]]));
       }
       if (request.path !== CONVERSATIONS || request.method !== 'POST') return undefined;
       return creates(requests, CONVERSATIONS).length === 1
@@ -1146,7 +1150,7 @@ it('uses a spinner while a closed conversation runs, a blue unread dot on comple
        queued. Working follows the kernel's per-card verdict, not the row's session state. */
   let rows = [assistantRow({ updatedAtMs: 30, lastNotifiableTurnAtMs: 30 })];
   const { client } = setup(request => {
-    if (request.method === 'GET' && request.path === '/api/v1/tracks/w1') return ok(fixtureSnapshot(TRACK, [PLANNER_CARD, ...rows]));
+    if (request.method === 'GET' && request.path === '/api/v1/tracks/w1') return ok(trackWithReport([PLANNER_CARD, ...rows]));
     return undefined;
   }, undefined, receiptKernel());
   const refetch = () => act(async () => {
@@ -1205,7 +1209,7 @@ it('keeps new replies unread while reopening cached history is still loading', a
   let release!: (response: ApiTransportResponse) => void;
   const pending = new Promise<ApiTransportResponse>(resolve => { release = resolve; });
   const { client, requests } = setup(request => {
-    if (request.method === 'GET' && request.path === '/api/v1/tracks/w1') return ok(fixtureSnapshot(TRACK, [PLANNER_CARD, ...rows]));
+    if (request.method === 'GET' && request.path === '/api/v1/tracks/w1') return ok(trackWithReport([PLANNER_CARD, ...rows]));
     if (isHistoryPath(request.path)) return holdHistory ? pending
       : ok(historyPage(conversationCardId(request.path), [sessionItem(ASSISTANT_CARD.id, 20, 'Previously read answer.')]));
     return undefined;
@@ -1233,7 +1237,7 @@ it('keeps new replies unread while reopening cached history is still loading', a
 
 it('keeps a nonempty conversation read after closing when activity is newer than the last reply', async () => {
   setup(request => {
-    if (request.path === '/api/v1/tracks/w1') return ok(fixtureSnapshot(TRACK, [PLANNER_CARD, ...[assistantRow({ title: 'Review receipt', updatedAtMs: 50, lastNotifiableTurnAtMs: 50 })]]));
+    if (request.path === '/api/v1/tracks/w1') return ok(trackWithReport([PLANNER_CARD, ...[assistantRow({ title: 'Review receipt', updatedAtMs: 50, lastNotifiableTurnAtMs: 50 })]]));
     if (isHistoryPath(request.path)) return ok(historyPage(conversationCardId(request.path), [sessionItem(ASSISTANT_CARD.id, 20, 'Read this completed answer.')]));
     return undefined;
   });
@@ -1262,7 +1266,7 @@ it('compacts each selected conversation while another compaction request is pend
   const b = assistantRow({ id: 'conv-assistant-2', title: 'Compact B' });
   const answers = new Map<string, (response: ApiTransportResponse) => void>();
   const { requests } = setup((request) => {
-    if (request.path === '/api/v1/tracks/w1') return ok(fixtureSnapshot(TRACK, [PLANNER_CARD, ...[a, b]]));
+    if (request.path === '/api/v1/tracks/w1') return ok(trackWithReport([PLANNER_CARD, ...[a, b]]));
     if (request.path.endsWith('/control')) {
       return new Promise<ApiTransportResponse>((resolve) => { answers.set(pathCardId(request.path), resolve); });
     }
@@ -1288,7 +1292,7 @@ it('compacts each selected conversation while another compaction request is pend
 it('retires pending metadata after agent-only history on open and close', async () => {
   let title: string | null = 'First pending';
   const { client } = setup(request => {
-    if (request.path === '/api/v1/tracks/w1') return ok(fixtureSnapshot(TRACK, [PLANNER_CARD, ...[assistantRow({ title })]]));
+    if (request.path === '/api/v1/tracks/w1') return ok(trackWithReport([PLANNER_CARD, ...[assistantRow({ title })]]));
     if (isHistoryPath(request.path)) return ok(historyPage(conversationCardId(request.path), [sessionItem(ASSISTANT_CARD.id, 1, 'Reply to a system-only turn')]));
     return undefined;
   });
@@ -1309,7 +1313,7 @@ it('keeps first confirmed server metadata through close and a cold history read'
   let confirmed = false;
   let holdHistory = false;
   const { client } = setup(request => {
-    if (request.path === '/api/v1/tracks/w1') return ok(fixtureSnapshot(TRACK, [PLANNER_CARD, ...[assistantRow({ title: confirmed ? 'First confirmed sentence' : null })]]));
+    if (request.path === '/api/v1/tracks/w1') return ok(trackWithReport([PLANNER_CARD, ...[assistantRow({ title: confirmed ? 'First confirmed sentence' : null })]]));
     if (isHistoryPath(request.path)) return holdHistory ? new Promise(() => undefined)
       : ok(historyPage(conversationCardId(request.path), confirmed ? [sessionItem(ASSISTANT_CARD.id, 1, 'First confirmed sentence', 'user')] : []));
     if (request.path.endsWith('/messages')) {
@@ -1851,7 +1855,7 @@ it('does not loop failed acknowledgements when a conversation with no output is 
   ] });
   receipts.capWrites(8);
   const { client } = setup(request => request.path === '/api/v1/tracks/w1'
-    ? ok(fixtureSnapshot(TRACK, [PLANNER_CARD, assistantRow({ lastNotifiableTurnAtMs: null })])) : undefined,
+    ? ok(trackWithReport([PLANNER_CARD, assistantRow({ lastNotifiableTurnAtMs: null })])) : undefined,
   undefined, receipts);
   fireEvent.click(await screen.findByRole('button', { name: /^Conversation Assistant(?:,|$)/ }));
   await screen.findByRole('combobox', { name: 'Message' });
@@ -1869,7 +1873,7 @@ it('keeps a visible conversation without output manually unread after receipt re
     { kind: 'conversation', targetId: ASSISTANT_CARD.id, readThroughMs: 0, manualUnread: true },
   ] });
   const { client } = setup(request => request.path === '/api/v1/tracks/w1'
-    ? ok(fixtureSnapshot(TRACK, [PLANNER_CARD, assistantRow({ lastNotifiableTurnAtMs: null })])) : undefined,
+    ? ok(trackWithReport([PLANNER_CARD, assistantRow({ lastNotifiableTurnAtMs: null })])) : undefined,
   undefined, receipts);
   fireEvent.click(await screen.findByRole('button', { name: /^Conversation Assistant(?:,|$)/ }));
   await screen.findByRole('combobox', { name: 'Message' });

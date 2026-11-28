@@ -37,7 +37,7 @@ export function ConversationSessionHeader({ session, state, taskId, readonlyReas
   onReset: () => void;
   onArchive?: () => void;
 }>) {
-  const roleLabel = session === null ? null : taskId !== null ? 'Worker' : session.isLead ? 'Planner' : 'Assistant';
+  const roleLabel = session === null ? null : taskId !== null ? 'Worker' : session.isLead ? 'Lead' : 'Assistant';
   // Live execution phases and background task liveness belong to the bottom turn status bar.
   // Keep the header quiet unless a session-level condition or readonly lock needs attention.
   const sessionNotice: Readonly<{ label: string; tone: StatusTone }> | null = state === 'unknown'

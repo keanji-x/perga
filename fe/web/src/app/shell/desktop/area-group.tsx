@@ -38,6 +38,7 @@ export function AreaGroup({
   const showMemory = memoryEnabled && preferences.areaShowsMemory(area.id);
   const memoryRow = navigationRowPresentation({ kind: 'entry', depth: 1 });
   const ordered = areaPinnedTracks(areaTracks, (track) => preferences.areaTrackPinned(area.id, track.id));
+  const tracks = railAreaTracks(ordered, activeTrackId, rowProps.isUnread, showClosed);
   const areaTitle = area.executionTargetId && area.executionTargetId !== 'local'
     ? `${area.name} · ${targetLabel ?? area.executionTargetId}`
     : area.name;
@@ -47,7 +48,7 @@ export function AreaGroup({
     label={`area ${area.name}`}
     icon="folder"
     level="area"
-    tracks={railAreaTracks(ordered, activeTrackId, rowProps.isUnread, showClosed)}
+    tracks={tracks}
     activeTrackId={activeTrackId}
     expanded={expanded}
     onToggle={onToggle}
@@ -69,7 +70,7 @@ export function AreaGroup({
       <DropdownMenuItem label="Delete area" variant="destructive" onClick={() => onRequestDelete(area.id, origin)} />
     </>}
     actions={
-      <button type="button" data-nc-role="icon" className={`${styles.areaNew} ${rowLayout('outer')}`}
+      <button type="button" data-nc-role="icon" className={`${styles.areaNew} ${tracks.length === 0 ? styles.emptyAreaNew : ''} ${rowLayout('outer')}`}
         aria-label={`New track in ${area.name}`} title="New track" onClick={() => onNewTrack(area.id)}>
         <Icon name="plus" size="sm" />
       </button>

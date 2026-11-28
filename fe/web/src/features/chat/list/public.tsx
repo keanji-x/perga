@@ -50,7 +50,7 @@ export function ChatList({
         const trackTitle = conversation.trackTitle;
         const turns = conversation.turns;
         if (context) {
-          const role = conversation.isLead === true ? 'Planner' : CONVERSATION_KIND_LABEL[conversation.kind];
+          const role = conversation.isLead === true ? 'Lead' : CONVERSATION_KIND_LABEL[conversation.kind];
           const contextDescription = [name === role ? null : role, description].filter(Boolean).join(' · ') || null;
           return <li key={conversation.id}>
           <ContextConversationItem conversation={conversation} onArchive={onArchive} icon={conversation.isLead === true ? 'tasks' : 'chat'} label={name}

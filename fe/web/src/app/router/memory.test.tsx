@@ -75,7 +75,7 @@ function renderMemory(initial = '/area/project-area/memory', staleBinding = fals
     }
     if (request.path === '/api/v1/tracks/daily') {
       const daily = fixtureSession('daily-planner', 'daily', { isLead: true, title: 'Daily Planner conversation' });
-      return sessionReply(fixtureSnapshot(fixtureTrack('daily', { areaId: 'sys_daily', leadSessionId: daily.id }), [daily]));
+      return sessionReply(fixtureSnapshot(fixtureTrack('daily', { areaId: 'sys_daily', leadSessionId: daily.id }), [daily], fixtureReport('# Daily notes')));
     }
     if (request.path.startsWith('/api/v1/memory/mentions?')) {
       return sessionReply([{ ref: 'global/writing', scope: 'global', key: 'writing', title: 'Writing preferences',

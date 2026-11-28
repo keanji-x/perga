@@ -180,7 +180,7 @@ it('completes a valid empty report through the same committed read boundary', as
   await act(() => fixture.client.setQueryData<TrackAggregateSnapshotDto>(queryKeys.trackDetail('daily'), detail => detail === undefined ? detail : ({ ...detail, report: fixtureReport() })));
   expect(fixture.kernel.posts()).toHaveLength(0);
   await frame.next(); await frame.next();
-  await screen.findByRole('heading', { name: 'Progress lives here' });
+  await screen.findByRole('heading', { name: 'This page becomes your living report' });
   expect(document.querySelector('[data-nc-report]')).toBeNull();
   await waitFor(() => expect(fixture.kernel.stored('track', 'daily')).toBeDefined());
 });

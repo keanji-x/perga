@@ -109,7 +109,7 @@ it('opens a confirmed Track after Chromium reloads the draft page', async () => 
     const openTrack = await app.screen.findByRole('button', { name: 'Open track' });
     expect(app.screen.queryByText(TRACK_CREATE_TEXT.unknown)).toBeNull();
     await app.user.click(openTrack);
-    await app.screen.findByRole('complementary', { name: 'Planner' });
+    await app.screen.findByRole('region', { name: 'Lead' });
     expect(app.router.state.location.pathname).toMatch(/\/track\/confirmed$/);
     expect(reloadedStorage.getItem(draftKey)).toBeNull();
     await waitFor(() => expect(reloadedStorage.getItem(firstSendKey)).toBeNull());

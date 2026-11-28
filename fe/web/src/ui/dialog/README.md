@@ -2,7 +2,7 @@
 
 ## Visual contract
 
-`Dialog` owns overlay, panel, header and body chrome so every modal uses one stacking and dismissal policy; `wide` and a pushed child view select the wide variant. `ConfirmDialog` composes the same panel and exposes only a danger/primary action variant so confirmation call sites cannot fork the modal mechanics.
+`Dialog` owns overlay, panel, header and body chrome so every modal uses one stacking and dismissal policy. A pushed child view uses the wide variant by default and may request `wide: 'medium'` for a centered medium panel. `ConfirmDialog` composes the same panel and exposes only a danger/primary action variant so confirmation call sites cannot fork the modal mechanics.
 
 `placement="top"` anchors the panel at 12% of the viewport height and skips lift so a picker with changing results keeps its input in place. `flush` removes panel padding for a base view that supplies its own edge-to-edge chrome.
 

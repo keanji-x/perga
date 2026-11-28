@@ -204,6 +204,7 @@ function DirectoryPickerContent({
               onClick={() => { setAddError(null); setView('add-ssh'); }}
             >
               <Icon name="plus" size="sm" />
+              <span>SSH machine</span>
             </button>
           )}
         </div>
@@ -281,6 +282,7 @@ export function DirectoryPicker({
     if (!dialog || !open) return;
     return dialog.pushView({
       title,
+      wide: 'medium',
       onEscape: onCancel,
       body: content,
     });
@@ -296,7 +298,8 @@ export function DirectoryPicker({
       open={open}
       onClose={onCancel}
       title={title}
-      wide
+      wide="medium"
+      placement="center"
     >
       {open && content}
     </Dialog>

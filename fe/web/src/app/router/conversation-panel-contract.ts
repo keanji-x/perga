@@ -58,8 +58,10 @@ export type ConversationPanelSource = ConversationCreationSource & Readonly<{
  */
 export type ConversationPanelOptions = Readonly<{
   defaultRowId: string | null;
+  retainDefaultOnSend?: boolean;
   onPresent?: () => void;
   embedded?: EmbeddedConversationPresentation;
+  embedDefaultOnly?: boolean;
   presented?: boolean;
   onArchive?: (cardId: string, archived: boolean) => Promise<void>;
   terminal?: { workbench: TerminalWorkbench; render: () => ReactNode };

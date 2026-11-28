@@ -36,7 +36,7 @@ async function shot(name: string, expectedTitles: readonly string[]) {
 it.each([1440, 390])('catalog main report and sidebar %i', async width => {
   await page.viewport(width, 900);
   renderDailyFixture({ initial: '/track/project', reply: request => request.path === '/api/v1/tracks/project' ? ok(fixtureSnapshot(fixtureTrack('project', { areaId: 'project-area', title: '新项目' }))) : undefined });
-  await expect.element(page.getByRole('heading', { name: 'Progress lives here' })).toBeVisible();
+  await expect.element(page.getByRole('heading', { name: 'This page becomes your living report' })).toBeVisible();
   await shot('01-report-' + width, []);
   if (width === 390) {
     await page.getByRole('button', { name: 'Track actions', exact: true }).click();

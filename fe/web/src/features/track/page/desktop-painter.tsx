@@ -39,6 +39,7 @@ type ModuleLeaf = Readonly<{ slot: 'module'; node: ReactNode }>;
 export type DesktopLeaf = PendingLeaf | ModuleLeaf;
 
 export type DesktopPainterDeps = Readonly<{
+  workbenchDisclosure?: Readonly<{ open: boolean | undefined; onOpenChange: (open: boolean) => void }>;
   progressDisclosure?: Readonly<{ open: boolean; onOpenChange: (open: boolean) => void }>;
   /** Other contextual content already gives the card its visible empty state. */
   suppressEmpty?: boolean;
@@ -222,7 +223,8 @@ export function makeDesktopPainter(deps: DesktopPainterDeps): RowPainter<Desktop
         </div>
       </PanelModule> : (parts.key === 'cards' || parts.key === 'temporary') ? <PanelModule key={parts.key} title={parts.title} bare
         moduleMarker={parts.key} titleFieldMarker={FIELD.moduleTitle}>
-        <ContextGroup title={parts.title} collapsible="controls" open={parts.key === 'cards'} secondaryAction={parts.key === 'cards' ? deps.cardsAction : undefined} actionVisibility="always">
+        <ContextGroup title={parts.title} collapsible="controls" open={parts.key === 'cards' && (deps.workbenchDisclosure?.open ?? rows)}
+          onOpenChange={parts.key === 'cards' ? deps.workbenchDisclosure?.onOpenChange : undefined} secondaryAction={parts.key === 'cards' ? deps.cardsAction : undefined} actionVisibility="always">
           {open => open ? <>
             <div {...(parts.key === 'cards' ? { 'data-nc-card-inventory': '' } : {})}>{rows ? <ContextList aria-label={parts.key === 'cards' ? 'Workbench tools' : 'Temporary terminals'}>{children()}</ContextList> : children()}</div>
             {parts.key === 'cards' ? deps.cardEntries : undefined}

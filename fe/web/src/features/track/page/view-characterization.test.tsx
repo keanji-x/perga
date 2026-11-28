@@ -1,6 +1,8 @@
 // Same-source regression: `deriveTrackPageView` against the panel that is now rendered from it.
 // No longer an independent oracle; module DOM order is excluded here and held by `checkProjectionIn`.
 
+import { within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { ReportTaskRow } from '../../../../../core/domain/track-task-inventory.ts';
@@ -149,8 +151,9 @@ describe('deriveTrackPageView against the rendered desktop panel', () => {
     }
   });
 
-  it('renders each module’s empty text when, and only when, the module has no rows', () => {
+  it('renders each expanded module’s empty text when, and only when, the module has no rows', async () => {
     const { container } = renderPage({ cards: [], tasks: [] });
+    await userEvent.click(within(container).getByRole('button', { name: 'Workbench' }));
     const view = deriveTrackPageView({ existingCardIds: new Set<string>(), cards: [], tasks: [], activity: NEUTRAL_ACTIVITY, openableCards: new Set() });
     const whole = visibleText(container);
 
