@@ -18,8 +18,8 @@
   .state:focus-visible { outline: var(--rule-h) solid var(--accent); outline-offset: var(--space-half); border-radius: var(--radius-sm); }
   .normal { min-block-size: var(--control-h); display: flex; align-items: center; }
   .summary { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1); min-inline-size: 0; max-inline-size: 100%; }
-  /* Match the Astryx tool row so both labels align at enlarged text sizes. */
-  .heading { display: inline-flex; align-items: center; gap: var(--spacing-1-5); min-inline-size: 0; max-inline-size: 100%; }
+  /* Keep the label aligned with tool rows as the root font size grows. */
+  .heading { display: inline-flex; align-items: center; gap: 0.375rem; min-inline-size: 0; max-inline-size: 100%; }
   .leading { display: inline-flex; align-items: center; justify-content: center; flex: none; inline-size: var(--type-metadata-line); block-size: var(--type-metadata-line); }
   .label { min-inline-size: 0; overflow-wrap: anywhere; font-size: var(--font-step-1-size); font-weight: var(--weight-normal); color: var(--text-3); }
   .warning .label { color: var(--warn-text); }

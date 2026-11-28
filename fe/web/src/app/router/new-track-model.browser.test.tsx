@@ -4,7 +4,7 @@ import '../../styles/entry.css';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { expect, it, vi } from 'vitest';
-import { page } from 'vitest/browser';
+import { page, userEvent as browserUserEvent } from 'vitest/browser';
 import { FOLLOW_INSTALLATION_DEFAULT, type ModelSelection } from '../../../../core/domain/conversation.ts';
 import { type ModelCatalog } from '../../../../core/domain/conversation-models.ts';
 import type { ListDirectory } from '../../ui/directory-browser/public.tsx';
@@ -153,10 +153,14 @@ it('keeps long custom preferences readable inside overflow and switches back via
       expect(folder.right).toBeLessThanOrEqual(width);
       expect(document.documentElement.scrollWidth).toBe(width);
     }
-    await page.elementLocator(within(options).getByRole('button', { name: `Repo: a-long-custom-folder-for-the-mobile-layout (${cwd})` })).click();
-    await page.getByRole('menuitem', { name: /^Default$/ }).click();
+    within(options).getByRole('button', { name: `Repo: a-long-custom-folder-for-the-mobile-layout (${cwd})` }).focus();
+    await browserUserEvent.keyboard('{ArrowUp}{ArrowUp}');
+    await expect.element(page.getByRole('menuitem', { name: 'Default', exact: true })).toHaveFocus();
+    await browserUserEvent.keyboard('{Enter}');
+    const defaultFolder = page.getByRole('button', { name: 'Default folder', exact: true });
+    await expect.element(defaultFolder).toHaveFocus();
     await page.viewport(600, 740);
-    await expect.element(page.getByRole('button', { name: 'Default folder' })).toBeVisible();
+    await expect.element(defaultFolder).toHaveFocus();
   } finally {
     view.unmount();
     await page.viewport(1280, 720);
@@ -215,10 +219,15 @@ it('keeps directory selection and cancellation usable through overflow', async (
     expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Track options' }));
     await page.viewport(600, 844);
     await waitFor(() => { expect(screen.queryByRole('button', { name: 'Track options' })).toBeNull(); });
-    await page.getByRole('button', { name: `Repo: a-long-directory-selected-through-the-real-browser (${cwd})` }).click();
-    await page.getByRole('menuitem', { name: /^Default$/ }).click();
+    const boundFolder = await screen.findByRole('button', { name: `Repo: a-long-directory-selected-through-the-real-browser (${cwd})` });
+    boundFolder.focus();
+    await browserUserEvent.keyboard('{ArrowUp}{ArrowUp}');
+    await expect.element(page.getByRole('menuitem', { name: 'Default', exact: true })).toHaveFocus();
+    await browserUserEvent.keyboard('{Enter}');
     await waitFor(() => { expect(screen.queryByRole('button', { name: 'Track options' })).toBeNull(); });
-    expect(screen.getByRole('button', { name: 'Default folder' })).toBeTruthy();
+    const defaultFolder = page.getByRole('button', { name: 'Default folder', exact: true });
+    await expect.element(defaultFolder).toHaveFocus();
+    expect(defaultFolder.element()).toBe(boundFolder);
     expectFullLabel('Default folder');
   } finally {
     view.unmount();

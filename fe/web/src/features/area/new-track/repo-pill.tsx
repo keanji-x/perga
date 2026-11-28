@@ -88,12 +88,6 @@ export function RepoPill({
       <VisuallyHidden>Selected</VisuallyHidden>
     </>
   );
-  const afterMenuSelection = (action: () => void) => {
-    flushSync(() => setOpen(false));
-    // Let the selection event finish before transferring focus.
-    queueMicrotask(action);
-  };
-
   return (
     <DropdownMenu
       placement="above"
@@ -129,18 +123,19 @@ export function RepoPill({
         <Divider />
       </>}
       <DropdownMenuItem label="Default" endContent={folderBound ? undefined : selectedMark}
-        hasCloseOnSelect={!folderBound} onClick={folderBound ? () => afterMenuSelection(() => {
-          flushSync(onClear);
-          triggerRef.current?.focus();
-        }) : undefined} />
+        onClick={folderBound ? onClear : undefined} />
       <DropdownMenuItem label={folderBound ? 'Change folder…' : 'Choose folder…'}
         description={folderBound ? compactPathDescription(value) : undefined} hasCloseOnSelect={false}
-        onClick={() => afterMenuSelection(() => {
-          const trigger = triggerRef.current;
-          if (trigger === null) return;
-          trigger.focus();
-          onBrowse();
-        })} />
+        onClick={() => {
+          flushSync(() => setOpen(false));
+          // Let the selection event finish before transferring focus to the picker.
+          queueMicrotask(() => {
+            const trigger = triggerRef.current;
+            if (trigger === null) return;
+            trigger.focus();
+            onBrowse();
+          });
+        }} />
     </DropdownMenu>
   );
 }
