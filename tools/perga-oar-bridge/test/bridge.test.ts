@@ -453,8 +453,57 @@ test("OarBridgeServer returns sessionConfiguration from listModels and session r
   assert.equal(nativeOpened.effort, "high");
   assert.equal(nativeConfig.defaultModel, "gpt-5.4");
   assert.equal(nativeConfig.defaultReasoningEffort, "high");
+  assert.deepEqual(nativeConfig.models, [
+    { id: "gpt-5.4", name: "GPT 5.4", reasoningEfforts: ["low", "high"], defaultReasoningEffort: "high" },
+    { id: "gpt-5.4-mini", name: "GPT 5.4 Mini", reasoningEfforts: ["low"], defaultReasoningEffort: "low" },
+  ]);
   await nativeBridge.dispose();
 });
+
+for (const [requestedModel, resolvedModel] of [["alternate", "alternate"], [undefined, "custom-model"]] as const) {
+  test(`session/open keeps the catalog default effort when the runtime opens ${resolvedModel}`, async () => {
+    const base = scriptedRuntime({ turn: async () => {} });
+    const runtime = {
+      ...base,
+      listModels: async () => ({
+        kind: "ok" as const,
+        models: [
+          { id: "default", default: true as const, effortLevels: ["low"], defaultEffort: "low" },
+          { id: "alternate", effortLevels: ["high"] },
+        ],
+      }),
+      session: async (...args: Parameters<typeof base.session>) => {
+        const session = await base.session(...args);
+        return {
+          ...session,
+          model: () => ({ ...session.model(), value: resolvedModel }),
+          effort: () => ({ ...session.effort(), value: "high" }),
+        };
+      },
+    };
+    const transport = new MemoryTransport();
+    const bridge = new OarBridgeServer(transport, async () => runtime);
+    try {
+      await bridge.handleMessage({
+        jsonrpc: "2.0", id: 1, method: "session/open",
+        params: { runtime: "antigravity", cwd: process.cwd(), ...(requestedModel ? { model: requestedModel } : {}) },
+      });
+      const opened = transport.responseFor(1).result as Record<string, unknown>;
+      assert.equal(opened.model, resolvedModel);
+      assert.equal(opened.effort, "high");
+      assert.deepEqual(opened.sessionConfiguration, {
+        defaultModel: "default",
+        defaultReasoningEffort: "low",
+        models: [
+          { id: "default", name: "default", reasoningEfforts: ["low"], defaultReasoningEffort: "low" },
+          { id: "alternate", name: "alternate", reasoningEfforts: ["high"], defaultReasoningEffort: requestedModel ? "high" : null },
+        ],
+      });
+    } finally {
+      await bridge.dispose();
+    }
+  });
+}
 
 test("OarBridgeServer supports Antigravity slash /compact and enforces timeoutMs", async () => {
   const promptsSeen: string[] = [];
