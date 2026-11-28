@@ -145,7 +145,7 @@ export function useAppBack(alias?: TrackRouteAlias) {
   const history = router.history as RouterHistory;
   const owner = useDraftBackOwner();
   const go = useGo(alias);
-  const { stack, canGoBack, previousEntry, lastAction } = useAppHistory();
+  const { stack, canGoBack, previousEntry } = useAppHistory();
   const pop = useCallback(() => {
     if (stack?.snapshot().canGoBack !== true) return false;
     if (owner !== null && isNewTrackPath(router.parseLocation(history.location).pathname)) owner.back();
@@ -155,7 +155,7 @@ export function useAppBack(alias?: TrackRouteAlias) {
   const goBack = useCallback((fallback: NavTarget) => {
     if (!pop()) go(fallback, { replace: true });
   }, [go, pop]);
-  return { canGoBack, previousEntry, lastAction, goBack, pop, stepsBackOutOf: stack?.stepsBackOutOf };
+  return { canGoBack, previousEntry, goBack, pop, stepsBackOutOf: stack?.stepsBackOutOf };
 }
 
 /**
@@ -577,7 +577,7 @@ export function useTrackFileNavigation(alias?: TrackRouteAlias): TrackFileNaviga
 
 export type TrackPanelNavigation = Readonly<{
   openPanel: (expectedTrackId: string, panel: MobilePanel) => void;
-  closePanel: (expectedTrackId: string) => void;
+  closePanel: (expectedTrackId: string, options?: Readonly<{ pushedOnly: boolean }>) => void;
 }>;
 
 /** Panel-to-panel switches replace the open panel. Closing follows the app's history floor. */
@@ -612,8 +612,9 @@ export function useTrackPanelNavigation(alias?: TrackRouteAlias): TrackPanelNavi
     });
   }, [go, location, navigate, alias]);
 
-  const closePanel = useCallback((expectedTrackId: string) => {
-    if (pop()) return;
+  const closePanel = useCallback((expectedTrackId: string, options?: Readonly<{ pushedOnly: boolean }>) => {
+    // Desktop can also receive a saved panel URL as part of opening a report.
+    if ((!options?.pushedOnly || hasPanelPushedMarker(location.state)) && pop()) return;
     const search = sameTrackSearch(location, expectedTrackId, { panel: undefined }, alias);
     if (search === null) {
       go({ name: 'track', trackId: expectedTrackId }, { replace: true });

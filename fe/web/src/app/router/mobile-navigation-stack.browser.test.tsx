@@ -382,19 +382,28 @@ it('restores scroll and disclosure when native Go skips between visits to the sa
   } finally { app.close(); }
 });
 
-it('pops an open Conversations entry when resizing to desktop', async () => {
+it('pops an open Conversations entry on desktop resize and Forward', async () => {
   await page.viewport(390, 844);
   const app = await nativeFixture(area);
+  const arrivedOnPanel = vi.fn();
+  const stop = app.router.history.subscribe(({ action, location }) => {
+    if (action.type === 'FORWARD' && location.search === '?panel=conversations') arrivedOnPanel();
+  });
   try {
     await openProject();
     await app.at(track);
+    const reportIndex = app.router.history.location.state.__TSR_index;
     await button('Track actions').click();
     await page.getByRole('menuitem', { name: 'Conversations', exact: true }).click();
     await app.at(`${track}?panel=conversations`);
     await page.viewport(1280, 800);
     await app.at(track);
+    app.host.history.forward();
+    await expect.poll(() => arrivedOnPanel.mock.calls.length).toBe(1);
+    await app.at(track);
+    expect(app.router.history.location.state.__TSR_index).toBe(reportIndex);
     await page.viewport(390, 844);
     await button(/^Back to (Project|Report)$/).click();
     await app.at(area);
-  } finally { app.close(); }
+  } finally { stop(); app.close(); }
 });

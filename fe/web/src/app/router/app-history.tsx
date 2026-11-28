@@ -107,21 +107,25 @@ export function useHistoryEntryIndex() {
 export function useHistoryReturnFocus(ready: boolean) {
   const { stack, lastAction } = useAppHistory();
   const index = useHistoryEntryIndex();
-  useLayoutEffect(() => {
+  const restoreReturnFocus = useCallback(() => {
     if (!ready || lastAction !== 'BACK' || document.activeElement !== document.body) return;
     const key = stack?.returnFocus(index);
     if (key === undefined) return;
     const target = Array.from(document.querySelectorAll<HTMLButtonElement>('[data-nc-return-focus]'))
       .find((button) => button.dataset.ncReturnFocus === key);
-    if (target?.isConnected && target.getClientRects().length > 0 && getComputedStyle(target).visibility === 'visible') {
+    if (target?.isConnected && target.closest('[inert]') === null
+      && target.getClientRects().length > 0 && getComputedStyle(target).visibility === 'visible') {
       target.focus({ preventScroll: true });
     }
   }, [index, lastAction, ready, stack]);
 
-  return (trigger: HTMLButtonElement) => {
+  useLayoutEffect(restoreReturnFocus, [restoreReturnFocus]);
+
+  const rememberReturnFocus = (trigger: HTMLButtonElement) => {
     const key = trigger.dataset.ncReturnFocus;
     if (key !== undefined) stack?.rememberReturnFocus(key);
   };
+  return { rememberReturnFocus, restoreReturnFocus };
 }
 
 /** Keep scroll and view controls together for the page keyed by this history index. */

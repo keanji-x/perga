@@ -156,12 +156,6 @@ export function TrackRouteBody({
   }), [canReopenTrack, canCloseTrack, closedPending, setClosed]);
   const conversationMutations = useTrackConversationMutations(transport, track.id, unauthorized);
   const go = useGo(alias);
-  const openReportArea = memoryAreaId === false ? undefined : () => {
-    chat.close();
-    go(mobileAreaId !== null && mobileAreaName !== undefined
-      ? { name: 'area', areaId: mobileAreaId } : { name: 'workspace' });
-  };
-  const openMobileArea = mobileAreaName !== undefined || mobileReportTitleOnScroll ? openReportArea : undefined;
   const mobileHeaderActionsHost = useMobileHeaderActionsHost();
   const mobileHeaderTitleHost = useMobileHeaderTitleHost();
   const { previousEntry, pop } = useAppBack(alias);
@@ -175,9 +169,9 @@ export function TrackRouteBody({
   const requestedFilePath = requestedCardId === null ? rawRequestedFilePath : null;
   const requestedFileLine = useRouteFileLine();
   const backFilePath = useRouteFileBackPath();
-  const historyEntryKey = useRouterState({ select: (state) => state.location.state.__TSR_key
+  const fileEntryKey = useRouterState({ select: (state) => state.location.state.__TSR_key
     ?? (state.location.state.__TSR_index === undefined ? undefined : `index:${state.location.state.__TSR_index}`) });
-  const fileView = useTrackFileView(track.id, historyEntryKey, requestedFilePath);
+  const fileView = useTrackFileView(track.id, fileEntryKey, requestedFilePath);
   const silentFile = useRouterState({ select: (state) => state.location.state.ncFileSilent === true });
   const fileOpenRequest = useRouterState({ select: (state) => state.location.state.ncFileOpenRequest });
   const [resolvedFile, setResolvedFile] = useState<Readonly<{ requested: string; canonical: string }> | null>(null);
@@ -225,7 +219,14 @@ export function TrackRouteBody({
     compact: compactViewport,
     overlayOpen: requestedCardId !== null || rawRequestedFilePath !== null,
   });
-  const rememberReturnFocus = useHistoryReturnFocus(compactViewport && mobileHeaderTitleHost != null);
+  const { rememberReturnFocus, restoreReturnFocus } = useHistoryReturnFocus(compactViewport && mobileHeaderTitleHost != null);
+  const openReportArea = memoryAreaId === false ? undefined : (trigger: HTMLButtonElement) => {
+    rememberReturnFocus(trigger);
+    chat.close();
+    go(mobileAreaId !== null && mobileAreaName !== undefined
+      ? { name: 'area', areaId: mobileAreaId } : { name: 'workspace' });
+  };
+  const openMobileArea = mobileAreaName !== undefined || mobileReportTitleOnScroll ? openReportArea : undefined;
   const cardRegistry = cardRuntime.registry;
   const trackCardHost = useMemo(
     () => createCardHost(cardRegistry, {
@@ -386,17 +387,9 @@ export function TrackRouteBody({
     admittedTerminalRoute.current = requestedCardId;
     workbench.reveal(requestedCardId);
   }, [compactViewport, requestedCardId, workbench]);
-  const compactPanelEntry = useRef<string | undefined>(undefined);
   useEffect(() => {
-    if (compactViewport || routePanel === null) {
-      compactPanelEntry.current = mobilePanel === null ? undefined : historyEntryKey;
-      return;
-    }
-    // A panel shown on mobile owns its Back entry. A desktop arrival with an
-    // old panel URL still needs to land on this report.
-    if (historyEntryKey !== undefined && compactPanelEntry.current === historyEntryKey) closePanel(track.id);
-    else goSameTrack(track.id, { panel: undefined }, { replace: true });
-  }, [closePanel, compactViewport, goSameTrack, historyEntryKey, mobilePanel, routePanel, track.id]);
+    if (!compactViewport && routePanel !== null) closePanel(track.id, { pushedOnly: true });
+  }, [closePanel, compactViewport, routePanel, track.id]);
   /* One confirm for both delete gestures. Nothing navigates on success: the
    * `knownCard` effect bounces `?card=<deleted>` off the URL, and a `go()` here
    * would race it. */
@@ -575,12 +568,9 @@ export function TrackRouteBody({
       mobileHeaderTitleHost={mobileHeaderTitleHost}
       mobileAreaName={mobileAreaName}
       mobileReportTitleOnScroll={mobileReportTitleOnScroll}
-      onOpenMobileArea={openMobileArea === undefined ? undefined : (trigger) => {
-        rememberReturnFocus(trigger);
-        openMobileArea();
-      }}
+      onOpenMobileArea={openMobileArea}
       mobileTitleReadView={openReportArea === undefined ? undefined : (controls) => <TrackSelector track={track} controls={controls}
-        onOpenTracks={openReportArea} />}
+        onOpenTracks={openReportArea} onVisible={restoreReturnFocus} />}
       track={track}
       onOpenOriginTrack={openRelatedTrack}
       canReopenTrack={canReopenTrack}

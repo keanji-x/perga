@@ -42,7 +42,7 @@ function MobileFocusPage({
     || receipts.loading
     || [...workspace.tracksLoadingByArea.values()].some(Boolean);
   const { initialView, rememberView, scrollRef } = useMobileHistoryView<MobileFocusView>(historyIndex, !readLoading);
-  const rememberReturnFocus = useHistoryReturnFocus(!readLoading);
+  const { rememberReturnFocus } = useHistoryReturnFocus(!readLoading);
 
   const retryRead = useCallback(() => {
     workspace.retryAreas();

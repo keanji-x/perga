@@ -127,9 +127,8 @@ it('reveals the Track title only past the mobile document heading and opens the 
   await selector().click();
   await expect.element(page.getByRole('region', { name: 'Open tracks' })).toBeVisible();
   await page.getByRole('button', { name: 'Back to Report' }).click();
+  await expect.element(selector()).toHaveFocus();
   scrollport = await reportScrollport();
-  scrollport.scrollTop = boundary + 8;
-  (await selector().findElement() as HTMLElement).focus();
   await userEvent.keyboard('{F2}');
   await expect.element(page.getByRole('textbox', { name: 'Track title' })).toHaveFocus();
   await userEvent.keyboard('{Escape}');

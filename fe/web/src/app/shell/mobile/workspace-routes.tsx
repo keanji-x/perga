@@ -48,7 +48,7 @@ function WorkspacePage({ controller, areaId, historyIndex, onOpenSettings, onSig
   const { go, areas, workspace, readError, readLoading, retryRead, isUnread } = controller;
   const back = useMobileBack({ name: 'today' }, 'Focus', areas);
   const { initialView, rememberView, scrollRef } = useMobileHistoryView<boolean>(historyIndex, !readLoading);
-  const rememberReturnFocus = useHistoryReturnFocus(!readLoading);
+  const { rememberReturnFocus } = useHistoryReturnFocus(!readLoading);
   const { previousEntry } = useAppHistory();
   const props = {
     currentTrackId: routeParamFromPath(previousEntry?.pathname ?? '', '/track/'),
