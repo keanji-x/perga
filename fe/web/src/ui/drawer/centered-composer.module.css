@@ -125,7 +125,7 @@
     align-items: center;
     justify-content: flex-start;
     gap: var(--space-2);
-    margin-block-end: var(--space-4);
+    margin-block-end: var(--space-5);
   }
 
   .introduction {
@@ -137,17 +137,22 @@
 
   .mark {
     display: inline-block;
-    inline-size: 1em;
-    block-size: 1em;
-    vertical-align: middle;
-    margin-inline-end: var(--space-2);
-    color: var(--text-3);
+    inline-size: 1.35em;
+    block-size: 1.35em;
+    vertical-align: -0.22em;
+    margin-inline-end: var(--space-3);
+    color: var(--text-2);
   }
 
   /* The prompt is the main editorial heading; supporting copy stays in interface type. */
   .greeting {
-    font: var(--type-heading);
-    letter-spacing: var(--type-heading-tracking);
+    min-inline-size: 0;
+    overflow-wrap: anywhere;
+    font-family: var(--font-serif);
+    font-size: var(--font-step-7-size);
+    font-weight: var(--weight-normal);
+    line-height: var(--font-step-7-line);
+    letter-spacing: var(--font-step-7-tracking);
     color: var(--text);
     text-align: start;
   }
@@ -165,6 +170,8 @@
       font-family: var(--font-sans);
       font-size: var(--font-step-5-size);
       font-weight: var(--weight-medium);
+      line-height: var(--font-step-5-line);
+      letter-spacing: var(--font-step-5-tracking);
     }
 
   }
