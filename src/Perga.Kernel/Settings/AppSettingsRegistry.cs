@@ -49,7 +49,7 @@ public sealed class AppSettingsRegistry
         if (!_fieldsByKey.TryGetValue(key, out var field))
             throw new AppSettingValidationException(key, "Unknown setting.");
 
-        if (field.ValueType == "string")
+        if (key == DefaultProvider)
         {
             if (value is not string provider || !_providers.Contains(provider))
                 throw new AppSettingValidationException(key, "Expected a canonical registered provider ID.");
@@ -57,10 +57,15 @@ public sealed class AppSettingsRegistry
             return provider;
         }
 
-        if (value is not long number || number < field.Min || number > field.Max)
-            throw new AppSettingValidationException(key, $"Expected an integer from {field.Min} through {field.Max}.");
+        if (field.ValueType == "integer")
+        {
+            if (value is not long number || number < field.Min || number > field.Max)
+                throw new AppSettingValidationException(key, $"Expected an integer from {field.Min} through {field.Max}.");
 
-        return number;
+            return number;
+        }
+
+        throw new AppSettingValidationException(key, "Unsupported setting type.");
     }
 
     internal object Validate(string key, JsonElement value) => Validate(key, value.ValueKind switch
@@ -75,7 +80,7 @@ public sealed class AppSettingsRegistry
         try { return value.GetString(); }
         catch (InvalidOperationException)
         {
-            throw KernelException.InvalidArgument("Expected a well-formed JSON string.", field: key);
+            throw new AppSettingValidationException(key, "Expected a well-formed JSON string.");
         }
     }
 

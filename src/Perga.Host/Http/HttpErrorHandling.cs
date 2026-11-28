@@ -37,11 +37,12 @@ public static class HttpErrorHandling
                 PergaJsonDefaults.ApiOptions,
                 statusCode: StatusCodes.Status409Conflict),
 
-            KernelException { Code: KernelErrorCode.InvalidArgument, Field: { } field } invalid => SettingsValidation(field, invalid.Message),
-
             KernelException kex => MapKernelException(kex),
 
-            AppSettingValidationException validation => SettingsValidation(validation.Field, validation.Message),
+            AppSettingValidationException validation => Results.Json(
+                new SettingsValidationErrorResponse("invalid_argument", validation.Message, validation.Field),
+                PergaJsonDefaults.ApiOptions,
+                statusCode: StatusCodes.Status400BadRequest),
 
             AppSettingsLoadException load => Results.Json(
                 new ApiErrorResponse("settings_unavailable", load.Message),
@@ -75,10 +76,6 @@ public static class HttpErrorHandling
                 statusCode: StatusCodes.Status500InternalServerError)
         };
     }
-
-    private static IResult SettingsValidation(string field, string message) => Results.Json(
-        new SettingsValidationErrorResponse("invalid_argument", message, field), PergaJsonDefaults.ApiOptions,
-        statusCode: StatusCodes.Status400BadRequest);
 
     public static async Task InvokeExceptionShieldMiddlewareAsync(HttpContext context, RequestDelegate next)
     {

@@ -24,10 +24,10 @@ type SettingChange = Readonly<{ expectedRev: number; key: string; value: string 
 function saveErrorText(error: Error): string {
   const failure = readFailureOf(error);
   if (failure?.kind === 'http' && failure.status === 409)
-    return 'Planner defaults changed on the server. Choose again to apply your change.';
+    return 'Settings changed on the server. Choose again to apply your change.';
   if (failure?.kind === 'http' && failure.status === 400)
-    return `Could not save the planner default. ${failure.message}`;
-  if (error instanceof NotSentError) return 'Could not save the planner default.';
+    return `Could not save the setting. ${failure.message}`;
+  if (error instanceof NotSentError) return 'Could not save the setting.';
   return 'Could not confirm the save.';
 }
 

@@ -137,7 +137,7 @@ it('saves one typed field on selection and reports a rejected edit alongside the
   await expect.element(timeout).toHaveTextContent('45 min');
   await timeout.click();
   await page.getByRole('option', { name: '30 min' }).click();
-  await expect.element(defaults.getByRole('alert')).toHaveTextContent('Could not save the planner default. This interval is unavailable.');
+  await expect.element(defaults.getByRole('alert')).toHaveTextContent('Could not save the setting. This interval is unavailable.');
   await expect.element(timeout).toHaveTextContent('45 min');
   expect(patches).toEqual([
     { expectedRev: 21, patch: { [PROVIDER]: 'claude' } },

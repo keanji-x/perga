@@ -121,7 +121,7 @@ it('refreshes a conflicting revision and saves a subsequent choice against the r
   expect(defaults.queryByRole('radiogroup', { name: 'Other threshold' })).toBeNull();
   expect((await defaults.findByRole('radio', { name: '85%' })).getAttribute('aria-checked')).toBe('true');
   await userEvent.click(defaults.getByRole('radio', { name: '70%' }));
-  expect((await defaults.findByRole('alert')).textContent).toContain('Planner defaults changed on the server.');
+  expect((await defaults.findByRole('alert')).textContent).toContain('Settings changed on the server.');
   expect(defaults.getByRole('radio', { name: '90%' }).getAttribute('aria-checked')).toBe('true');
   expect(sent.filter(({ path }) => path === '/api/v1/settings').map(({ method }) => method)).toEqual(['GET', 'PATCH', 'GET']);
 

@@ -81,7 +81,7 @@ export function SettingFieldsList({ fields, disabled = false, density }: Readonl
             <div className={styles.selectorSlot}>
               <Selector width="100%" size="sm" label={field.label} isLabelHidden
                 options={[...field.options]} value={field.value} onChange={field.onChange}
-                isDisabled={disabled} disabledMessage="Saving planner defaults…" />
+                isDisabled={disabled} disabledMessage="Saving setting…" />
             </div>
           ) : (
             <SegmentedControl className={styles.segmentedControl} size="sm" label={field.label}
