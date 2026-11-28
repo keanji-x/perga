@@ -43,12 +43,13 @@ describe('Settings Planners', () => {
       </Dialog>,
     );
     const reason = page.getByRole('listitem').filter({ hasText: 'Claude' }).getByText(LOGGED_OUT);
-    await expect.element(reason).toHaveAttribute('aria-describedby');
+    await expect.element(reason).toBeVisible();
     await expect.element(page.getByRole('button', { name: 'Recheck planners' })).toHaveFocus();
     await userEvent.tab();
     await expect.element(reason).toHaveFocus();
     const tooltip = page.getByRole('tooltip').filter({ hasText: LOGGED_OUT });
     await expect.element(tooltip).toBeVisible();
+    await expect.element(reason).toHaveAttribute('aria-describedby');
     expect(tooltip.element().textContent).toBe(reason.element().textContent);
     await userEvent.keyboard('{Escape}');
     await expect.element(tooltip).not.toBeInTheDocument();
@@ -75,9 +76,9 @@ describe('Settings Planners', () => {
       const reason = reasonLocator.element();
       expect(reason.getBoundingClientRect().right).toBeLessThanOrEqual(width);
       expect(reason.scrollWidth).toBeGreaterThan(reason.clientWidth);
-      await expect.element(reasonLocator).toHaveAttribute('aria-describedby');
       await reasonLocator.hover();
       await expect.element(page.getByRole('tooltip')).toHaveTextContent(LOGGED_OUT);
+      await expect.element(reasonLocator).toHaveAttribute('aria-describedby');
       await page.screenshot({ path: `../../../../test-results/settings-planners-${presentation}.png` });
     });
   }

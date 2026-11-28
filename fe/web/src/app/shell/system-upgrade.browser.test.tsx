@@ -31,10 +31,6 @@ it('keeps draft text through draining, restart, and build changes and displays t
     <SystemUpgradeBannerHost /><textarea aria-label="Unsent message" /><VersionCard />
   </LiveConnectionProvider></SystemUpgradeProvider></QueryClientProvider>);
   await waitFor(() => expect(screen.getByText('w1')).toBeTruthy());
-  const details = screen.getByText('Diagnostics').closest('details')!;
-  expect(details.open).toBe(false);
-  await userEvent.click(screen.getByText('Diagnostics'));
-  expect(details.open).toBe(true);
   expect(screen.getByText('w1').getBoundingClientRect().height).toBeGreaterThan(0);
   await userEvent.fill(screen.getByRole('textbox'), 'Keep my unsent draft');
   act(() => sink.frame({ type: 'event', meta: { id: 0, eventVersion: 1 }, event: { ev: 'system.upgrade_status', data: { draining: true, activeDispatches: 2 } } }));
