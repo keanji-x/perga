@@ -175,7 +175,7 @@ it('opens Workspace from the Today title when the report has no user Area', asyn
   await page.getByRole('button', { name: 'Switch track, 2026-10-04', exact: true }).click();
   await expect.element(page.getByRole('heading', { name: 'Workspace' })).toBeVisible();
   await page.getByRole('button', { name: 'Back to Today', exact: true }).click();
-  await expect.element(page.getByRole('button', { name: 'Switch track, 2026-10-04', exact: true })).toBeVisible();
+  await expect.element(page.getByRole('button', { name: 'Switch track, 2026-10-04', exact: true })).toHaveFocus();
   expect(router.state.location.href).toBe('/?day=2026-10-04');
   expect(requests.filter((request) => request.method !== 'GET')).toHaveLength(0);
 });

@@ -8,6 +8,7 @@ import { EmptyState } from '../../ui/empty-state/public.tsx';
 import { ErrorBox } from '../../ui/error-box/public.tsx';
 import { Icon } from '../../ui/icon/public.tsx';
 import { LoadingStatus } from '../../ui/loading-status/public.tsx';
+import { returnFocusProps } from '../../ui/return-focus/public.ts';
 import { useState } from '../../ui/state/public.ts';
 import styles from './focus-home.module.css';
 import { focusEmptyCopy, MobileTrackFeedRow } from './focus-rows.tsx';
@@ -38,12 +39,12 @@ export type MobileFocusHomeProps = Readonly<{
   loading: boolean;
   error: string | null;
   onRetry: () => void;
-  onOpenWorkspace?: (trigger: HTMLButtonElement) => void;
+  onOpenWorkspace?: () => void;
   scrollRef?: Ref<HTMLDivElement>;
   initialView?: MobileFocusView;
   onViewChange?: (view: MobileFocusView) => void;
   onOpenTrack: (trackId: string) => void;
-  onOpenArea?: (areaId: string, trigger: HTMLButtonElement) => void;
+  onOpenArea?: (areaId: string, trackId: string) => void;
   onNewTrack?: (areaId?: string) => void;
   onMarkAllRead?: (tracks: readonly Track[]) => void;
   renderTrackTitle?: (track: Track, content: ReactNode) => ReactNode;
@@ -201,8 +202,8 @@ export function MobileFocusHome({
               type="button"
               className={styles.iconButton}
               aria-label="Open workspace"
-              data-nc-return-focus="focus-workspace"
-              onClick={(event) => onOpenWorkspace(event.currentTarget)}
+              {...returnFocusProps('focus-workspace')}
+              onClick={() => onOpenWorkspace()}
             >
               <Icon name="menu" />
             </button>}

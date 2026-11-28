@@ -55,6 +55,7 @@ createCardHost,partitionTrackCards
 } from '../../systems/cards/public.js';
 import { DELETE_CARD_COPY } from '../../features/track/delete-copy.ts';
 import { DeleteConfirmDialog,useDeleteConfirm } from '../../ui/operation-feedback/public.tsx';
+import type { ReturnFocusKey } from '../../ui/return-focus/public.ts';
 import { useState } from '../../ui/state/public.ts';
 import { useCompactViewport } from '../../ui/viewport/public.ts';
 import {
@@ -220,13 +221,14 @@ export function TrackRouteBody({
     overlayOpen: requestedCardId !== null || rawRequestedFilePath !== null,
   });
   const { rememberReturnFocus, restoreReturnFocus } = useHistoryReturnFocus(compactViewport && mobileHeaderTitleHost != null);
-  const openReportArea = memoryAreaId === false ? undefined : (trigger: HTMLButtonElement) => {
-    rememberReturnFocus(trigger);
+  const openReportArea = memoryAreaId === false ? undefined : (key: ReturnFocusKey) => {
+    rememberReturnFocus(key);
     chat.close();
     go(mobileAreaId !== null && mobileAreaName !== undefined
       ? { name: 'area', areaId: mobileAreaId } : { name: 'workspace' });
   };
-  const openMobileArea = mobileAreaName !== undefined || mobileReportTitleOnScroll ? openReportArea : undefined;
+  const openMobileArea = openReportArea !== undefined && (mobileAreaName !== undefined || mobileReportTitleOnScroll)
+    ? () => openReportArea('report-area') : undefined;
   const cardRegistry = cardRuntime.registry;
   const trackCardHost = useMemo(
     () => createCardHost(cardRegistry, {
@@ -571,7 +573,7 @@ export function TrackRouteBody({
       mobileReportTitleOnScroll={mobileReportTitleOnScroll}
       onOpenMobileArea={openMobileArea}
       mobileTitleReadView={openReportArea === undefined ? undefined : (controls) => <TrackSelector track={track} controls={controls}
-        onOpenTracks={openReportArea} onVisible={restoreReturnFocus} />}
+        onOpenTracks={() => openReportArea('report-title')} onVisible={restoreReturnFocus} />}
       track={track}
       onOpenOriginTrack={openRelatedTrack}
       canReopenTrack={canReopenTrack}

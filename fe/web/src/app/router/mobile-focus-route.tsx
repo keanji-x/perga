@@ -89,12 +89,12 @@ function MobileFocusPage({
       scrollRef={scrollRef}
       initialView={initialView}
       onViewChange={rememberView}
-      onOpenWorkspace={shareScope === null ? (trigger) => {
-        rememberReturnFocus(trigger);
+      onOpenWorkspace={shareScope === null ? () => {
+        rememberReturnFocus('focus-workspace');
         go({ name: 'workspace' });
       } : undefined}
-      onOpenArea={shareScope === null ? (areaId, trigger) => {
-        rememberReturnFocus(trigger);
+      onOpenArea={shareScope === null ? (areaId, trackId) => {
+        rememberReturnFocus(`focus-area:${trackId}`);
         go({ name: 'area', areaId });
       } : undefined}
       onOpenTrack={(trackId) => go({ name: 'track', trackId })}

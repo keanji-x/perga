@@ -38,6 +38,7 @@ import {
   OperationFeedback, DeleteConfirmDialog, useDeleteConfirm,
 } from '../../../ui/operation-feedback/public.tsx';
 import { PanelCard } from '../../../ui/panel-card/public.tsx';
+import { returnFocusProps } from '../../../ui/return-focus/public.ts';
 import { useState } from '../../../ui/state/public.ts';
 import { deriveTrackPageView } from '../../../../../core/view/track-page.ts';
 import type { RowModuleView, TrackPageView } from '../../../../../core/view/panel.ts';
@@ -125,7 +126,7 @@ export type TrackPageProps = Readonly<{
   /** `null` reserves the shell header while its title host mounts. */
   mobileHeaderTitleHost?: HTMLElement | null;
   mobileAreaName?: string;
-  onOpenMobileArea?: (trigger: HTMLButtonElement) => void;
+  onOpenMobileArea?: () => void;
   mobileReportTitleOnScroll?: boolean;
   mobileTitleReadView?: EditableTitleProps['readView'];
   /** The server's capabilities; at most one is true, so the menu offers Close or Reopen, never both. */
@@ -584,11 +585,11 @@ export function TrackPage({ isReportEmpty = false, fillReading = false, hideEmpt
               {(hasMobileDocArea || folioDate !== null || track.closedAt !== null || (scrollTitleInHeader && originLink !== null)) && (
                 <div className={styles.mobileDocMeta}>
                   {onOpenMobileArea === undefined ? (mobileAreaName !== undefined && <span>{mobileAreaName}</span>) : (
-                    <button type="button" className={styles.mobileDocArea} data-nc-return-focus="report-area"
+                    <button type="button" className={styles.mobileDocArea} {...returnFocusProps('report-area')}
                       aria-label={mobileAreaName === undefined ? 'Open workspace' : `Open area ${mobileAreaName}`}
                       onClick={(event) => {
                         event.currentTarget.focus({ preventScroll: true });
-                        onOpenMobileArea(event.currentTarget);
+                        onOpenMobileArea();
                       }}>
                       <span>{mobileAreaName ?? 'Workspace'}</span>
                       <Icon name="chevron-right" size="sm" />

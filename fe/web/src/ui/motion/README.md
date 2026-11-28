@@ -22,26 +22,6 @@ unmounts immediately. Drawer uses `useSurfacePresence` with the paired-only
 `edge-reveal` geometry below. Compact pages/reduced motion settle directly;
 native-child transition events never own the spring lifecycle.
 
-`EdgePresenceInput.frame` is a required `SurfaceSource` for the unanimated layout
-positioner; `part.element` is the exclusive paint node and the layout owner supplies
-`part.readFrame`. Present-scoped ResizeObserver observes both actual nodes (once
-when equal), refreshes on node or ref replacement, and releases old observations
-and queued work. Observation identity includes each owner's document/window, so
-same-node adoption rebinds subscriptions and cleanup uses the captured original
-document/window. Reader or frame-validation errors revoke playback and completion
-authority before propagating; completion validates the latest frame and both
-owners' documents even before observer delivery. A null frame suspends paint
-until a later layout commit restores it. Same-node declarations do not restart playback; completion reads the latest
-refs and reader. Independent frame resize rebases viewport contribution and signed
-velocity without requiring a paint resize, React render or window resize.
-
-The edge browser regressions cover independent frame invalidation and replacement
-of a ref declaration during close. History still uses its native deferred-close
-path: the earlier Settings edge-click failure has unknown cause. Test-side native
-input/close, dialog, focus and route traces improve future attribution; successful
-replays do not explain that historical failure. This slice does not complete the
-History/Sheet migration or close #3007.
-
 ## Press feedback
 
 `DepthFeedback` is installed once by ProductionApp (including login). Its
