@@ -95,6 +95,27 @@ public sealed class SessionLivenessTests
         Assert.Single(host.AgentRuntime.ExecutedTurns);
     }
 
+    [Fact]
+    public async Task LiveSessionWithoutNativeCompactKeepsCompactDisabledEvenWhenResumable()
+    {
+        await using var host = new PergaHostTestCluster();
+        var (track, sessionId) = await host.CreateTrackAsync();
+        var kernel = host.Services.GetRequiredService<IPergaKernel>();
+        var human = new InteropPrincipal.Human();
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var ct = deadline.Token;
+
+        // CompactHandler stays null so the live handle reports SupportsNativeCompact == false.
+        await kernel.SendSessionMessageAsync(sessionId, new("first", "first"), human, ct);
+        await kernel.WaitForTrackIdleAsync(track, ct);
+
+        var page = await host.AuthenticatedClient.GetFromJsonAsync<SessionItemsPageDto>(
+            $"/api/v1/sessions/{sessionId}/items?view=run", PergaJsonDefaults.ApiOptions, ct);
+        Assert.NotNull(page!.Session.NativeThreadId);
+        Assert.True(page.Capabilities!.SupportsSessionResume);
+        Assert.False(page.Capabilities.SupportsCompact);
+    }
+
     [Theory]
     [InlineData(true)]
     [InlineData(false)]
