@@ -60,6 +60,13 @@ public static partial class HostCliCommand
             await env.Error.WriteLineAsync(ex.Usage).ConfigureAwait(false);
             return 2;
         }
+        catch (HostDaemonCommand.LifecycleLockContentionException ex)
+        {
+            await env.Error.WriteLineAsync($"error: {ex.Message}").ConfigureAwait(false);
+            var check = args[0] == "status" ? "" : " or check 'perga status'";
+            await env.Error.WriteLineAsync($"hint:  Wait for it to finish{check}, then re-run 'perga {args[0]}'.").ConfigureAwait(false);
+            return 1;
+        }
         catch (Exception ex) when (ex is CliException or IOException or InvalidDataException or FormatException or
                                    UnauthorizedAccessException or Win32Exception)
         {
@@ -347,21 +354,10 @@ public static partial class HostCliCommand
             }
         }
 
-        FileStream? lifecycleLock = null;
-        try
-        {
-            if (Directory.Exists(plan.DataDir))
-                lifecycleLock = await HostDaemonCommand.AcquireLockAsync(plan.DataDir, ct).ConfigureAwait(false);
-        }
-        catch (HostDaemonCommand.LifecycleLockContentionException ex)
-        {
-            env.Error.WriteLine($"error: {ex.Message}");
-            env.Error.WriteLine("hint:  Wait for it to finish or check 'perga status', then re-run 'perga uninstall'.");
-            return 1;
-        }
-
-        using var held = lifecycleLock;
-        if (held is not null &&
+        using var lifecycleLock = Directory.Exists(plan.DataDir)
+            ? await HostDaemonCommand.AcquireLockAsync(plan.DataDir, ct).ConfigureAwait(false)
+            : null;
+        if (lifecycleLock is not null &&
             RunningForPackageChange(HostDaemonCommand.TryGetRunningInstance(plan.DataDir, out _), plan.InstallDir, env) is { } running)
         {
             if (args.Length == 0 && preview is null)
