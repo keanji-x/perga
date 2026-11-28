@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, cleanup, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, expect, it, vi } from 'vitest';
 import { createReadReceiptsKernel } from '../providers/read-receipts-fixture.tsx';
@@ -35,7 +35,7 @@ it('reads the same receipt as the desktop rail and updates the mounted Area list
     } : undefined,
   });
   const openTracks = await screen.findByRole('region', { name: 'Open tracks' });
-  await waitFor(() => expect(openTracks.textContent).toContain('Unread update'));
+  await within(openTracks).findByRole('button', { name: /^Project evidence.*Unread update$/ });
   await receipts.transport.send({
     method: 'POST', path: '/api/v1/read-receipts/conversation/s1/read', credentials: 'include', body: { readThroughMs: 150 },
   });

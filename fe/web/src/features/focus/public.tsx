@@ -38,12 +38,12 @@ export type MobileFocusHomeProps = Readonly<{
   loading: boolean;
   error: string | null;
   onRetry: () => void;
-  onOpenWorkspace?: () => void;
+  onOpenWorkspace?: (trigger: HTMLButtonElement) => void;
   scrollRef?: Ref<HTMLDivElement>;
   initialView?: MobileFocusView;
   onViewChange?: (view: MobileFocusView) => void;
   onOpenTrack: (trackId: string) => void;
-  onOpenArea?: (areaId: string) => void;
+  onOpenArea?: (areaId: string, trigger: HTMLButtonElement) => void;
   onNewTrack?: (areaId?: string) => void;
   onMarkAllRead?: (tracks: readonly Track[]) => void;
   renderTrackTitle?: (track: Track, content: ReactNode) => ReactNode;
@@ -201,7 +201,8 @@ export function MobileFocusHome({
               type="button"
               className={styles.iconButton}
               aria-label="Open workspace"
-              onClick={onOpenWorkspace}
+              data-nc-return-focus="focus-workspace"
+              onClick={(event) => onOpenWorkspace(event.currentTarget)}
             >
               <Icon name="menu" />
             </button>}

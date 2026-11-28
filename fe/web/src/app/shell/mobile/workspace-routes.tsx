@@ -1,7 +1,7 @@
 import { createContext, useContext, useEffect, type ReactNode } from 'react';
 import { OperationFeedback } from '../../../ui/operation-feedback/public.tsx';
 import { useCompactViewport } from '../../../ui/viewport/public.ts';
-import { useAppHistory, useMobileHistoryView } from '../../router/app-history.tsx';
+import { useAppHistory, useHistoryEntryIndex, useHistoryReturnFocus, useMobileHistoryView } from '../../router/app-history.tsx';
 import { useMobileBack } from '../../router/mobile-back.ts';
 import { routeParamFromPath, useGo, useRouteParam } from '../../router/navigation.ts';
 import type { ShellController } from '../use-shell-controller.ts';
@@ -31,21 +31,24 @@ export function AreaRoute() {
 
 function MobileWorkspaceRoute({ areaId }: { areaId?: string }) {
   const compact = useCompactViewport();
+  const historyIndex = useHistoryEntryIndex();
   const go = useGo();
   const routes = useContext(RoutesContext);
   useEffect(() => {
     if (!compact) go({ name: 'today' }, { replace: true });
   }, [compact, go]);
   if (!compact || routes === null) return null;
-  return <WorkspacePage {...routes} areaId={areaId} />;
+  return <WorkspacePage key={historyIndex} historyIndex={historyIndex} {...routes} areaId={areaId} />;
 }
 
-function WorkspacePage({ controller, areaId, onOpenSettings, onSignOut, onSetupAccount, userLabel, nowMs }: WorkspaceRoutes & {
+function WorkspacePage({ controller, areaId, historyIndex, onOpenSettings, onSignOut, onSetupAccount, userLabel, nowMs }: WorkspaceRoutes & {
   areaId?: string;
+  historyIndex: number;
 }) {
   const { go, areas, workspace, readError, readLoading, retryRead, isUnread } = controller;
   const back = useMobileBack({ name: 'today' }, 'Focus', areas);
-  const { initialView, rememberView, scrollRef } = useMobileHistoryView<boolean>(!readLoading);
+  const { initialView, rememberView, scrollRef } = useMobileHistoryView<boolean>(historyIndex, !readLoading);
+  const rememberReturnFocus = useHistoryReturnFocus(!readLoading);
   const { previousEntry } = useAppHistory();
   const props = {
     currentTrackId: routeParamFromPath(previousEntry?.pathname ?? '', '/track/'),
@@ -57,7 +60,10 @@ function WorkspacePage({ controller, areaId, onOpenSettings, onSignOut, onSetupA
     {areaId === undefined
       ? <WorkspaceLevelOne {...props} accountLabel={userLabel} onOpenSettings={onOpenSettings}
           onSignOut={onSignOut} onSetupAccount={onSetupAccount}
-          onSelectArea={(id) => go({ name: 'area', areaId: id })}
+          onSelectArea={(id, trigger) => {
+            rememberReturnFocus(trigger);
+            go({ name: 'area', areaId: id });
+          }}
           onCreateArea={controller.requestCreateArea}
           onOpenToday={() => go({ name: 'today', view: 'today' })}
           onOpenMemory={() => go({ name: 'memory' })} />

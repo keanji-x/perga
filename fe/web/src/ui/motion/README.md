@@ -16,8 +16,7 @@ The library trajectory is sampled once at 10ms rendering precision and played th
 
 `SizeMotion` measures an intrinsic flow root that contains margins/floats. Mode changes animate real height with no text scaling, unmount or focus movement. Ordinary typing/updates and initial mount are immediate; late intrinsic updates retarget while moving. Settlement restores automatic height. Reduced motion and unmount release clipping and effects. Only a declared mode change reads old geometry in React's pre-mutation snapshot and new geometry after the commit. This narrow class lifecycle is required for a real before/after capture; ordinary child updates do not synchronously measure or keep a height cache. ResizeObserver retargets only an active transition. See the [React snapshot contract](https://react.dev/reference/react/Component#getsnapshotbeforeupdate). Children must not derive their height as a percentage of the animated host. Keep floating/portalled overlays outside transient clipping.
 
-`useEdgePresence` supplies physical edge presence for mobile navigation and Tracks
-page transitions. Dialog and ConfirmDialog use `useSurfacePresence` single lift with a
+Dialog and ConfirmDialog use `useSurfacePresence` single lift with a
 required explicit `origin` and `present=open`: dismissal cancels effects and
 unmounts immediately. Drawer uses `useSurfacePresence` with the paired-only
 `edge-reveal` geometry below. Compact pages/reduced motion settle directly;

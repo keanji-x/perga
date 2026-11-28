@@ -61,6 +61,21 @@ describe('App history', () => {
     expect(cold.stack.stepsBackOutOf(settings)).toBe(0);
   });
 
+  it('exits Settings after a forward traversal skips an unobserved entry', () => {
+    const history = createMemoryHistory({ initialEntries: ['/track/one'] });
+    history.push('/settings');
+    history.push('/settings/about');
+    history.go(-2);
+    const stack = createAppHistory(history, ({ pathname, search }) => ({ pathname, searchStr: search }));
+    stack.observe();
+    history.go(2);
+    expect(history.location.pathname).toBe('/settings/about');
+    const distance = stack.stepsBackOutOf((entry) => entry.pathname.startsWith('/settings'));
+    expect(distance).toBe(2);
+    history.go(-distance);
+    expect(history.location.pathname).toBe('/track/one');
+  });
+
   it('restores entry-specific scroll and view state and forgets discarded forward entries', () => {
     const { history, stack } = setup(['/']);
     stack.rememberScroll(0, 240);

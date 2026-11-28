@@ -23,7 +23,7 @@ export function WorkspaceLevelOne({
   isUnread, readError, readLoading, onRetryRead, accountLabel = 'Account', onSignOut, onSetupAccount, nowMs,
 }: WorkspaceListProps & Readonly<{
   onCreateArea: (origin: DialogOrigin) => void;
-  onSelectArea: (areaId: string) => void;
+  onSelectArea: (areaId: string, trigger: HTMLButtonElement) => void;
   onOpenSettings: () => void;
   onOpenToday: () => void;
   onOpenMemory: () => void;
@@ -87,7 +87,8 @@ export function WorkspaceLevelOne({
                       type="button"
                       className={styles.rowButton}
                       aria-label={area.name}
-                      onClick={() => onSelectArea(area.id)}
+                      data-nc-return-focus={`workspace-area:${area.id}`}
+                      onClick={(event) => onSelectArea(area.id, event.currentTarget)}
                     >
                       <span className={styles.rowIcon} aria-hidden="true">
                         <Icon name="folder" />

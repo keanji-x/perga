@@ -1,7 +1,7 @@
 import '../../styles/entry.css';
 import { createBrowserHistory } from '@tanstack/react-router';
 import { cleanup } from '@testing-library/react';
-import { afterEach, expect, it } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
 import { page } from 'vitest/browser';
 import type { ApiRequest, ApiTransportResponse } from '../../../../core/api/types.ts';
 import { renderDailyFixture } from './daily-planner-fixture.tsx';
@@ -58,8 +58,9 @@ it.each(['header', 'native'])('traverses the complete mobile route stack using %
       if (mode === 'header') await back(label).click();
       else app.host.history.back();
       await app.at(href);
+      if (href === '/workspace') await expect.element(button('Project')).toHaveFocus();
     }
-    await expect.element(button('Open workspace')).toBeVisible();
+    await expect.element(button('Open workspace')).toHaveFocus();
     app.host.history.forward();
     await app.at('/workspace');
     expect(page.getByRole('dialog', { name: 'Tracks and settings' }).query()).toBeNull();
@@ -309,4 +310,91 @@ it('omits Workspace and Area navigation from a cold shared Track', async () => {
   expect(button(/^Back to /).query()).toBeNull();
   expect(button('Open workspace').query()).toBeNull();
   expect(button('Open area Project').query()).toBeNull();
+});
+
+it('keeps the Area entry when creation acknowledges during draft Back', async () => {
+  await page.viewport(390, 844);
+  const created = fixtureTrack('created', { areaId: 'project-area', title: 'Created Track' });
+  let acknowledge!: (response: ApiTransportResponse) => void;
+  const response = new Promise<ApiTransportResponse>((resolve) => { acknowledge = resolve; });
+  const app = await nativeFixture(area, { reply: (request) => {
+    if (request.method === 'POST' && request.path === '/api/v1/tracks') return response;
+    if (request.path === '/api/v1/tracks/created') return ok(fixtureSnapshot(created));
+    return undefined;
+  } });
+  const deliverBack = app.router.history.back.bind(app.router.history);
+  const heldBack = vi.spyOn(app.router.history, 'back').mockImplementation(() => {});
+  try {
+    await button('New track').click();
+    await page.getByRole('combobox', { name: 'What this track should do' }).fill('Review the release');
+    await button('Create track').click();
+    await expect.poll(() => app.requests.some((request) => request.method === 'POST' && request.path === '/api/v1/tracks')).toBe(true);
+    await back('Project').click();
+    expect(heldBack).toHaveBeenCalledOnce();
+    acknowledge({ status: 201, statusText: 'Created', body: fixtureSnapshot(created) });
+    await expect.poll(() => app.client.isMutating()).toBe(0);
+
+    deliverBack();
+    await app.at(area);
+    await expect.element(page.getByRole('region', { name: 'Open tracks' })).toBeVisible();
+    expect(app.router.history.location.state.__TSR_index).toBe(1);
+    await button('New track').click();
+    await expect.element(button('Open track')).toBeVisible();
+  } finally {
+    heldBack.mockRestore();
+    app.close();
+  }
+});
+
+it('restores scroll and disclosure when native Go skips between visits to the same Area', async () => {
+  await page.viewport(390, 844);
+  const tracks = Array.from({ length: 24 }, (_, index) => fixtureTrack(`t${index}`, { areaId: 'project-area', title: `Evidence ${index}` }));
+  const archived = fixtureTrack('archive', { areaId: 'project-area', title: 'Archived', closedAtMs: 1 });
+  const app = await nativeFixture(area, { reply: (request) =>
+    request.path === '/api/v1/areas/project-area/tracks?includeClosed=true' ? ok([...tracks, archived]) : undefined,
+  });
+  const areaBody = () => document.querySelector<HTMLElement>('[data-nc-area-scroll]');
+  async function scrollTo(top: number) {
+    areaBody()!.scrollTop = top;
+    await new Promise<void>((resolve) => { requestAnimationFrame(() => { resolve(); }); });
+    expect(areaBody()?.scrollTop).toBe(top);
+  }
+  try {
+    await button('Show').click();
+    await scrollTo(70);
+    await app.router.navigate({ to: track });
+    await app.at(track);
+    await button('Open area Project').click();
+    await app.at(area);
+    await expect.element(button('Show')).toBeVisible();
+    await scrollTo(210);
+
+    app.host.history.go(-2);
+    await expect.poll(() => app.router.history.location.state.__TSR_index).toBe(1);
+    await expect.element(button('Hide')).toBeVisible();
+    await expect.poll(() => areaBody()?.scrollTop).toBe(70);
+    await scrollTo(100);
+    app.host.history.go(2);
+    await expect.element(button('Show')).toBeVisible();
+    await expect.poll(() => areaBody()?.scrollTop).toBe(210);
+    app.host.history.go(-2);
+    await expect.poll(() => areaBody()?.scrollTop).toBe(100);
+  } finally { app.close(); }
+});
+
+it('pops an open Conversations entry when resizing to desktop', async () => {
+  await page.viewport(390, 844);
+  const app = await nativeFixture(area);
+  try {
+    await openProject();
+    await app.at(track);
+    await button('Track actions').click();
+    await page.getByRole('menuitem', { name: 'Conversations', exact: true }).click();
+    await app.at(`${track}?panel=conversations`);
+    await page.viewport(1280, 800);
+    await app.at(track);
+    await page.viewport(390, 844);
+    await button(/^Back to (Project|Report)$/).click();
+    await app.at(area);
+  } finally { app.close(); }
 });

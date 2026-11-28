@@ -10,19 +10,24 @@ import { workspaceActivityErrorText, workspaceReadErrorText } from '../providers
 import { useReadReceipts } from '../providers/read-receipts.tsx';
 import { useWorkspace } from '../providers/workspace-queries.ts';
 import { useRequestCreateArea } from '../shell/public.tsx';
-import { useMobileHistoryView } from './app-history.tsx';
+import { useHistoryEntryIndex, useHistoryReturnFocus, useMobileHistoryView } from './app-history.tsx';
 import { useGo } from './navigation.ts';
 
-/** Mobile home route: binds workspace reads, read receipts, and navigation to the full-bleed Focus feed. */
-export function MobileFocusRoute({
-  transport,
-  unauthorized,
-  shareScope = null,
-}: Readonly<{
+type MobileFocusRouteProps = Readonly<{
   transport: ApiTransportPort;
   unauthorized: UnauthorizedChannel;
   shareScope?: unknown;
-}>) {
+}>;
+
+/** Mobile home route: binds workspace reads, read receipts, and navigation to the full-bleed Focus feed. */
+export function MobileFocusRoute(props: MobileFocusRouteProps) {
+  const historyIndex = useHistoryEntryIndex();
+  return <MobileFocusPage key={historyIndex} historyIndex={historyIndex} {...props} />;
+}
+
+function MobileFocusPage({
+  transport, unauthorized, shareScope = null, historyIndex,
+}: MobileFocusRouteProps & { historyIndex: number }) {
   const workspace = useWorkspace(transport, unauthorized);
   const receipts = useReadReceipts();
   const go = useGo();
@@ -36,7 +41,8 @@ export function MobileFocusRoute({
     || workspace.overlaysLoading
     || receipts.loading
     || [...workspace.tracksLoadingByArea.values()].some(Boolean);
-  const { initialView, rememberView, scrollRef } = useMobileHistoryView<MobileFocusView>(!readLoading);
+  const { initialView, rememberView, scrollRef } = useMobileHistoryView<MobileFocusView>(historyIndex, !readLoading);
+  const rememberReturnFocus = useHistoryReturnFocus(!readLoading);
 
   const retryRead = useCallback(() => {
     workspace.retryAreas();
@@ -83,8 +89,14 @@ export function MobileFocusRoute({
       scrollRef={scrollRef}
       initialView={initialView}
       onViewChange={rememberView}
-      onOpenWorkspace={shareScope === null ? () => go({ name: 'workspace' }) : undefined}
-      onOpenArea={shareScope === null ? (areaId) => go({ name: 'area', areaId }) : undefined}
+      onOpenWorkspace={shareScope === null ? (trigger) => {
+        rememberReturnFocus(trigger);
+        go({ name: 'workspace' });
+      } : undefined}
+      onOpenArea={shareScope === null ? (areaId, trigger) => {
+        rememberReturnFocus(trigger);
+        go({ name: 'area', areaId });
+      } : undefined}
       onOpenTrack={(trackId) => go({ name: 'track', trackId })}
       renderTrackTitle={(track, content) => <TrackTitle track={track}>{content}</TrackTitle>}
       onNewTrack={handleNewTrack}

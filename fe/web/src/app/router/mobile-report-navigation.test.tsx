@@ -276,6 +276,18 @@ describe('a desktop viewport never lets ?panel= disable the track panel', () => 
     await waitFor(() => { expect(href(router)).toBe('/track/w1'); });
   });
 
+  it('keeps a Track reached on desktop with a saved panel URL', async () => {
+    stubViewport(false);
+    const router = setup('/');
+    await screen.findByRole('navigation', { name: 'Workspace' });
+
+    await openPanel(router, 'cards');
+
+    await screen.findByRole('region', { name: 'Workbench' });
+    await waitFor(() => { expect(href(router)).toBe('/track/w1'); });
+    expect(router.history.length).toBe(2);
+  });
+
   it('drops ?panel= when the reader widens the window with the panel open', async () => {
     const viewport = stubViewport(true);
     const router = setup('/track/w1?panel=cards');

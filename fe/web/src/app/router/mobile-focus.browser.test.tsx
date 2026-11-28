@@ -698,6 +698,8 @@ describe('MobileFocusHome', () => {
     expect(router.state.location.pathname).toBe('/area/a-prod');
     await page.getByRole('button', { name: 'Back to Focus', exact: true }).click();
     await expect.element(page.getByRole('button', { name: /^Mobile layout polish\b/ })).toBeVisible();
+    const restoredRow = await page.getByRole('button', { name: /^Mobile layout polish\b/ }).findElement();
+    await expect.element(page.elementLocator(restoredRow.closest('li')!).getByRole('button', { name: 'Open area Product' })).toHaveFocus();
     expect(router.state.location.pathname).toBe('/');
   });
 
@@ -877,7 +879,7 @@ describe('MobileFocusHome', () => {
     await page.getByRole('button', { name: 'Open workspace', exact: true }).click();
     await expect.element(page.getByRole('heading', { name: 'Workspace', exact: true })).toBeVisible();
     await page.getByRole('button', { name: 'Back to Focus', exact: true }).click();
-    await expect.element(page.getByRole('button', { name: 'Open workspace', exact: true })).toBeVisible();
+    await expect.element(page.getByRole('button', { name: 'Open workspace', exact: true })).toHaveFocus();
 
     // Round-trip viewport resize: mobile -> desktop Today Assistant -> back to mobile Focus Home.
     await page.viewport(1280, 800);

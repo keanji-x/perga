@@ -3,7 +3,7 @@ import { createContext, useCallback, useContext, useLayoutEffect, useRef, useSyn
 import { useState } from '../../ui/state/public.ts';
 
 export type AppEntry = Readonly<{ pathname: string; searchStr: string }>;
-type ObservedEntry = { location: AppEntry; scrollTop: number; view?: unknown };
+type ObservedEntry = { location: AppEntry; scrollTop: number; view?: unknown; returnFocus?: string };
 type HistoryAction = Parameters<Parameters<RouterHistory['subscribe']>[0]>[0]['action']['type'];
 type Snapshot = Readonly<{
   canGoBack: boolean;
@@ -56,10 +56,15 @@ export function createAppHistory(history: RouterHistory, readEntry: (location: R
       if (!snapshot.canGoBack) return 0;
       for (let index = current; index >= floor; index--) {
         const entry = entries.get(index)?.location;
-        if (entry === undefined) break;
+        if (entry === undefined) continue;
         if (!predicate(entry)) return current - index;
       }
       return 0;
+    },
+    returnFocus: (index: number) => index === current ? entries.get(index)?.returnFocus : undefined,
+    rememberReturnFocus: (key: string) => {
+      const entry = entries.get(current);
+      if (entry !== undefined) entry.returnFocus = key;
     },
     scrollTop: (index: number) => entries.get(index)?.scrollTop ?? 0,
     rememberScroll: (index: number, top: number) => {
@@ -92,11 +97,36 @@ export function useAppHistory() {
   return { stack, ...snapshot };
 }
 
-/** Keep the view controls that determine the scrollable content with its offset. */
-export function useMobileHistoryView<View>(ready: boolean) {
+/** Keep the current page's entry until its successor is ready to render. */
+export function useHistoryEntryIndex() {
+  return useRouterState({ select: (state) =>
+    (state.isLoading ? state.resolvedLocation ?? state.location : state.location).state.__TSR_index,
+  });
+}
+
+export function useHistoryReturnFocus(ready: boolean) {
+  const { stack, lastAction } = useAppHistory();
+  const index = useHistoryEntryIndex();
+  useLayoutEffect(() => {
+    if (!ready || lastAction !== 'BACK' || document.activeElement !== document.body) return;
+    const key = stack?.returnFocus(index);
+    if (key === undefined) return;
+    const target = Array.from(document.querySelectorAll<HTMLButtonElement>('[data-nc-return-focus]'))
+      .find((button) => button.dataset.ncReturnFocus === key);
+    if (target?.isConnected && target.getClientRects().length > 0 && getComputedStyle(target).visibility === 'visible') {
+      target.focus({ preventScroll: true });
+    }
+  }, [index, lastAction, ready, stack]);
+
+  return (trigger: HTMLButtonElement) => {
+    const key = trigger.dataset.ncReturnFocus;
+    if (key !== undefined) stack?.rememberReturnFocus(key);
+  };
+}
+
+/** Keep scroll and view controls together for the page keyed by this history index. */
+export function useMobileHistoryView<View>(index: number, ready: boolean) {
   const stack = useContext(AppHistoryContext);
-  const routeIndex = useRouterState({ select: (state) => state.location.state.__TSR_index });
-  const [index] = useState(routeIndex);
   const [initialView] = useState(() => stack?.readView(index) as View | undefined);
   const ref = useRef<HTMLDivElement>(null);
   const restored = useRef(false);

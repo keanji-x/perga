@@ -34,6 +34,7 @@ export function createDraftBackOwner(router: AnyRouter) {
   return {
     cancel,
     ready,
+    isPending: () => pending !== undefined,
     go: (navigate: Navigation) => {
       if (pending !== undefined) pending.latest = navigate;
       else navigate(current());

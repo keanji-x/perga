@@ -74,6 +74,7 @@ import { useUiPreferences } from '../providers/ui-preferences.tsx';
 import { useMobileHeaderActionsHost,useMobileHeaderTitleHost } from '../shell/public.tsx';
 import { mobileBackLabel, useMobileShellBack } from './mobile-back.ts';
 import { visibleAreas } from '../../../../core/domain/area.ts';
+import { useHistoryReturnFocus } from './app-history.tsx';
 import { TrackSelector } from '../shell/mobile/track-selector.tsx';
 import dailyStyles from './daily-planner.module.css';
 import { deriveEmptyTrackCenter, type CenteredStagePresentation } from './centered-stage.tsx';
@@ -174,9 +175,9 @@ export function TrackRouteBody({
   const requestedFilePath = requestedCardId === null ? rawRequestedFilePath : null;
   const requestedFileLine = useRouteFileLine();
   const backFilePath = useRouteFileBackPath();
-  const fileEntryKey = useRouterState({ select: (state) => state.location.state.__TSR_key
+  const historyEntryKey = useRouterState({ select: (state) => state.location.state.__TSR_key
     ?? (state.location.state.__TSR_index === undefined ? undefined : `index:${state.location.state.__TSR_index}`) });
-  const fileView = useTrackFileView(track.id, fileEntryKey, requestedFilePath);
+  const fileView = useTrackFileView(track.id, historyEntryKey, requestedFilePath);
   const silentFile = useRouterState({ select: (state) => state.location.state.ncFileSilent === true });
   const fileOpenRequest = useRouterState({ select: (state) => state.location.state.ncFileOpenRequest });
   const [resolvedFile, setResolvedFile] = useState<Readonly<{ requested: string; canonical: string }> | null>(null);
@@ -220,6 +221,11 @@ export function TrackRouteBody({
   const routePanel = useRoutePanel();
   /* Whether `?panel=` describes anything at all on this viewport. */
   const compactViewport = useCompactViewport();
+  const mobilePanel = renderedMobilePanel(routePanel, {
+    compact: compactViewport,
+    overlayOpen: requestedCardId !== null || rawRequestedFilePath !== null,
+  });
+  const rememberReturnFocus = useHistoryReturnFocus(compactViewport && mobileHeaderTitleHost != null);
   const cardRegistry = cardRuntime.registry;
   const trackCardHost = useMemo(
     () => createCardHost(cardRegistry, {
@@ -380,14 +386,17 @@ export function TrackRouteBody({
     admittedTerminalRoute.current = requestedCardId;
     workbench.reveal(requestedCardId);
   }, [compactViewport, requestedCardId, workbench]);
-  /* `?panel=` is a compact concept: above the breakpoint `TrackPage` would put
-   * `inert` on the desktop panel. Corrected here with `replace`, and the
-   * injection below is gated on the viewport too, because on a cold start this
-   * effect has not run at first paint. */
+  const compactPanelEntry = useRef<string | undefined>(undefined);
   useEffect(() => {
-    if (compactViewport || routePanel === null) return;
-    goSameTrack(track.id, { panel: undefined }, { replace: true });
-  }, [compactViewport, goSameTrack, routePanel, track.id]);
+    if (compactViewport || routePanel === null) {
+      compactPanelEntry.current = mobilePanel === null ? undefined : historyEntryKey;
+      return;
+    }
+    // A panel shown on mobile owns its Back entry. A desktop arrival with an
+    // old panel URL still needs to land on this report.
+    if (historyEntryKey !== undefined && compactPanelEntry.current === historyEntryKey) closePanel(track.id);
+    else goSameTrack(track.id, { panel: undefined }, { replace: true });
+  }, [closePanel, compactViewport, goSameTrack, historyEntryKey, mobilePanel, routePanel, track.id]);
   /* One confirm for both delete gestures. Nothing navigates on success: the
    * `knownCard` effect bounces `?card=<deleted>` off the URL, and a `go()` here
    * would race it. */
@@ -566,7 +575,10 @@ export function TrackRouteBody({
       mobileHeaderTitleHost={mobileHeaderTitleHost}
       mobileAreaName={mobileAreaName}
       mobileReportTitleOnScroll={mobileReportTitleOnScroll}
-      onOpenMobileArea={openMobileArea}
+      onOpenMobileArea={openMobileArea === undefined ? undefined : (trigger) => {
+        rememberReturnFocus(trigger);
+        openMobileArea();
+      }}
       mobileTitleReadView={openReportArea === undefined ? undefined : (controls) => <TrackSelector track={track} controls={controls}
         onOpenTracks={openReportArea} />}
       track={track}
@@ -608,12 +620,7 @@ export function TrackRouteBody({
         />}
       onCloseBoard={knownCard || (compactViewport && requestedCardId !== null) ? closeBoard : undefined}
       fileViewer={fileViewer}
-      /* Gated on the viewport too: the effect above cannot have run yet on a desktop
-               cold start, and one render "open" is one render with the desktop panel `inert`. */
-      panel={renderedMobilePanel(routePanel, {
-        compact: compactViewport,
-        overlayOpen: requestedCardId !== null || rawRequestedFilePath !== null,
-      })}
+      panel={mobilePanel}
       onOpenPanel={(kind) => { openPanel(track.id, kind); }}
       onClosePanel={() => { closePanel(track.id); }}
       mobileBackLabel={shellBack.backLabel}

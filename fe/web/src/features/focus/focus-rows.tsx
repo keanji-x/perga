@@ -80,7 +80,7 @@ export function MobileTrackFeedRow({
   unread: boolean;
   formatters: RelativeTimeFormatters;
   onOpenTrack: (trackId: string) => void;
-  onOpenArea?: (areaId: string) => void;
+  onOpenArea?: (areaId: string, trigger: HTMLButtonElement) => void;
   timestampMs?: number;
   current?: boolean;
   surface?: 'edge' | 'card';
@@ -152,9 +152,10 @@ export function MobileTrackFeedRow({
           {timeLabel}
           {hasAreaAction ? (
             <button type="button" className={styles.feedAreaButton} aria-label={`Open area ${areaName}`}
+              data-nc-return-focus={`focus-area:${track.id}`}
               onClick={(event) => {
                 event.currentTarget.focus({ preventScroll: true });
-                onOpenArea(track.areaId);
+                onOpenArea(track.areaId, event.currentTarget);
               }}>
               <span className={styles.feedAreaLabel}>{area}<Icon name="chevron-right" size="sm" /></span>
             </button>

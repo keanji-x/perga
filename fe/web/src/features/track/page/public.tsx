@@ -125,7 +125,7 @@ export type TrackPageProps = Readonly<{
   /** `null` reserves the shell header while its title host mounts. */
   mobileHeaderTitleHost?: HTMLElement | null;
   mobileAreaName?: string;
-  onOpenMobileArea?: () => void;
+  onOpenMobileArea?: (trigger: HTMLButtonElement) => void;
   mobileReportTitleOnScroll?: boolean;
   mobileTitleReadView?: EditableTitleProps['readView'];
   /** The server's capabilities; at most one is true, so the menu offers Close or Reopen, never both. */
@@ -584,11 +584,11 @@ export function TrackPage({ isReportEmpty = false, fillReading = false, hideEmpt
               {(hasMobileDocArea || folioDate !== null || track.closedAt !== null || (scrollTitleInHeader && originLink !== null)) && (
                 <div className={styles.mobileDocMeta}>
                   {onOpenMobileArea === undefined ? (mobileAreaName !== undefined && <span>{mobileAreaName}</span>) : (
-                    <button type="button" className={styles.mobileDocArea}
+                    <button type="button" className={styles.mobileDocArea} data-nc-return-focus="report-area"
                       aria-label={mobileAreaName === undefined ? 'Open workspace' : `Open area ${mobileAreaName}`}
                       onClick={(event) => {
                         event.currentTarget.focus({ preventScroll: true });
-                        onOpenMobileArea();
+                        onOpenMobileArea(event.currentTarget);
                       }}>
                       <span>{mobileAreaName ?? 'Workspace'}</span>
                       <Icon name="chevron-right" size="sm" />

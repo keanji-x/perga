@@ -105,7 +105,7 @@ it('reveals the Track title only past the mobile document heading and opens the 
   await area.click();
   await expect.element(page.getByRole('region', { name: 'Open tracks' })).toBeVisible();
   await page.getByRole('button', { name: 'Back to Report' }).click();
-  await expect.element(area).toBeVisible();
+  await expect.element(area).toHaveFocus();
   scrollport = await reportScrollport();
   expect(router.state.location.pathname).toBe('/track/w1');
 
