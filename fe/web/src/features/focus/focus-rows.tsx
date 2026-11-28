@@ -108,7 +108,7 @@ export function MobileTrackFeedRow({
   const area = areaName === undefined ? null : <span className={styles.feedArea}>{highlightMatch(areaName, query)}</span>;
   const hasAreaAction = areaName !== undefined && onOpenArea !== undefined;
   const hasControls = hasAreaAction || trailingAction != null;
-  const timeLabel = time === '' ? null : <span className={styles.feedTime}>{areaName === undefined ? time : `· ${time}`}</span>;
+  const timeLabel = time === '' ? null : <span className={styles.feedTime}>{time}</span>;
 
   return (
     <li className={itemClass}>
@@ -141,7 +141,7 @@ export function MobileTrackFeedRow({
         </span>
         {' '}
         {!hasControls && (area !== null || timeLabel !== null) && (
-          <span className={styles.feedMeta}>{area}{' '}{timeLabel}</span>
+          <span className={styles.feedMeta}>{timeLabel}{' '}{area}</span>
         )}
         {' '}
         {closed && status?.text !== 'Closed' && <span className={styles.srOnly}>Closed</span>}
@@ -149,6 +149,7 @@ export function MobileTrackFeedRow({
       </button>
       {hasControls && (
         <div className={`${styles.feedMeta} ${styles.feedControls}`}>
+          {timeLabel}
           {hasAreaAction ? (
             <button type="button" className={styles.feedAreaButton} aria-label={`Open area ${areaName}`}
               onClick={(event) => {
@@ -158,7 +159,6 @@ export function MobileTrackFeedRow({
               <span className={styles.feedAreaLabel}>{area}<Icon name="chevron-right" size="sm" /></span>
             </button>
           ) : area}
-          {timeLabel}
           {trailingAction}
         </div>
       )}

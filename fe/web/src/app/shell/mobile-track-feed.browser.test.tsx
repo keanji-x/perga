@@ -147,6 +147,7 @@ it.each([
   expect(titleBox.right).toBe(previewBox.right);
   expect(titleBox.right).toBe(width - 16);
   expect(actionBox.top).toBeGreaterThan(previewBox.bottom);
+  expect(timeBox.left).toBe(previewBox.left);
   expect(timeBox.right).toBeLessThan(actionBox.left);
   expect(timeBox.top + timeBox.height / 2).toBeCloseTo(actionBox.top + actionBox.height / 2, 0);
   expect(actionBox.right).toBe(titleBox.right);
@@ -181,11 +182,10 @@ it.each([
   expect(onOpenTrack).toHaveBeenCalledExactlyOnceWith('failed');
 });
 
-it('keeps Area and Workspace archive rows compact and applies asymmetric landscape safe areas once', async () => {
-  const width = 844;
-  const left = 47;
-  const right = 23;
-  await page.viewport(width, 390);
+it.each([
+  [320, 640, 0, 0], [390, 844, 0, 0], [844, 390, 47, 23],
+] as const)('splits Area and Workspace archive footers at %ix%i with safe areas of %i and %i', async (width, height, left, right) => {
+  await page.viewport(width, height);
   await commands.setHorizontalSafeArea(left, right);
   try {
     fixture({ currentTrackId: 'closed-product' });
@@ -198,7 +198,8 @@ it('keeps Area and Workspace archive rows compact and applies asymmetric landsca
     const openTime = await page.elementLocator(failed.element().closest('li')!).getByText('2m', { exact: true }).findElement();
     const inset = title.getBoundingClientRect().left - left;
     expect(inset).toBe(16);
-    expect(action.element().getBoundingClientRect().right).toBeLessThanOrEqual(width - right);
+    expect(action.element().getBoundingClientRect().right).toBe(width - right - inset);
+    expect(openTime.getBoundingClientRect().left).toBe(left + inset);
     expect(openTime.getBoundingClientRect().right).toBeLessThanOrEqual(action.element().getBoundingClientRect().left);
     const normalDivider = getComputedStyle(open.getByRole('button', { name: /^Build verification/ }).element().closest('li')!, '::before');
     expect([normalDivider.left, normalDivider.right]).toEqual([`${left + inset}px`, `${right + inset}px`]);
@@ -219,7 +220,7 @@ it('keeps Area and Workspace archive rows compact and applies asymmetric landsca
     await expect.element(areaRow.getByText('5m', { exact: true })).toBeVisible();
     const areaTitle = await areaRow.getByText('Archived roadmap', { exact: true }).findElement();
     expect(areaTitle.getBoundingClientRect().left).toBe(left + inset);
-    expect((await areaRow.getByText('5m', { exact: true }).findElement()).getBoundingClientRect().right).toBe(width - right - inset);
+    expect(areaRow.getByText('5m', { exact: true }).element().getBoundingClientRect().left).toBe(left + inset);
     expect(getComputedStyle(areaTitle).textDecorationLine).toBe('line-through');
     expect(getComputedStyle(areaTitle).fontWeight).toBe(getComputedStyle(areaTitle).getPropertyValue('--weight-semibold').trim());
     expectClamped(areaRow.getByText('Summary:', { exact: true }).element());
@@ -238,17 +239,22 @@ it('keeps Area and Workspace archive rows compact and applies asymmetric landsca
     await expect.element(workspaceRow).toBeVisible();
     await expect.element(workspaceRow).toHaveAttribute('aria-current', 'page');
     await expect.element(workspaceRow).toHaveAccessibleName(/\bUnread$/);
-    await expect.element(workspaceRow).toHaveTextContent(/Product\s*· 5m/);
     const card = workspaceRow.element().closest('ul')!;
     expect(getComputedStyle(card).backgroundColor).toBe(color('--surface-card'));
     const cardBox = card.getBoundingClientRect();
     expect([cardBox.left, width - cardBox.right]).toEqual([left + inset, right + inset]);
     const workspaceTitle = workspaceRow.getByText('Archived roadmap', { exact: true }).element();
-    expect(workspaceTitle.getBoundingClientRect().left - workspaceRow.element().getBoundingClientRect().left).toBe(inset);
+    const workspaceBox = workspaceRow.element().getBoundingClientRect();
+    const workspaceTime = workspaceRow.getByText('5m', { exact: true }).element().getBoundingClientRect();
+    const workspaceArea = workspaceRow.getByText('Product', { exact: true }).element().getBoundingClientRect();
+    expect(workspaceTitle.getBoundingClientRect().left - workspaceBox.left).toBe(inset);
+    expect(workspaceTime.left).toBe(workspaceBox.left + inset);
+    expect(workspaceArea.right).toBe(workspaceBox.right - inset);
+    expect(workspaceTime.right).toBeLessThan(workspaceArea.left);
     expect(getComputedStyle(workspaceTitle).textDecorationLine).toBe('line-through');
     expectClamped(workspaceRow.getByText('Summary:', { exact: true }).element());
     const prototype = library.getByRole('button', { name: /^Archived prototype\b/ });
-    await expect.element(prototype).toHaveTextContent(/Closed\s*Platform\s*· 7m/);
+    await expect.element(prototype).toHaveTextContent(/Closed\s*7m\s*Platform/);
     expect(getComputedStyle(prototype.element().closest('li')!).backgroundColor).toBe('rgba(0, 0, 0, 0)');
     const prototypeTitle = getComputedStyle(prototype.getByText('Archived prototype', { exact: true }).element());
     expect(prototypeTitle.fontWeight).toBe(prototypeTitle.getPropertyValue('--weight-medium').trim());
@@ -267,6 +273,33 @@ it('extends the Area feed surface to the bottom when there is no archive toggle'
   expect(page.getByRole('region', { name: 'Closed tracks', exact: true }).query()).toBeNull();
 });
 
+it('truncates long Workspace archive Area labels and aligns an untimed label at 320px', async () => {
+  await page.viewport(320, 640);
+  const longArea = { ...product, name: 'perga 开发 ' + 'Mobile workspace and design systems '.repeat(5).trimEnd() };
+  fixture({
+    view: 'areas',
+    areas: [longArea, platform],
+    nowMs: new Date(2026, 10, 27, 12).getTime(),
+    tracksByArea: new Map([
+      [product.id, [track({ id: 'timed-archive', title: 'Timed archive', closedAt: new Date(2026, 10, 25, 12).getTime() })]],
+      [platform.id, [track({ id: 'untimed-archive', title: 'Untimed archive', areaId: platform.id, closedAt: 0 })]],
+    ]),
+  });
+  await page.getByRole('button', { name: /^Closed tracks 2$/ }).click();
+  const timed = page.getByRole('button', { name: /^Timed archive\b/ });
+  const untimed = page.getByRole('button', { name: 'Untimed archive Closed Platform', exact: true });
+  const time = (await timed.getByText('Nov 25', { exact: true }).findElement()).getBoundingClientRect();
+  const label = timed.getByText(longArea.name, { exact: true }).element();
+  const labelBox = label.getBoundingClientRect();
+  expect(time.left).toBe(timed.element().getBoundingClientRect().left + 16);
+  expect(time.right).toBeLessThan(labelBox.left);
+  expect(labelBox.right).toBe(timed.element().getBoundingClientRect().right - 16);
+  expect(label.scrollWidth).toBeGreaterThan(label.clientWidth);
+  expect(getComputedStyle(label).textOverflow).toBe('ellipsis');
+  const untimedRow = await untimed.findElement();
+  expect(untimed.getByText('Platform', { exact: true }).element().getBoundingClientRect().right).toBe(untimedRow.getBoundingClientRect().right - 16);
+  expect(document.documentElement.scrollWidth).toBe(320);
+});
 
 it.each([320, 390])('keeps the menu below a two-line preview when there is no timestamp at %ipx', async (width) => {
   await page.viewport(width, 640);
@@ -280,4 +313,6 @@ it.each([320, 390])('keeps the menu below a two-line preview when there is no ti
   expectClamped(summary);
   expect(action.getBoundingClientRect().top).toBeGreaterThan(summary.parentElement!.getBoundingClientRect().bottom);
   expect(action.getBoundingClientRect()).toMatchObject({ width: 44, height: 44, right: width - 16 });
+  row.closest('li')!.dir = 'rtl';
+  expect(action.getBoundingClientRect().left).toBe(16);
 });

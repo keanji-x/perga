@@ -26,6 +26,9 @@ type FocusFixtureOptions = Readonly<{
   askTrackUnreadSessionId?: string;
   failedPreviewKind?: 'ask' | 'summary';
   askUsesSummary?: boolean;
+  omitAskTimestamp?: boolean;
+  productAreaName?: string;
+  backendAreaName?: string;
   shareScope?: unknown;
   holdOverlays?: boolean;
   themeStorage?: ThemeStorage;
@@ -34,6 +37,7 @@ type FocusFixtureOptions = Readonly<{
 
 function renderFocusFixture(options: FocusFixtureOptions = {}) {
   const now = Date.now();
+  const askTimestamp = options.omitAskTimestamp ? 0 : now - 120_000;
   const initialReceipts: ReadReceipt[] = [...(options.initialReceipts ?? [])];
   if (options.manualUnreadTrackId !== undefined) {
     initialReceipts.push({
@@ -47,7 +51,7 @@ function renderFocusFixture(options: FocusFixtureOptions = {}) {
 
   const productArea = {
     id: 'a-prod',
-    name: 'Product',
+    name: options.productAreaName ?? 'Product',
     kind: 'user',
     color: '#5B8DEF',
     sortOrder: 1,
@@ -56,7 +60,7 @@ function renderFocusFixture(options: FocusFixtureOptions = {}) {
   };
   const backendArea = {
     id: 'a-back',
-    name: 'Backend',
+    name: options.backendAreaName ?? 'Backend',
     kind: 'user',
     color: '#2F9E44',
     sortOrder: 2,
@@ -66,7 +70,7 @@ function renderFocusFixture(options: FocusFixtureOptions = {}) {
   const askTrack = fixtureTrack('t-ask', {
     areaId: 'a-prod',
     title: 'Mobile layout polish',
-    updatedAtMs: now - 120_000,
+    updatedAtMs: askTimestamp,
   });
   const failedTrack = fixtureTrack('t-failed', {
     areaId: 'a-prod',
@@ -166,7 +170,7 @@ function renderFocusFixture(options: FocusFixtureOptions = {}) {
         hasBlockedSession: false,
         unreadMailCount: 0,
         workspaceFailed: false,
-        updatedAtMs: now - 120_000,
+        updatedAtMs: askTimestamp,
         notifiableSessions: options.askTrackUnreadSessionId === undefined
           ? []
           : [{ sessionId: options.askTrackUnreadSessionId, lastNotifiableTurnAtMs: now - 120_000 }],
@@ -340,13 +344,21 @@ describe('MobileFocusHome', () => {
     const longPreview = reply.getByText('Reply:', { exact: true }).element().parentElement!;
     const askItem = page.elementLocator(ask.element().closest('li')!);
     const area = askItem.getByRole('button', { name: 'Open area Product' }).element();
-    const time = askItem.getByText('· 2m', { exact: true }).element();
+    const time = askItem.getByText('2m', { exact: true }).element();
     const askPreview = ask.getByText('Waiting on you:', { exact: true }).element().parentElement!;
+    const areaBox = area.getBoundingClientRect();
+    const timeBox = time.getBoundingClientRect();
+    const askPreviewBox = askPreview.getBoundingClientRect();
     expect(ask.element()).not.toContainElement(area);
-    expect(area.getBoundingClientRect().height).toBeGreaterThanOrEqual(44);
-    expect(area.getBoundingClientRect().top).toBeGreaterThan(askPreview.getBoundingClientRect().bottom);
-    expect(time.getBoundingClientRect().left).toBeGreaterThan(area.getBoundingClientRect().right);
-    expect(time.getBoundingClientRect().right).toBe(askPreview.getBoundingClientRect().right);
+    expect(areaBox.height).toBeGreaterThanOrEqual(44);
+    expect(areaBox.top).toBeGreaterThan(askPreviewBox.bottom);
+    expect(timeBox.left).toBe(askPreviewBox.left);
+    expect(timeBox.right).toBeLessThan(areaBox.left);
+    expect(areaBox.right).toBe(askPreviewBox.right);
+    expect(area.querySelector('svg')!.getBoundingClientRect().right).toBe(areaBox.right);
+    expect(getComputedStyle(time).color).toBe(resolvedColor('var(--text-3)'));
+    expect(getComputedStyle(area).color).toBe(resolvedColor('var(--text-2)'));
+    expect(getComputedStyle(area).backgroundColor).toBe('rgba(0, 0, 0, 0)');
     expect(firstTitle.getBoundingClientRect().left).toBe(firstPreview.getBoundingClientRect().left);
     expect(parseFloat(getComputedStyle(firstTitle).fontSize)).toBeGreaterThan(parseFloat(getComputedStyle(firstPreview).fontSize));
     const titleStyle = getComputedStyle(longTitle);
@@ -361,6 +373,8 @@ describe('MobileFocusHome', () => {
     expect(getComputedStyle(reply.element()).paddingBlock).toBe('20px 18px');
     expect(getComputedStyle(reply.element()).rowGap).toBe('8px');
     expect(longPreview.scrollHeight).toBeGreaterThan(longPreview.clientHeight);
+    const replyArea = page.elementLocator(reply.element().closest('li')!).getByRole('button', { name: 'Open area Product' }).element();
+    expect(replyArea.getBoundingClientRect().top).toBeGreaterThan(longPreview.getBoundingClientRect().bottom);
     for (const row of rows) {
       expect(row.scrollWidth).toBeLessThanOrEqual(row.clientWidth);
       expect(row.getBoundingClientRect().left).toBe(0);
@@ -606,30 +620,60 @@ describe('MobileFocusHome', () => {
 
       const glyph = menu.querySelector('svg')!.getBoundingClientRect();
       const rowTitle = row.getByText('Mobile layout polish', { exact: true }).element().getBoundingClientRect();
-      const rowMeta = page.elementLocator(row.element().closest('li')!).getByText('· 2m', { exact: true }).element().getBoundingClientRect();
-      for (const box of [glyph, focus.getBoundingClientRect(), rowTitle, rowMeta, create.getBoundingClientRect()]) {
+      const item = page.elementLocator(row.element().closest('li')!);
+      const rowTime = item.getByText('2m', { exact: true }).element().getBoundingClientRect();
+      const area = item.getByRole('button', { name: 'Open area Product' }).element().getBoundingClientRect();
+      for (const box of [glyph, focus.getBoundingClientRect(), rowTitle, rowTime, area, create.getBoundingClientRect()]) {
         expect(box.left).toBeGreaterThanOrEqual(leftInset);
         expect(box.right).toBeLessThanOrEqual(width - rightInset);
       }
       expect(Math.abs(glyph.left - rowTitle.left)).toBeLessThanOrEqual(1);
-      expect(rowTitle.left - leftInset).toBeCloseTo(width - rightInset - rowMeta.right, 0);
+      expect(rowTime.left).toBe(rowTitle.left);
+      expect(rowTitle.left - leftInset).toBeCloseTo(width - rightInset - area.right, 0);
       const reply = await page.getByRole('button', { name: /^Design system review/ }).findElement();
       const divider = getComputedStyle(reply.closest('li')!, '::before');
       expect(parseFloat(divider.left)).toBeCloseTo(rowTitle.left, 0);
-      expect(parseFloat(divider.right)).toBeCloseTo(width - rowMeta.right, 0);
+      expect(parseFloat(divider.right)).toBeCloseTo(width - area.right, 0);
 
       await page.getByRole('button', { name: /^Unread/ }).click();
       const markRead = await page.getByRole('button', { name: 'Mark all read', exact: true }).findElement();
-      expect(markRead.getBoundingClientRect().right).toBeCloseTo(rowMeta.right, 0);
+      expect(markRead.getBoundingClientRect().right).toBeCloseTo(area.right, 0);
       expect(page.getByText('2 unread', { exact: true }).element().getBoundingClientRect().left).toBeCloseTo(rowTitle.left, 0);
       await page.getByRole('button', { name: 'Search tracks', exact: true }).click();
       await page.getByRole('combobox', { name: 'Filter by area', exact: true }).selectOptions('a-prod');
       const reset = await page.getByRole('button', { name: 'Reset', exact: true }).findElement();
-      expect(reset.getBoundingClientRect().right).toBeCloseTo(rowMeta.right, 0);
+      expect(reset.getBoundingClientRect().right).toBeCloseTo(area.right, 0);
       expect(page.getByText('Found 1 track in Product').element().getBoundingClientRect().left).toBeCloseTo(rowTitle.left, 0);
     } finally {
       await commands.setHorizontalSafeArea(0, 0);
     }
+  });
+
+  it.each([320, 390])('fits a long Area name beside a timestamp and keeps untimed Area links at inline-end at %ipx', async (width) => {
+    await page.viewport(width, 844);
+    const productAreaName = 'I';
+    const backendAreaName = 'perga 开发 ' + 'Mobile workspace and design systems '.repeat(5).trimEnd();
+    renderFocusFixture({ productAreaName, backendAreaName, omitAskTimestamp: true });
+    const untimed = await page.getByRole('button', { name: 'Mobile layout polish Waiting on you: Approve the mobile layout?', exact: true }).findElement();
+    const timed = await page.getByRole('button', { name: /^SQLite WAL checkpoint guard\b.*Reply:/ }).findElement();
+    const untimedItem = page.elementLocator(untimed.closest('li')!);
+    const timedItem = page.elementLocator(timed.closest('li')!);
+    const untimedArea = untimedItem.getByRole('button', { name: `Open area ${productAreaName}`, exact: true }).element();
+    const timedArea = timedItem.getByRole('button', { name: `Open area ${backendAreaName}`, exact: true }).element();
+    const time = timedItem.getByText('18m', { exact: true }).element();
+    const label = timedItem.getByText(backendAreaName, { exact: true }).element();
+    const preview = page.elementLocator(timed).getByText('Reply:', { exact: true }).element().parentElement!;
+
+    expect(untimedArea.parentElement?.textContent).toBe(productAreaName);
+    expect(untimedArea.getBoundingClientRect()).toMatchObject({ width: 44, height: 44, right: width - 16 });
+    expect(untimedArea.querySelector('svg')!.getBoundingClientRect().right).toBe(width - 16);
+    expect(timedArea.getBoundingClientRect().right).toBe(width - 16);
+    expect(timedArea.getBoundingClientRect().top).toBeGreaterThan(preview.getBoundingClientRect().bottom);
+    expect(time.getBoundingClientRect().left).toBe(16);
+    expect(time.getBoundingClientRect().right).toBeLessThan(timedArea.getBoundingClientRect().left);
+    expect(label.scrollWidth).toBeGreaterThan(label.clientWidth);
+    expect(getComputedStyle(label).textOverflow).toBe('ellipsis');
+    expect(document.documentElement.scrollWidth).toBe(width);
   });
 
   it.each([320, 390])('jumps from a Focus row directly to its Area and restores the opener at %ipx', async (width) => {
@@ -643,6 +687,9 @@ describe('MobileFocusHome', () => {
     expect(getComputedStyle(chevron).transform).toBe('none');
     item.dir = 'rtl';
     expect(getComputedStyle(chevron).transform).toBe('matrix(-1, 0, 0, 1, 0, 0)');
+    expect(opener.getBoundingClientRect().left).toBe(16);
+    expect(chevron.getBoundingClientRect().left).toBe(16);
+    expect(page.elementLocator(item).getByText('2m', { exact: true }).element().getBoundingClientRect().right).toBe(width - 16);
     item.removeAttribute('dir');
     await area.click();
     const dialog = page.getByRole('dialog', { name: 'Tracks and settings' });
