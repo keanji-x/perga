@@ -130,7 +130,7 @@ public sealed class SessionContextUsageTests
                 new NativeCompactResult(new TokenUsage(100, 0, 0, 1_048_576, UsedTokens: 100), "Native compacted."));
             yield return new UnifiedAgentEvent.ThreadBound("thr_native_1");
             yield return new UnifiedAgentEvent.TurnCompleted(new TokenUsage(500, 50, 0,
-                input.PromptWithoutReportState() == "after compact" ? null : 1000, UsedTokens: 550));
+                input.Prompt == "after compact" ? null : 1000, UsedTokens: 550));
         }
 
         await ctx.SendAndWaitForTurnAsync(id, new("hello", "delayed-compact-1"));
@@ -178,7 +178,7 @@ public sealed class SessionContextUsageTests
             session.EmitIdleContextUsage(new IdleContextUsage(new TokenUsage(220, 0, 0, null), 0, session.NativeThreadId, CompletedPromptId: 1));
             await Task.Yield();
             yield return new UnifiedAgentEvent.TurnCompleted(new TokenUsage(100, 0, 0, 1000),
-                CompletedPromptId: input.PromptWithoutReportState() == "first" ? 1 : 2);
+                CompletedPromptId: input.Prompt == "first" ? 1 : 2);
         }
     }
 

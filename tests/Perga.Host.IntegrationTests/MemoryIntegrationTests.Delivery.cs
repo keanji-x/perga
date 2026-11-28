@@ -66,7 +66,7 @@ public sealed partial class MemoryIntegrationTests
         Assert.Collection(imageTurns, first =>
         {
             Assert.Equal(ImageAttachmentContract.MaxAttachmentsPerMessage, first.Attachments!.Count);
-            Assert.Equal(firstContent, first.PromptWithoutReportState());
+            Assert.Equal(firstContent, first.Prompt);
         }, second =>
         {
             Assert.Single(second.Attachments!);
@@ -101,7 +101,7 @@ public sealed partial class MemoryIntegrationTests
         Assert.Equal(invalidUtf8 ? 1 : 0, snapshot.UnreadableEntryCount);
         Assert.Null(await provider.GetContextSnapshotAsync(null, ct));
         var unavailable = await SendAndReadTurnAsync(host, kernel, trackId, sessionId, "Memory unavailable", ct);
-        Assert.Equal("Memory unavailable", unavailable.Input.PromptWithoutReportState());
+        Assert.Equal("Memory unavailable", unavailable.Input.Prompt);
         Assert.Equal(["loaded"], await MemoryNoticeModesAsync(kernel, sessionId, ct));
 
         File.Delete(path);

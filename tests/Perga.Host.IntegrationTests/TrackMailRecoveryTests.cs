@@ -143,7 +143,7 @@ public sealed class TrackMailRecoveryTests
                 await kernel.WaitForTrackIdleAsync("open");
                 await kernel.WaitForTrackIdleAsync("closed");
                 Assert.Equal(TrackWakeRequests.Mail(mail).Payload.GetProperty("prompt").GetString(),
-                    Assert.Single(reopened.AgentRuntime.ExecutedTurns).Input.PromptWithoutReportState());
+                    Assert.Single(reopened.AgentRuntime.ExecutedTurns).Input.Prompt);
                 var store = reopened.Services.GetRequiredService<ITrackStore>();
                 Assert.Equal("done", Assert.Single(await store.TrackWakes.ListAsync("open", default)).State);
                 Assert.Empty(await store.TrackWakes.ListAsync("closed", default));

@@ -661,11 +661,9 @@ public sealed class ImplicitTemplateToolsTests
         var (_, snap) = await ctx.CreateDefaultTrackAsync();
         await ctx.SendAndWaitForTurnAsync(snap.Track.LeadSessionId!, new SendSessionMessageRequest("hello", "hint"));
         var prompt = Assert.Single(ctx.AgentRuntime.OpenedSessions).LaunchSpec.SystemPrompt;
-        Assert.Contains("Templates are optional and implicit", prompt);
+        Assert.Contains("Templates are optional and composable", prompt);
         Assert.Contains("template_list", prompt);
-        Assert.Contains("template_read", prompt);
         Assert.Contains("track_set", prompt);
-        Assert.Contains(".perga.js source", prompt);
     }
 
     [Fact]

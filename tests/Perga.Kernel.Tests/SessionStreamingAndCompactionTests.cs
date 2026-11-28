@@ -72,7 +72,7 @@ public sealed class SessionStreamingAndCompactionTests
         finally { release.TrySetResult(); }
         await ctx.Kernel.WaitForTrackIdleAsync(snap.Track.Id).WaitAsync(TimeSpan.FromSeconds(10));
         Assert.Single(ctx.AgentRuntime.OpenedSessions);
-        Assert.Equal("hold", Assert.Single(original.RecordedInputs).PromptWithoutReportState());
+        Assert.Equal("hold", Assert.Single(original.RecordedInputs).Prompt);
         Assert.True(original.Disposed);
         var failed = ctx.Store.GetTurnsForSession(id).Last();
         Assert.Equal("failed", failed.Status);

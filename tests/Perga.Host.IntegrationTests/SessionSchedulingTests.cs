@@ -34,7 +34,7 @@ public sealed class SessionSchedulingTests
         while (host.AgentRuntime.ExecutedTurns.Count < 2)
             await Task.Delay(10, deadline.Token);
         await kernel.WaitForTrackIdleAsync(trackId).WaitAsync(Deadline);
-        Assert.Equal(new[] { "queued during drain", "wake during drain" }, host.AgentRuntime.ExecutedTurns.Select(t => t.Input.PromptWithoutReportState()));
+        Assert.Equal(new[] { "queued during drain", "wake during drain" }, host.AgentRuntime.ExecutedTurns.Select(t => t.Input.Prompt));
         Assert.Equal("done", Assert.Single(await store.TrackWakes.ListAsync(trackId, default)).State);
     }
 
@@ -52,7 +52,7 @@ public sealed class SessionSchedulingTests
             null, null, "queued human message", "queued", 1, "queue"), default);
         await WakeAsync(host, trackId, "system wake");
         await kernel.WaitForTrackIdleAsync(trackId).WaitAsync(Deadline);
-        Assert.Equal(new[] { "queued human message", "system wake" }, host.AgentRuntime.ExecutedTurns.Select(t => t.Input.PromptWithoutReportState()));
+        Assert.Equal(new[] { "queued human message", "system wake" }, host.AgentRuntime.ExecutedTurns.Select(t => t.Input.Prompt));
     }
 
     [Fact]
@@ -65,7 +65,7 @@ public sealed class SessionSchedulingTests
         var releaseTurn = Signal();
         var steeringStarted = Signal();
         var releaseSteering = Signal();
-        host.AgentRuntime.SetTurnHandler((_, input, ct) => Stream(input.PromptWithoutReportState() == "first" ? releaseTurn.Task : Task.CompletedTask, turnStarted, ct));
+        host.AgentRuntime.SetTurnHandler((_, input, ct) => Stream(input.Prompt == "first" ? releaseTurn.Task : Task.CompletedTask, turnStarted, ct));
         host.AgentRuntime.SetSteerHandler(async _ =>
         {
             steeringStarted.TrySetResult();
@@ -87,7 +87,7 @@ public sealed class SessionSchedulingTests
             Assert.Equal("delivered", (await steering.WaitAsync(Deadline)).Delivery);
             await kernel.WaitForTrackIdleAsync(trackId).WaitAsync(Deadline);
             Assert.Equal(2, host.AgentRuntime.ExecutedTurns.Count);
-            Assert.Equal("after steering", host.AgentRuntime.ExecutedTurns.Last().Input.PromptWithoutReportState());
+            Assert.Equal("after steering", host.AgentRuntime.ExecutedTurns.Last().Input.Prompt);
         }
         finally { releaseTurn.TrySetResult(); releaseSteering.TrySetResult(); }
     }
@@ -102,8 +102,8 @@ public sealed class SessionSchedulingTests
         var started = Signal();
         var release = Signal();
         var wakeStarted = Signal();
-        host.AgentRuntime.SetTurnHandler((_, input, ct) => Stream(input.PromptWithoutReportState() == "first" ? release.Task : Task.CompletedTask,
-            input.PromptWithoutReportState() == "first" ? started : wakeStarted, ct));
+        host.AgentRuntime.SetTurnHandler((_, input, ct) => Stream(input.Prompt == "first" ? release.Task : Task.CompletedTask,
+            input.Prompt == "first" ? started : wakeStarted, ct));
         await kernel.SendSessionMessageAsync(oldLead, new(Content: "first", RequestKey: "first"), new InteropPrincipal.Human(), default);
         try
         {
@@ -112,7 +112,7 @@ public sealed class SessionSchedulingTests
             Assert.Single(host.AgentRuntime.ExecutedTurns);
             await kernel.PatchTrackAsync(trackId, new(LeadSessionId: newLead.Id));
             await wakeStarted.Task.WaitAsync(Deadline);
-            var wake = Assert.Single(host.AgentRuntime.ExecutedTurns, t => t.Input.PromptWithoutReportState() == "pending track wake");
+            var wake = Assert.Single(host.AgentRuntime.ExecutedTurns, t => t.Input.Prompt == "pending track wake");
             Assert.Equal(newLead.Id, wake.Spec.StateKey);
         }
         finally { release.TrySetResult(); }

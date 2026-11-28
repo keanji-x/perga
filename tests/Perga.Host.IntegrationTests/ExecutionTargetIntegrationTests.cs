@@ -563,7 +563,7 @@ public sealed class ExecutionTargetIntegrationTests
         Assert.Equal(("claude", "remote-default", null, "bypassPermissions"),
             (lead.Provider, lead.Model, lead.ReasoningEffort, lead.PermissionMode));
         await kernel.WaitForTrackIdleAsync(child.Track.Id, ct);
-        Assert.Equal("Work on the alternate target", Assert.Single(alternate.ExecutedTurns).Input.PromptWithoutReportState());
+        Assert.Equal("Work on the alternate target", Assert.Single(alternate.ExecutedTurns).Input.Prompt);
         Assert.Empty(host.AgentRuntime.ExecutedTurns);
     }
 

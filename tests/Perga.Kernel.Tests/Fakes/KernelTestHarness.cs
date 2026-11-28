@@ -1523,20 +1523,6 @@ internal sealed class ScriptableFakeAgentSession : IAgentSession
     }
 }
 
-internal static class ReportPromptAssertions
-{
-    internal static string PromptWithoutReportState(this TurnInput input)
-    {
-        const string endTag = "</report_state>\n\n";
-        var start = input.Prompt.IndexOf("<report_state>", StringComparison.Ordinal);
-        if (start < 0)
-            return input.Prompt;
-
-        var endIndex = input.Prompt.IndexOf(endTag, start, StringComparison.Ordinal);
-        return endIndex < 0 ? input.Prompt : input.Prompt.Remove(start, endIndex + endTag.Length - start);
-    }
-}
-
 internal sealed class ScriptableFakeAgentRuntime : IAgentRuntime
 {
     public bool CanResumeSession(string provider) => SupportsSessionResume;

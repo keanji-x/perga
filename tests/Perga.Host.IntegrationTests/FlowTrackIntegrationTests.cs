@@ -56,7 +56,7 @@ public sealed class FlowTrackIntegrationTests
         Assert.Equal("Cache Research", child.Title);
         await kernel.WaitForTrackIdleAsync(child.Id, ct);
 
-        var launch = Assert.Single(host.AgentRuntime.ExecutedTurns, turn => turn.Input.PromptWithoutReportState() == Prompt);
+        var launch = Assert.Single(host.AgentRuntime.ExecutedTurns, turn => turn.Input.Prompt == Prompt);
         Assert.Contains(parentId, launch.Spec.SystemPrompt);
         Assert.Contains("report_read(trackId:", launch.Spec.SystemPrompt);
         Assert.Contains("mail_send(toTrackId:", launch.Spec.SystemPrompt);
@@ -137,7 +137,7 @@ public sealed class FlowTrackIntegrationTests
             await restarted.WaitForTrackIdleAsync(child.Id, ct);
 
             var execution = Assert.Single(reopened.AgentRuntime.ExecutedTurns);
-            Assert.Equal((Prompt, input.Receipt.TurnId), (execution.Input.PromptWithoutReportState(), execution.Input.CorrelationId));
+            Assert.Equal((Prompt, input.Receipt.TurnId), (execution.Input.Prompt, execution.Input.CorrelationId));
             var replay = await ((IFlowTrackSpawner)restarted).SpawnAsync(parent.Track, Assert.Single(parent.Sessions),
                 taskId, 1, action, ct);
             Assert.Equal(child.Id, replay.Id);
@@ -327,7 +327,7 @@ public sealed class FlowTrackIntegrationTests
         Assert.NotNull(input);
         Assert.Null(input!.OwnerContent);
         var delivered = Assert.Single(host.AgentRuntime.ExecutedTurns);
-        Assert.Equal("Check @memory:area/release-notes before planning", delivered.Input.PromptWithoutReportState());
+        Assert.Equal("Check @memory:area/release-notes before planning", delivered.Input.Prompt);
     }
 
     private static async Task<TrackAggregateSnapshot> CreateParentAsync(PergaHostTestCluster host, IPergaKernel kernel, CancellationToken ct)

@@ -557,7 +557,7 @@ public sealed class UnifiedSessionMcpTests
         await kernel.SendSessionMessageAsync(lead, new(Content: "normal", RequestKey: "normal"), Human, ct);
         await kernel.WaitForTrackIdleAsync(track.Id, ct);
         var execution = Assert.Single(host.AgentRuntime.ExecutedTurns, t => t.Spec.StateKey == lead);
-        Assert.Equal("normal", execution.Input.PromptWithoutReportState());
+        Assert.Equal("normal", execution.Input.Prompt);
     }
 
     [Theory]

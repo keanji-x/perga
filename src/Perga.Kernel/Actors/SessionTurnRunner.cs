@@ -162,13 +162,9 @@ public sealed partial class TrackActor
                     }
                     onActivated(active);
                     await work.OnTurnActivatedCoreAsync(running, evt, running.UpdatedAtMs, ct).ConfigureAwait(false);
-                    var context = new List<string>(3);
-                    if (!string.IsNullOrWhiteSpace(policyAdmission.Context))
-                        context.Add($"<policy_context>\n{policyAdmission.Context}\n</policy_context>");
-                    if (actor.BuildLeadReportStateContextCore(current) is { } reportState)
-                        context.Add(reportState);
-                    context.Add(prompt);
-                    return new TurnStart(active, string.Join("\n\n", context), running);
+                    var effective = string.IsNullOrWhiteSpace(policyAdmission.Context) ? prompt :
+                        $"<policy_context>\n{policyAdmission.Context}\n</policy_context>\n\n{prompt}";
+                    return new TurnStart(active, effective, running);
                 }, actor._actorShutdownCts.Token).ConfigureAwait(false);
             }
             catch (Exception error)

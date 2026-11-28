@@ -69,14 +69,14 @@ public sealed class FlowSessionSettlementTests
             pause.OnPromoted = null;
             kernel.DispatchAdmission.SetDraining(false);
             await kernel.WaitForTrackIdleAsync(trackId).WaitAsync(ct);
-            var execution = Assert.Single(host.AgentRuntime.ExecutedTurns, turn => turn.Input.PromptWithoutReportState() == "queued follow-up");
+            var execution = Assert.Single(host.AgentRuntime.ExecutedTurns, turn => turn.Input.Prompt == "queued follow-up");
             Assert.Equal(receipt.TurnId, execution.Input.CorrelationId);
             Assert.Equal("completed", (await store.SessionInputs.FindByIdAsync(sessionId, receipt.InputId, ct))!.Receipt.TurnStatus);
             Assert.Equal(nativeThreadId, Assert.Single((await store.LoadTrackAggregateAsync(trackId, ct))!.Sessions).NativeThreadId);
 
             await kernel.SendSessionMessageAsync(sessionId, new(Content: "later input", RequestKey: "later"), Human, ct);
             await kernel.WaitForTrackIdleAsync(trackId).WaitAsync(ct);
-            Assert.Equal(["flow wake", "queued follow-up", "later input"], host.AgentRuntime.ExecutedTurns.Select(turn => turn.Input.PromptWithoutReportState()));
+            Assert.Equal(["flow wake", "queued follow-up", "later input"], host.AgentRuntime.ExecutedTurns.Select(turn => turn.Input.Prompt));
         }
         finally
         {
@@ -86,7 +86,7 @@ public sealed class FlowSessionSettlementTests
 
         async IAsyncEnumerable<UnifiedAgentEvent> RunTurn(TurnInput input, [EnumeratorCancellation] CancellationToken turnCt)
         {
-            if (input.PromptWithoutReportState() == "flow wake")
+            if (input.Prompt == "flow wake")
             {
                 yield return new UnifiedAgentEvent.TurnAccepted("wake-provider-turn");
                 wakeStarted.TrySetResult();
@@ -168,7 +168,7 @@ public sealed class FlowSessionSettlementTests
                 promoted.TrySetResult(input);
             };
         host.AgentRuntime.SetTurnHandler((spec, input, turnCt) => spec.StateKey == sessionId &&
-            (input.PromptWithoutReportState() == "borrowed wake" || input.Prompt.Contains("Execute contract task", StringComparison.Ordinal))
+            (input.Prompt == "borrowed wake" || input.Prompt.Contains("Execute contract task", StringComparison.Ordinal))
                 ? HoldTurnAsync(started, release.Task, turnCt) : CompletedTurnAsync());
 
         try
@@ -238,7 +238,7 @@ public sealed class FlowSessionSettlementTests
             var receipt = (await store.SessionInputs.FindByIdAsync(sessionId, sent.MessageId, ct))!.Receipt;
             Assert.Equal("completed", receipt.TurnStatus);
             Assert.Equal(receipt.TurnId, Assert.Single(host.AgentRuntime.ExecutedTurns,
-                turn => turn.Input.PromptWithoutReportState() == "borrowed follow-up").Input.CorrelationId);
+                turn => turn.Input.Prompt == "borrowed follow-up").Input.CorrelationId);
             var session = Assert.Single((await store.LoadTrackAggregateAsync(trackId, ct))!.Sessions, s => s.Id == sessionId);
             Assert.Null(session.ArchivedAtMs);
             Assert.Equal((original.NativeThreadId, original.Epoch, "idle"), (session.NativeThreadId, session.Epoch, session.Status));
@@ -253,8 +253,7 @@ public sealed class FlowSessionSettlementTests
             }
             await kernel.SendSessionMessageAsync(sessionId, new(Content: "after settlement", RequestKey: "after"), Human, ct);
             await kernel.WaitForTrackIdleAsync(trackId).WaitAsync(ct);
-            Assert.Single(host.AgentRuntime.ExecutedTurns,
-                turn => turn.Spec.StateKey == sessionId && turn.Input.PromptWithoutReportState() == "after settlement");
+            Assert.Single(host.AgentRuntime.ExecutedTurns, turn => turn.Spec.StateKey == sessionId && turn.Input.Prompt == "after settlement");
         }
         finally
         {
@@ -300,7 +299,7 @@ public sealed class FlowSessionSettlementTests
             var receipt = (await store.SessionInputs.FindByIdAsync(sessionId, sent.MessageId, ct))!.Receipt;
             Assert.Equal("completed", receipt.TurnStatus);
             Assert.Equal(receipt.TurnId, Assert.Single(host.AgentRuntime.ExecutedTurns,
-                turn => turn.Input.PromptWithoutReportState() == "queued during startup").Input.CorrelationId);
+                turn => turn.Input.Prompt == "queued during startup").Input.CorrelationId);
         }
         finally { failOpen.TrySetResult(); }
     }
@@ -433,7 +432,7 @@ public sealed class FlowSessionSettlementTests
                 else
                 {
                     var execution = Assert.Single(executions);
-                    Assert.Equal(input.Content, execution.Input.PromptWithoutReportState());
+                    Assert.Equal(input.Content, execution.Input.Prompt);
                     Assert.Equal(session.NativeThreadId, execution.Spec.ResumeNativeThreadId);
                 }
                 var items = await store.ListSessionItemsAsync(sessionId, ct: ct);
