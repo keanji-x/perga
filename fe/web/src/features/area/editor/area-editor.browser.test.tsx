@@ -1,5 +1,5 @@
 import { cleanup, render, screen } from '@testing-library/react';
-import { page } from 'vitest/browser';
+import { page, userEvent } from 'vitest/browser';
 import { afterEach, expect, it, vi } from 'vitest';
 
 import '../../../styles/entry.css';
@@ -90,7 +90,10 @@ it('keeps the bound folder and form actions aligned at phone width', async () =>
   await page.getByRole('menuitem', { name: /^Change folder….*\/srv\// }).click();
   await page.getByRole('button', { name: 'Cancel', exact: true }).click();
   await expect.element(page.elementLocator(folder)).toHaveFocus();
-  await page.elementLocator(folder).click();
-  await page.getByRole('menuitem', { name: 'Default' }).click();
-  await expect.element(page.getByRole('button', { name: 'Default folder' })).toHaveFocus();
+  await userEvent.keyboard('{Enter}');
+  await expect.element(page.getByRole('menuitem', { name: 'Default', exact: true })).toHaveFocus();
+  await userEvent.keyboard('{Enter}');
+  const defaultFolder = page.getByRole('button', { name: 'Default folder', exact: true });
+  await expect.element(defaultFolder).toHaveFocus();
+  expect(defaultFolder.element()).toBe(folder);
 });
