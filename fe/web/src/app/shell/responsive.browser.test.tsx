@@ -1,34 +1,19 @@
 import { cleanup, render } from '@testing-library/react';
 import { page } from 'vitest/browser';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 
 import '../../styles/entry.css';
 import sidebarStyles from './desktop/sidebar.module.css';
-import mobileStyles from './mobile/shell.module.css';
 import styles from './shell.module.css';
 import { setup } from './mobile-browser-fixture.tsx';
-import { playSpring, playTrajectory, type Playback } from '../../ui/motion/spring.ts';
-vi.mock('../../ui/motion/spring.ts', { spy: true });
+
+afterEach(cleanup);
 
 function ShellProbe({ state }: { state: 'auto' | 'expanded' | 'collapsed' }) {
   const modifier = state === 'expanded' ? styles.shellExpanded
     : state === 'collapsed' ? styles.shellCollapsed : '';
   return <div data-testid={state} className={`${styles.shell} ${modifier}`}><aside /><main /></div>;
 }
-
-function MobileNavigationProbe() {
-  return <div className={styles.shell}>
-    <div className={`${mobileStyles.navigation} ${mobileStyles.navigationOpen}`}>
-      <div data-testid="mobile-panel" className={mobileStyles.navigationPanel}>
-        <section data-testid="areas-list" style={{ inlineSize: '100%' }}>Areas</section>
-      </div>
-    </div>
-    <main />
-
-  </div>;
-}
-
-afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.clearAllMocks(); document.body.replaceChildren(); });
 
 describe('responsive shell layout', () => {
   it('renders the brand mark as a crisp theme-owned square mask', () => {
@@ -60,67 +45,20 @@ describe('responsive shell layout', () => {
     expect(getComputedStyle(document.querySelector('[data-testid="collapsed"]')!).gridTemplateColumns).toBe('1400px');
   });
 
-  it('gives the workspace navigation the full viewport without reserving a dock', async () => {
-    render(<MobileNavigationProbe />);
+  it('gives Workspace the full mobile viewport and replaces it at the desktop breakpoint', async () => {
     await page.viewport(390, 844);
-    await Promise.all(document.querySelector('[data-testid="mobile-panel"]')!.getAnimations().map((animation) => animation.finished));
-    const list = document.querySelector('[data-testid="areas-list"]')!.getBoundingClientRect();
-    const panel = document.querySelector('[data-testid="mobile-panel"]')!.getBoundingClientRect();
-    expect(panel.left).toBe(0);
-    expect(panel.right).toBe(window.innerWidth);
-    expect(panel.width).toBe(list.width);
-    expect(panel.bottom).toBe(window.innerHeight);
-    expect(getComputedStyle(document.querySelector('[data-testid="mobile-panel"]')!).paddingBlockEnd).toBe('0px');
+    const router = setup('/workspace');
+    const heading = await page.getByRole('heading', { name: 'Workspace', exact: true }).findElement();
+    const frame = heading.closest('main')!.getBoundingClientRect();
+    expect(frame.left).toBe(0);
+    expect(frame.width).toBe(390);
+    expect(frame.bottom).toBe(844);
+    expect(page.getByRole('form', { name: 'Quick chat' }).query()).toBeNull();
+    await page.viewport(1400, 900);
+    await expect.poll(() => router.state.location.pathname).toBe('/');
+    expect(router.history.length).toBe(1);
+    await expect.element(page.getByRole('navigation', { name: 'Workspace' })).toBeVisible();
   });
-});
-
-// Running clocks exercise physical continuity; these are controlled model oracles,
-// separate from the natural route screenshots in mobile.browser.test.tsx.
-it.each(['Shell', 'Tracks'] as const)('preserves %s paint contribution and velocity across resize and reversal', async layer => {
-  await page.viewport(390, 844);
-  setup('/');
-  await page.getByRole('button', { name: 'Open workspace' }).click();
-  const host = await page.getByRole('dialog', { name: 'Tracks and settings' }).findElement() as HTMLElement;
-  if (layer === 'Tracks') {
-    await Promise.all(host.getAnimations().map(animation => animation.finished));
-    await page.getByRole('button', { name: 'Product', exact: true }).click();
-  }
-  const node = layer === 'Shell' ? host : document.querySelector<HTMLElement>('[data-nc-workspace-page="tracks"]')!;
-  const old = node.getAnimations()[0];
-  expect(old).toBeDefined();
-  await old.ready;
-  old.playbackRate = 0.5;
-  old.currentTime = 60;
-  old.startTime = Number(document.timeline.currentTime) - 120;
-  const playback = (vi.mocked(playTrajectory).mock.results.at(-1)?.value ?? vi.mocked(playSpring).mock.results.at(-1)!.value) as Playback<number>;
-  let sample: { value: unknown; velocity: unknown } | undefined;
-  vi.spyOn(old, 'cancel').mockImplementation(function (this: Animation) {
-    sample = playback.sample();
-    Animation.prototype.cancel.call(this);
-  });
-  await page.viewport(520, 844);
-  await expect.poll(() => node.getAnimations().some(animation => animation !== old)).toBe(true);
-  expect(old.playState).toBe('idle');
-  expect(sample).toBeDefined();
-  const rebased = vi.mocked(playTrajectory).mock.calls.at(-1)![1].sample(0);
-  expect(rebased.value).toBeCloseTo(sample!.value as number, 6);
-  expect(rebased.velocity).toBeCloseTo(sample!.velocity as number, 6);
-  expect(Math.abs(rebased.velocity as number)).toBeGreaterThan(1);
-  const active = node.getAnimations()[0];
-  await active.ready;
-  active.playbackRate = 1;
-  active.currentTime = 60;
-  active.startTime = Number(document.timeline.currentTime) - 60;
-  const forward = vi.mocked(playTrajectory).mock.calls.at(-1)![1];
-  let reversal: { value: unknown; velocity: unknown } | undefined;
-  vi.spyOn(active, 'cancel').mockImplementation(function (this: Animation) {
-    reversal = forward.sample(Number(this.currentTime));
-    Animation.prototype.cancel.call(this);
-  });
-  await page.getByRole('button', { name: layer === 'Shell' ? 'Back to workspace' : 'Back to Workspace', exact: true }).click();
-  const reverse = vi.mocked(playTrajectory).mock.calls.at(-1)![1].sample(0);
-  expect(reverse.value).toBeCloseTo(reversal!.value as number, 6);
-  expect(reverse.velocity).toBeCloseTo(reversal!.velocity as number, 6);
 });
 
 it('publishes --mobile-keyboard-inset on initial compact mount, updates on viewport resize, and cleans up on desktop', async () => {

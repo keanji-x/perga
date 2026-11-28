@@ -7,12 +7,13 @@
 import {
   Outlet, RouterProvider, createMemoryHistory, createRootRoute, createRoute, createRouter,
 } from '@tanstack/react-router';
+import { AppHistoryProvider } from './app-history.tsx';
 import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
-  useGoSameTrack, useRouteCardId, useRouteFileBackPath, useRouteFilePath, useRouteFrom, useRouteHash, useRoutePanel,
+  useGoSameTrack, useRouteCardId, useRouteFileBackPath, useRouteFilePath, useRouteHash, useRoutePanel,
   useRouteParam, useTrackFileNavigation, useTrackPanelNavigation, validateTrackSearch,
   type TrackSearch,
 } from './navigation.ts';
@@ -23,7 +24,6 @@ function Probe() {
   const { openFile, closeFile } = useTrackFileNavigation();
   const goSameTrack = useGoSameTrack();
   const panel = useRoutePanel();
-  const from = useRouteFrom();
   const card = useRouteCardId();
   const file = useRouteFilePath();
   const backPath = useRouteFileBackPath();
@@ -31,7 +31,6 @@ function Probe() {
   return (
     <div>
       <span>{`panel:${panel ?? 'none'}`}</span>
-      <span>{`from:${from ?? 'none'}`}</span>
       <span>{`card:${card ?? 'none'}`}</span>
       <span>{`file:${file ?? 'none'}`}</span>
       <span>{`back:${backPath ?? 'Report'}`}</span>
@@ -49,13 +48,12 @@ function Probe() {
       <button type="button" onClick={() => { closeFile(trackId); }}>close file</button>
       <button type="button" onClick={() => { goSameTrack(trackId, { card: undefined }, { replace: true }); }}>drop card</button>
       <button type="button" onClick={() => { goSameTrack('w9', { card: undefined }); }}>drop card on w9</button>
-      <button type="button" onClick={() => { goSameTrack(trackId, { from: undefined }); }}>drop from</button>
     </div>
   );
 }
 
 function setup(initialEntries: readonly string[]) {
-  const rootRoute = createRootRoute({ component: () => <Outlet /> });
+  const rootRoute = createRootRoute({ component: () => <AppHistoryProvider><Outlet /></AppHistoryProvider> });
   const todayRoute = createRoute({
     getParentRoute: () => rootRoute,
     path: '/',
@@ -119,7 +117,7 @@ describe('opening the mobile panel', () => {
     const router = setup(['/track/w1?from=area#b3']);
     await userEvent.click(await screen.findByText('open cards'));
     await waitFor(() => { probe('panel', 'cards'); });
-    expect(href(router)).toBe('/track/w1?panel=cards&from=area#b3');
+    expect(href(router)).toBe('/track/w1?panel=cards#b3');
   });
 });
 
@@ -158,7 +156,7 @@ describe('closing the mobile panel', () => {
     const back = vi.spyOn(router.history, 'back');
 
     await userEvent.click(screen.getByText('close panel'));
-    await waitFor(() => { expect(href(router)).toBe('/track/w1?from=pages'); });
+    await waitFor(() => { expect(href(router)).toBe('/track/w1'); });
     // An unconditional `back()` here would leave the application entirely.
     expect(back).not.toHaveBeenCalled();
     expect(router.history.length).toBe(1);
@@ -266,19 +264,19 @@ describe('file history', () => {
     const back = vi.spyOn(router.history, 'back');
 
     await userEvent.click(screen.getByText('close file'));
-    await waitFor(() => { expect(href(router)).toBe('/track/w1?from=pages'); });
+    await waitFor(() => { expect(href(router)).toBe('/track/w1'); });
     expect(back).not.toHaveBeenCalled();
     expect(router.history.length).toBe(1);
   });
 });
 
 describe('useGoSameTrack', () => {
-  it('keeps the panel, the return surface and the anchor while dropping the card', async () => {
+  it('keeps the anchor while dropping the card', async () => {
     const router = setup(['/track/w1?card=c1&from=area#b7']);
     await waitFor(() => { probe('card', 'c1'); });
 
     await userEvent.click(screen.getByText('drop card'));
-    await waitFor(() => { expect(href(router)).toBe('/track/w1?from=area#b7'); });
+    await waitFor(() => { expect(href(router)).toBe('/track/w1#b7'); });
     expect(router.history.length).toBe(1);
   });
 
@@ -293,13 +291,7 @@ describe('useGoSameTrack', () => {
     expect(href(router)).toBe('/track/w9');
   });
 
-  it('distinguishes an explicit clear from a field it was not asked about', async () => {
-    const router = setup(['/track/w1?panel=tasks&from=area']);
-    await waitFor(() => { probe('from', 'area'); });
 
-    await userEvent.click(screen.getByText('drop from'));
-    await waitFor(() => { expect(href(router)).toBe('/track/w1?panel=tasks'); });
-  });
 });
 
 it('transfers the Report back entry across a pushed mobile panel and file', async () => {

@@ -52,17 +52,6 @@
     display: none;
   }
 
-  .iconButton {
-    display: grid;
-    place-items: center;
-    inline-size: var(--rail-w-collapsed);
-    block-size: var(--rail-w-collapsed);
-    min-block-size: var(--rail-w-collapsed);
-    border-radius: var(--radius-md);
-    color: var(--text-2);
-    cursor: pointer;
-  }
-
   .toolsMenu {
     inset-inline-end: var(--space-3);
     position: absolute;
@@ -97,7 +86,6 @@
     background: var(--overlay-hover-strong);
   }
 
-  .iconButton:active,
   .menuItem:not([aria-disabled='true']):active {
     background-image: linear-gradient(var(--overlay-active), var(--overlay-active));
   }

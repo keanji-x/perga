@@ -1,14 +1,12 @@
-import { createBrowserHistory } from '@tanstack/react-router';
 import { fixtureSession } from './session-contract-fixture.ts';
 import { sessionPage, sessionItem, sessionTurn, sessionInput } from './conversation-session-data.ts';
 import '../../styles/entry.css';
 import { useLayoutEffect, useRef } from 'react';
 import { ConversationSurface } from './mobile-conversation-surface.tsx';
-import { act, cleanup, render, screen } from '@testing-library/react';
+import { cleanup, render, screen } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
 import { commands, page, userEvent } from 'vitest/browser';
 import type { ApiTransportResponse } from '../../../../core/api/types.ts';
-import { useOpenMobileSection } from '../shell/public.tsx';
 import { renderDailyFixture } from './daily-planner-fixture.tsx';
 
 const ok = (body: unknown): ApiTransportResponse => ({ status: 200, statusText: 'OK', body });
@@ -26,7 +24,7 @@ it.each([320, 390])('aligns the full-width bottom dock with fixed role slot and 
   expect(getComputedStyle(bar).borderRadius).toBe('999px');
   expect(Math.round(closedRoleBox.width)).toBe(width === 320 ? 67 : 76);
 
-  const leading = page.getByRole('button', { name: 'Open workspace', exact: true }).element().getBoundingClientRect();
+  const leading = page.getByRole('button', { name: 'Back to Focus', exact: true }).element().getBoundingClientRect();
   const title = page.getByRole('button', { name: 'Switch track, 2026-10-04', exact: true }).element().getBoundingClientRect();
   expect(title.left).toBeGreaterThanOrEqual(leading.right);
   expect(title.right).toBeLessThanOrEqual(width - 16);
@@ -40,12 +38,7 @@ it.each([320, 390])('aligns the full-width bottom dock with fixed role slot and 
   await page.getByRole('button', { name: 'Switch track, 2026-10-04', exact: true }).click();
   await expect.element(page.getByRole('heading', { name: 'Workspace', exact: true })).toBeVisible();
   expect(page.getByRole('menu').query()).toBeNull();
-  await page.getByRole('button', { name: 'Back to workspace', exact: true }).click();
-
-  await page.getByRole('button', { name: 'Open workspace', exact: true }).click();
-  await expect.element(page.getByRole('heading', { name: 'Workspace', exact: true })).toBeVisible();
-  expect(page.getByRole('radio').query()).toBeNull();
-  await page.getByRole('button', { name: 'Back to workspace', exact: true }).click();
+  await page.getByRole('button', { name: 'Back to Today', exact: true }).click();
 
   await expect.element(page.getByRole('textbox', { name: 'Chat message', exact: true })).toBeVisible();
   page.getByRole('textbox', { name: 'Chat message', exact: true }).element().focus();
@@ -56,7 +49,7 @@ it.each([320, 390])('aligns the full-width bottom dock with fixed role slot and 
   const sheet = panel.closest('[data-nc-mobile-chat-panel]')!;
   expect(getComputedStyle(sheet).overflow).toBe('hidden');
   expect(getComputedStyle(sheet).borderTopLeftRadius).toBe('24px');
-  const workspaceButton = page.getByRole('button', { name: 'Open workspace', exact: true }).element();
+  const workspaceButton = page.getByRole('button', { name: 'Back to Focus', exact: true }).element();
   expect(sheet.getBoundingClientRect().top - workspaceButton.getBoundingClientRect().bottom).toBeGreaterThanOrEqual(4);
   const bounds = panel.getBoundingClientRect();
   expect(bounds.left).toBeGreaterThanOrEqual(0);
@@ -176,25 +169,16 @@ it('keeps workspace navigation as Area and Track lists with no filters', async (
   expect(requests.filter((request) => request.method !== 'GET')).toHaveLength(0);
 });
 
-it('opens the existing Track page from the title and returns directly to the report', async () => {
+it('opens Workspace from the Today title when the report has no user Area', async () => {
   await page.viewport(390, 844);
   const { requests, router } = renderDailyFixture({ initial: '/?day=2026-10-04' });
   await page.getByRole('button', { name: 'Switch track, 2026-10-04', exact: true }).click();
-  await expect.element(page.getByRole('region', { name: 'Open tracks', exact: true })).toBeVisible();
-  expect(page.getByRole('menu').query()).toBeNull();
-  await expect.element(areaTrackRow()).toBeVisible();
-  await page.getByRole('button', { name: 'Back to Report', exact: true }).click();
+  await expect.element(page.getByRole('heading', { name: 'Workspace' })).toBeVisible();
+  await page.getByRole('button', { name: 'Back to Today', exact: true }).click();
   await expect.element(page.getByRole('button', { name: 'Switch track, 2026-10-04', exact: true })).toBeVisible();
-  await page.getByRole('button', { name: 'Switch track, 2026-10-04', exact: true }).click();
-  await areaTrackRow().click();
-  await expect.poll(() => router.state.location.pathname).toBe('/track/project');
-  await page.getByRole('button', { name: 'Open area Project', exact: true }).click();
-  await expect.element(areaTrackRow()).toHaveAttribute('aria-current', 'page');
-  await page.getByRole('button', { name: 'Back to Report', exact: true }).click();
-  expect(router.state.location.pathname).toBe('/track/project');
+  expect(router.state.location.href).toBe('/?day=2026-10-04');
   expect(requests.filter((request) => request.method !== 'GET')).toHaveLength(0);
 });
-
 
 it.each([320, 390])('keeps a long title readable in the document header and its Area switch visible at %ipx', async (width) => {
   await page.viewport(width, 844);
@@ -226,7 +210,7 @@ it('keeps the fixed mobile editor above a reduced visible viewport without losin
     viewport.dispatchEvent(new Event('resize'));
     await expect.poll(() => editor.getBoundingClientRect().bottom).toBeLessThanOrEqual(480);
     const panel = document.querySelector<HTMLElement>('[data-nc-mobile-chat-panel]')!;
-    const navigation = page.getByRole('button', { name: 'Open workspace', exact: true }).element();
+    const navigation = page.getByRole('button', { name: 'Back to Focus', exact: true }).element();
     await expect.poll(() => panel.getAnimations().every((animation) => animation.playState !== 'running')).toBe(true);
     await expect.poll(() => panel.getBoundingClientRect().top - navigation.getBoundingClientRect().bottom).toBeGreaterThanOrEqual(4);
     expect(document.activeElement).toBe(editor);
@@ -271,7 +255,7 @@ it('loads real mobile CJK weight ranges and keeps shadowed controls crisp', asyn
 });
 
 
-it.each(['/track/project', '/area/project-area/new'])('returns from mobile track creation to its workspace without writes from %s', async (initial) => {
+it.each(['/track/project', '/area/project-area/new'])('retains the draft after Back to its Area from %s', async (initial) => {
   await page.viewport(390, 844);
   const { router, requests } = renderDailyFixture({ initial });
   if (initial === '/track/project') {
@@ -280,177 +264,18 @@ it.each(['/track/project', '/area/project-area/new'])('returns from mobile track
   }
   const draft = page.getByRole('combobox', { name: 'What this track should do', exact: true });
   await draft.fill('保留未提交的 Track 草稿');
-  const back = page.getByRole('button', { name: 'Back to Tracks', exact: true });
-  await expect.element(back).toBeVisible();
+  const back = page.getByRole('button', { name: 'Back to Project', exact: true });
   await back.click();
-  await expect.element(page.getByRole('region', { name: 'Open tracks', exact: true })).toBeVisible();
   await expect.element(areaTrackRow()).toBeVisible();
+  expect(router.state.location.pathname).toBe('/area/project-area');
   await page.getByRole('button', { name: 'New track', exact: true }).click();
   await expect.element(draft).toHaveTextContent('保留未提交的 Track 草稿');
   await back.click();
-  await page.getByRole('button', { name: 'Back to Workspace', exact: true }).click();
-  await page.getByRole('button', { name: 'Back to workspace', exact: true }).click();
+  const label = initial === '/track/project' ? 'Back to Report' : 'Back to Focus';
+  await page.getByRole('button', { name: label, exact: true }).click();
   await expect.poll(() => router.state.location.pathname).toBe(initial === '/track/project' ? '/track/project' : '/');
-  await expect.poll(() => document.activeElement?.getAttribute('aria-label'))
-    .toBe(initial === '/track/project' ? 'Back to Focus' : 'Open workspace');
   expect(requests.filter((request) => request.method !== 'GET')).toHaveLength(0);
 });
-
-
-it.each(['before-click', 'after-click', 'after-exit'] as const)('draft Back supersession preserves the latest New: %s', async (order) => {
-  await page.viewport(390, 844);
-  const { router, requests } = renderDailyFixture({ initial: '/track/project?from=pages#evidence' });
-  await page.getByRole('button', { name: 'Open area Project', exact: true }).click();
-  await page.getByRole('button', { name: 'New track', exact: true }).click();
-  const draft = page.getByRole('combobox', { name: 'What this track should do', exact: true });
-  await draft.fill('Keep the latest draft');
-  const commitBack = router.history.back.bind(router.history);
-  const requestBack = vi.spyOn(router.history, 'back').mockImplementation(() => {});
-  let delivered = false;
-  const unsubscribe = router.history.subscribe(({ action }) => { if (action.type === 'BACK') delivered = true; });
-  try {
-    await page.getByRole('button', { name: 'Back to Tracks', exact: true }).click();
-    await expect.element(page.getByRole('region', { name: 'Open tracks', exact: true })).toBeVisible();
-    if (order === 'before-click') {
-      commitBack();
-      await expect.poll(() => router.state.status === 'idle' && router.state.location.pathname === '/track/project').toBe(true);
-    }
-    await page.getByRole('button', { name: 'New track', exact: true }).click();
-    const host = document.querySelector<HTMLElement>('#mobile-workspace-navigation')!;
-    if (order === 'after-exit') await Promise.all(host.getAnimations().map(animation => animation.finished));
-    if (order !== 'before-click') commitBack();
-    await expect.poll(() => delivered && router.state.status === 'idle').toBe(true);
-    await expect.element(draft).toBeVisible();
-    await expect.element(draft).toHaveTextContent('Keep the latest draft');
-    await expect.poll(() => document.activeElement === draft.element()).toBe(true);
-    expect(router.state.location.pathname).toBe('/area/project-area/new');
-    expect(host.inert).toBe(true);
-    expect(requestBack).toHaveBeenCalledExactlyOnceWith();
-    expect(requests.filter(request => request.method !== 'GET')).toHaveLength(0);
-    // New after a real Back must push: Back still returns to the actual source.
-    commitBack();
-    await expect.poll(() => router.state.location.href).toBe('/track/project?from=pages#evidence');
-  } finally { requestBack.mockRestore(); unsubscribe(); }
-});
-
-
-it('draft Back supersession preserves native history in an independent window', async () => {
-  await page.viewport(390, 844);
-  // The runner's own history must never be traversed by this regression.
-  const host = window.open(new URL('./native-history-fixture.html', import.meta.url).href, '_blank');
-  expect(host).not.toBeNull();
-  if (host === null) throw new Error('Native history test requires an independent window');
-  try {
-    await expect.poll(() => host.location.href.includes('native-history-fixture.html') && host.document.readyState === 'complete').toBe(true);
-    host.history.replaceState({}, '', '/track/project?from=pages#evidence');
-    const history = createBrowserHistory({ window: host });
-    const actions: string[] = [];
-    const stop = history.subscribe(({ action }) => { actions.push(action.type); });
-    try {
-      const { router, requests } = renderDailyFixture({ history });
-      await page.getByRole('button', { name: 'Open area Project', exact: true }).click();
-      history.replace(history.location.href, { ...history.location.state, probeSource: 'source-state' });
-      history.flush();
-      await expect.poll(() => router.state.status).toBe('idle');
-      await page.getByRole('button', { name: 'New track', exact: true }).click();
-      const draft = page.getByRole('combobox', { name: 'What this track should do', exact: true });
-      await draft.fill('Native draft retained');
-      await expect.poll(() => router.state.status).toBe('idle');
-      const length = host.history.length;
-      const back = page.getByRole('button', { name: 'Back to Tracks', exact: true }).element() as HTMLButtonElement;
-      // Native traversal remains async, while both production activation handlers
-      // run in one task. This is DOM activation, not a pointer-speed claim.
-      back.click();
-      expect(history.location.pathname).toBe('/area/project-area/new');
-      const newer = document.querySelector<HTMLButtonElement>('button[aria-label="New track"]');
-      expect(newer).not.toBeNull();
-      newer!.click();
-      await expect.poll(() => actions.includes('BACK') && router.state.status === 'idle').toBe(true);
-      await expect.element(draft).toBeVisible();
-      await expect.element(draft).toHaveTextContent('Native draft retained');
-      await expect.poll(() => document.activeElement === draft.element()).toBe(true);
-      expect(host.history.length).toBe(length);
-      history.back();
-      await expect.poll(() => router.state.status === 'idle' && router.state.location.href === '/track/project?from=pages#evidence').toBe(true);
-      expect(history.location.state).toMatchObject({ probeSource: 'source-state' });
-      history.forward();
-      await expect.element(draft).toHaveTextContent('Native draft retained');
-      await expect.poll(() => router.state.status).toBe('idle');
-      history.back();
-      await expect.poll(() => router.state.status === 'idle' && router.state.location.href === '/track/project?from=pages#evidence').toBe(true);
-      expect(actions.filter(action => action === 'BACK' || action === 'FORWARD')).toEqual(['BACK', 'BACK', 'FORWARD', 'BACK']);
-      expect(host.history.length).toBe(length);
-      expect(requests.filter(request => request.method !== 'GET')).toHaveLength(0);
-    } finally { cleanup(); stop(); history.destroy(); }
-  } finally { host.close(); }
-});
-
-
-function WorkspaceIntentProbe({ ready }: { ready: (open: ReturnType<typeof useOpenMobileSection>) => void }) {
-  const open = useOpenMobileSection();
-  useLayoutEffect(() => { ready(open); }, [open, ready]);
-  return null;
-}
-
-it('uses the latest workspace opener declaration while already interactive', async () => {
-  await page.viewport(390, 844);
-  let declare: ReturnType<typeof useOpenMobileSection> | undefined;
-  renderDailyFixture({ initial: '/track/project', routeProbe: <WorkspaceIntentProbe ready={open => { declare = open; }} /> });
-  await page.getByRole('button', { name: 'Open area Project', exact: true }).click();
-  // Another app-owned portalled surface may issue the public workspace command
-  // without first dismissing the current workspace presentation.
-  const opener = document.body.appendChild(document.createElement('button'));
-  opener.textContent = 'New workspace source';
-  try {
-    opener.focus();
-    expect(document.activeElement).toBe(opener);
-    expect(declare).toBeTypeOf('function');
-    act(() => { declare!({ kind: 'areas', areaId: undefined }); });
-    await expect.element(page.getByRole('heading', { name: 'Workspace', exact: true })).toBeVisible();
-    await page.getByRole('button', { name: 'Back to workspace', exact: true }).click();
-    expect(document.activeElement).toBe(opener);
-    const host = document.querySelector<HTMLElement>('#mobile-workspace-navigation')!;
-    await Promise.all(host.getAnimations().map(animation => animation.finished));
-    expect(document.activeElement).toBe(opener);
-  } finally { opener.remove(); }
-});
-
-
-it.each(['return', 'new route'] as const)('keeps workspace return intent across a deferred Back commit: %s', async (next) => {
-  await page.viewport(390, 844);
-  const { router } = renderDailyFixture({ initial: '/track/project' });
-  await page.getByRole('button', { name: 'Open area Project', exact: true }).click();
-  await page.getByRole('button', { name: 'New track', exact: true }).click();
-  const back = await page.getByRole('button', { name: 'Back to Tracks', exact: true }).findElement();
-  const commitBack = router.history.back.bind(router.history);
-  const requestBack = vi.spyOn(router.history, 'back').mockImplementation(() => {});
-  try {
-    await page.elementLocator(back).click();
-    expect(requestBack).toHaveBeenCalledExactlyOnceWith();
-    const host = await page.getByRole('dialog', { name: 'Tracks and settings', exact: true }).findElement() as HTMLElement;
-    expect(router.state.location.pathname).toBe('/area/project-area/new');
-    expect(back.isConnected).toBe(true);
-    expect(host.contains(document.activeElement)).toBe(true);
-    // Release the real history owner after workspace activation, without
-    // substituting a route implementation or weakening the original oracle.
-    commitBack();
-    await expect.poll(() => router.state.location.pathname).toBe('/track/project');
-    await expect.poll(() => back.isConnected).toBe(false);
-    if (next === 'new route') {
-      await router.navigate({ to: '/' });
-      await expect.poll(() => router.state.location.pathname).toBe('/');
-    }
-    await page.getByRole('button', { name: 'Back to Workspace', exact: true }).click();
-    await page.getByRole('button', { name: 'Back to workspace', exact: true }).click();
-    expect(host.inert).toBe(true);
-    expect(document.querySelector('main')?.hasAttribute('inert')).toBe(false);
-    if (next === 'return') expect(document.activeElement?.getAttribute('aria-label')).toBe('Back to Focus');
-    else expect(document.activeElement?.getAttribute('aria-label')).not.toBe('Back to Focus');
-    await Promise.all(host.getAnimations().map(animation => animation.finished));
-    if (next === 'return') expect(document.activeElement?.getAttribute('aria-label')).toBe('Back to Focus');
-  } finally { requestBack.mockRestore(); }
-});
-
 
 it('keeps Area editor actions inside the visible viewport when its keyboard opens', async () => {
   await page.viewport(390, 844);

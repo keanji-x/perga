@@ -2,7 +2,7 @@ import { prepareReportDocument } from '../../features/report/document/preparatio
 import { QueryClient } from '@tanstack/react-query';
 import { createMemoryHistory, RouterProvider } from '@tanstack/react-router';
 import { cleanup, render } from '@testing-library/react';
-import { page, userEvent } from 'vitest/browser';
+import { page } from 'vitest/browser';
 import { afterEach, expect, it, vi } from 'vitest';
 
 import '../../styles/entry.css';
@@ -55,9 +55,9 @@ it.each([390, 1280])('keeps preflight recovery compact and navigation usable at 
     expect(header.height).toBeGreaterThanOrEqual(48);
     expect(header.height).toBeLessThanOrEqual(80);
     await navigation.click();
-    await expect.element(page.getByRole('dialog', { name: 'Tracks and settings' })).toBeVisible();
-    await userEvent.keyboard('{Escape}');
-    await expect.element(page.getByRole('dialog', { name: 'Tracks and settings' })).not.toBeInTheDocument();
+    await expect.element(page.getByRole('heading', { name: 'Workspace', exact: true })).toBeVisible();
+    await page.getByRole('button', { name: 'Back to Focus', exact: true }).click();
+    await expect.element(navigation).toBeVisible();
   }
   await page.screenshot({ path: `../../../../test-results/preflight-recovery-${width}.png` });
   await retry.click();

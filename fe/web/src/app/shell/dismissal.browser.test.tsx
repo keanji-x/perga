@@ -8,26 +8,16 @@ import { setup } from './mobile-browser-fixture.tsx';
 
 afterEach(cleanup);
 
-it('claims composing navigation Escape and dismisses its native menu first', async () => {
+it('dismisses the Area Track menu on Escape while keeping the route active', async () => {
   await page.viewport(390, 844);
-  setup('/');
-  await page.getByRole('button', { name: 'Open workspace' }).click();
-  const navigation = await page.getByRole('dialog', { name: 'Tracks and settings' }).findElement();
-  for (const ime of [{ isComposing: true }, { keyCode: 229 }]) {
-    const event = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true, ...ime });
-    navigation.dispatchEvent(event);
-    expect(event.defaultPrevented).toBe(true);
-    await expect.element(page.getByRole('dialog', { name: 'Tracks and settings' })).toBeVisible();
-  }
-  await page.elementLocator(navigation).getByRole('button', { name: 'Product', exact: true }).click();
-  // The native track menu belongs to the real navigation subtree.
-  await page.elementLocator(navigation).getByRole('button', { name: 'Actions for track Responsive mobile UI' }).first().click();
+  const router = setup('/area/c1');
+  await page.getByRole('button', { name: 'Actions for track Responsive mobile UI' }).first().click();
   await expect.element(page.getByRole('menuitem', { name: 'Unpin globally' })).toBeVisible();
   await userEvent.keyboard('{Escape}');
   await expect.element(page.getByRole('menuitem', { name: 'Unpin globally' })).not.toBeInTheDocument();
-  await expect.element(page.getByRole('dialog', { name: 'Tracks and settings' })).toBeVisible();
   await userEvent.keyboard('{Escape}');
-  await expect.element(page.getByRole('dialog', { name: 'Tracks and settings' })).not.toBeInTheDocument();
+  expect(router.state.location.pathname).toBe('/area/c1');
+  await expect.element(page.getByRole('heading', { name: 'Product', exact: true })).toBeVisible();
 });
 
 it('leaves composing Escape to the IME before the conversation interrupt command', () => {

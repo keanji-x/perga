@@ -1,5 +1,6 @@
 import { queryKeys } from '../providers/query-keys.ts';
 import { Banner } from '@astryxdesign/core/Banner';
+import { useRouter, type RouterHistory } from '@tanstack/react-router';
 import { useQuery } from '@tanstack/react-query';
 import { useCallback,useEffect,useRef } from 'react';
 import type { ApiTransportPort } from '../../../../core/api/types.ts';
@@ -31,7 +32,8 @@ import { executionTargetsQueryOptions, useCreateExecutionTarget } from '../provi
 import { runOperation } from '../providers/query-operation.ts';
 import { useTrackLifecycleMutations } from '../providers/track-lifecycle-mutations.ts';
 import { useWorkspace, type Workspace } from '../providers/workspace-queries.ts';
-import { useGo,useRouteParam } from './navigation.ts';
+import { useDraftBackOwner } from './draft-back-owner.tsx';
+import { isNewTrackPath, routeParamFromPath, useGo, useRouteParam } from './navigation.ts';
 import { useNewTrackSession,type NewTrackSession,type TrackCreationRequest } from './new-track-drafts.tsx';
 
 type RouteProps = { transport: ApiTransportPort; unauthorized: UnauthorizedChannel; memoryEnabled?: boolean };
@@ -86,6 +88,8 @@ function NewTrackEditor({ transport, unauthorized, memoryEnabled, workspace, are
   const trackMutations = useTrackLifecycleMutations(transport, unauthorized);
   const conversationRegistry = useConversationCommands();
   const go = useGo();
+  const router = useRouter();
+  const draftBack = useDraftBackOwner();
   const listDirectory = listDirectoryForTarget(targetId);
   /* The sentence is the new track's Planner's first message, and that Planner reads this Area's reports; there is no track yet to rank first. */
   const mentionTrigger = useMentionTrigger(useMentionSearch(transport, unauthorized, areaId, null, undefined,
@@ -115,6 +119,8 @@ function NewTrackEditor({ transport, unauthorized, memoryEnabled, workspace, are
   const configurationLocked = session.creating || session.request !== null || !available || session.createdTrackId !== null;
 
   const openCreated = (trackId: string) => {
+    const { pathname } = router.parseLocation((router.history as RouterHistory).location);
+    if (draftBack?.isPending() || !isNewTrackPath(pathname) || routeParamFromPath(pathname, '/area/') !== areaId) return;
     const synced = conversationRegistry.hydratePendingTrackInitialSends();
     const request = store.get(areaId)?.request;
     const hasAttachments = (request?.attachments?.length ?? 0) > 0;
@@ -126,7 +132,7 @@ function NewTrackEditor({ transport, unauthorized, memoryEnabled, workspace, are
     }
     // Keep the saved request as a recovery copy while the first message is only in memory.
     if (canForget) store.forget(areaId, { revokeAttachments: false });
-    go({ name: 'track', trackId, openPlanner: true });
+    go({ name: 'track', trackId, openPlanner: true }, { replace: compactViewport });
   };
 
   const submit = (draft: NewTrackDraft) => {

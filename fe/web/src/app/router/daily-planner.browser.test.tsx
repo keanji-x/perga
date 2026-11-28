@@ -28,9 +28,8 @@ it.each([320, 390])('keeps mobile navigation labels and pointer targets usable a
   await page.viewport(width, 844);
   renderDailyFixture({ initial: '/track/project' });
   await page.getByRole('button', { name: 'Open area Project', exact: true }).click();
-  const dialog = page.getByRole('dialog', { name: 'Tracks and settings', exact: true });
-  const layer = await dialog.findElement();
-  const row = dialog.getByRole('region', { name: 'Open tracks' }).getByRole('button', { name: /^Project evidence\b/ });
+  const layer = await page.getByRole('main').findElement();
+  const row = page.getByRole('region', { name: 'Open tracks' }).getByRole('button', { name: /^Project evidence\b/ });
   const item = await row.findElement();
   await expect.poll(() => layer.getAnimations({ subtree: true }).filter(animation => animation.effect?.getTiming().iterations !== Infinity).every(animation => animation.playState !== 'running')).toBe(true);
   const bounds = layer.getBoundingClientRect();
@@ -51,8 +50,8 @@ it('keeps the daily report usable at phone width', async () => {
   expect(page.getByRole('button', { name: 'Track actions', exact: true }).query()).toBeNull();
   const headers = [...document.querySelectorAll('[data-nc-mobile-header]')].filter((header) => header.getBoundingClientRect().width > 0);
   expect(headers).toHaveLength(1);
-  await page.getByRole('button', { name: 'Open workspace', exact: true }).click();
-  await expect.element(page.getByRole('heading', { name: 'Workspace', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Back to Focus', exact: true }).click();
+  await expect.element(page.getByRole('heading', { name: 'Focus', exact: true })).toBeVisible();
   expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(window.innerWidth);
 });
 

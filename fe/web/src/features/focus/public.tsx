@@ -24,6 +24,13 @@ function tabLabel(tab: FocusTab): string {
   }
 }
 
+export type MobileFocusView = Readonly<{
+  tab: FocusTab;
+  selectedAreaId: string | null;
+  query: string;
+  searchOpen: boolean;
+}>;
+
 export type MobileFocusHomeProps = Readonly<{
   areas: readonly Area[];
   tracks: readonly Track[];
@@ -31,10 +38,12 @@ export type MobileFocusHomeProps = Readonly<{
   loading: boolean;
   error: string | null;
   onRetry: () => void;
-  onOpenWorkspace: () => void;
-  workspaceTriggerRef?: Ref<HTMLButtonElement>;
+  onOpenWorkspace?: (trigger: HTMLButtonElement) => void;
+  scrollRef?: Ref<HTMLDivElement>;
+  initialView?: MobileFocusView;
+  onViewChange?: (view: MobileFocusView) => void;
   onOpenTrack: (trackId: string) => void;
-  onOpenArea?: (areaId: string) => void;
+  onOpenArea?: (areaId: string, trigger: HTMLButtonElement) => void;
   onNewTrack?: (areaId?: string) => void;
   onMarkAllRead?: (tracks: readonly Track[]) => void;
   renderTrackTitle?: (track: Track, content: ReactNode) => ReactNode;
@@ -50,7 +59,9 @@ export function MobileFocusHome({
   error,
   onRetry,
   onOpenWorkspace,
-  workspaceTriggerRef,
+  scrollRef,
+  initialView,
+  onViewChange,
   onOpenTrack,
   onOpenArea,
   onNewTrack,
@@ -59,15 +70,20 @@ export function MobileFocusHome({
   nowMs,
 }: MobileFocusHomeProps) {
   const shownAreas = useMemo(() => visibleAreas(areas), [areas]);
-  const [tab, setTab] = useState<FocusTab>('focus');
-  const [searchOpen, setSearchOpen] = useState(false);
-  const [query, setQuery] = useState('');
-  const [selectedAreaId, setSelectedAreaId] = useState<string | null>(null);
+  const [tab, setTab] = useState<FocusTab>(initialView?.tab ?? 'focus');
+  const [searchOpen, setSearchOpen] = useState(initialView?.searchOpen ?? false);
+  const [query, setQuery] = useState(initialView?.query ?? '');
+  const [selectedAreaId, setSelectedAreaId] = useState<string | null>(initialView?.selectedAreaId ?? null);
+
+  useLayoutEffect(() => {
+    onViewChange?.({ tab, searchOpen, query, selectedAreaId });
+  }, [onViewChange, tab, searchOpen, query, selectedAreaId]);
 
   const pageRef = useRef<HTMLDivElement | null>(null);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
   const searchTriggerRef = useRef<HTMLButtonElement | null>(null);
   const pendingSearchReturnRef = useRef(false);
+  const focusSearchOnOpen = useRef(false);
   const timeFormatters = useMemo(
     () => createRelativeTimeFormatters(Intl.DateTimeFormat().resolvedOptions().timeZone),
     [],
@@ -77,7 +93,10 @@ export function MobileFocusHome({
     : null;
 
   useEffect(() => {
-    if (searchOpen) searchInputRef.current?.focus({ preventScroll: true });
+    if (searchOpen && focusSearchOnOpen.current) {
+      focusSearchOnOpen.current = false;
+      searchInputRef.current?.focus({ preventScroll: true });
+    }
   }, [searchOpen]);
 
   useEffect(() => {
@@ -178,15 +197,15 @@ export function MobileFocusHome({
       ) : (
         <header className={styles.header} data-nc-mobile-header="">
           <div className={styles.headerLeading}>
-            <button
-              ref={workspaceTriggerRef}
+            {onOpenWorkspace !== undefined && <button
               type="button"
               className={styles.iconButton}
               aria-label="Open workspace"
-              onClick={onOpenWorkspace}
+              data-nc-return-focus="focus-workspace"
+              onClick={(event) => onOpenWorkspace(event.currentTarget)}
             >
               <Icon name="menu" />
-            </button>
+            </button>}
           </div>
           <div className={styles.headerCenter}>
             <h1 className={styles.headerTitle}>Focus</h1>
@@ -197,7 +216,7 @@ export function MobileFocusHome({
               type="button"
               className={styles.iconButton}
               aria-label="Search tracks"
-              onClick={() => setSearchOpen(true)}
+              onClick={() => { focusSearchOnOpen.current = true; setSearchOpen(true); }}
             >
               <Icon name="search" />
             </button>
@@ -256,7 +275,7 @@ export function MobileFocusHome({
         })}
       </nav>
 
-      <div className={styles.feedScroll} data-nc-focus-feed="">
+      <div ref={scrollRef} className={styles.feedScroll} data-nc-focus-feed="">
         {error !== null && (
           <div className={styles.feedNotice}>
             <ErrorBox message={error} onRetry={onRetry} />

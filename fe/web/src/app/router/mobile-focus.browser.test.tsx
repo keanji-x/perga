@@ -676,7 +676,7 @@ describe('MobileFocusHome', () => {
     expect(document.documentElement.scrollWidth).toBe(width);
   });
 
-  it.each([320, 390])('jumps from a Focus row directly to its Area and restores the opener at %ipx', async (width) => {
+  it.each([320, 390])('jumps from a Focus row directly to its Area and back to the feed at %ipx', async (width) => {
     await page.viewport(width, 844);
     const { router } = renderFocusFixture();
     const row = await page.getByRole('button', { name: /^Mobile layout polish\b/ }).findElement();
@@ -692,14 +692,14 @@ describe('MobileFocusHome', () => {
     expect(page.elementLocator(item).getByText('2m', { exact: true }).element().getBoundingClientRect().right).toBe(width - 16);
     item.removeAttribute('dir');
     await area.click();
-    const dialog = page.getByRole('dialog', { name: 'Tracks and settings' });
-    await expect.element(dialog.getByRole('heading', { name: 'Product', exact: true })).toBeVisible();
-    await expect.element(dialog.getByRole('region', { name: 'Open tracks' })).toBeVisible();
-    expect(dialog.getByRole('heading', { name: 'Workspace' }).query()).toBeNull();
-    expect(router.state.location.pathname).toBe('/');
-    await dialog.getByRole('button', { name: 'Back to Focus', exact: true }).click();
-    await expect.element(area).toHaveFocus();
-    expect(area.element()).toBe(opener);
+    await expect.element(page.getByRole('heading', { name: 'Product', exact: true })).toBeVisible();
+    await expect.element(page.getByRole('region', { name: 'Open tracks' })).toBeVisible();
+    expect(page.getByRole('heading', { name: 'Workspace' }).query()).toBeNull();
+    expect(router.state.location.pathname).toBe('/area/a-prod');
+    await page.getByRole('button', { name: 'Back to Focus', exact: true }).click();
+    await expect.element(page.getByRole('button', { name: /^Mobile layout polish\b/ })).toBeVisible();
+    const restoredRow = await page.getByRole('button', { name: /^Mobile layout polish\b/ }).findElement();
+    await expect.element(page.elementLocator(restoredRow.closest('li')!).getByRole('button', { name: 'Open area Product' })).toHaveFocus();
     expect(router.state.location.pathname).toBe('/');
   });
 
@@ -860,7 +860,7 @@ describe('MobileFocusHome', () => {
     await expect.element(page.getByRole('button', { name: /Pending receipt track/ })).toBeVisible();
   });
 
-  it('supports Workspace focus return, server-resolved Today navigation, dark theme, shareScope boundaries, and desktop resize round-trip', async () => {
+  it('supports Workspace Back, server-resolved Today navigation, dark theme, shareScope boundaries, and desktop resize round-trip', async () => {
     await page.viewport(390, 844);
     const persistedTheme = new Map<string, string>([[THEME_KEY, 'dark']]);
     const fixture = renderFocusFixture({
@@ -876,13 +876,10 @@ describe('MobileFocusHome', () => {
     expect(feed.getBoundingClientRect().bottom).toBe(document.querySelector('[data-nc-focus-feed]')!.getBoundingClientRect().bottom);
     expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(390);
 
-    // Closing Workspace restores focus to Focus Home's Open workspace button.
-    const workspaceButton = page.getByRole('button', { name: 'Open workspace', exact: true }).element() as HTMLButtonElement;
     await page.getByRole('button', { name: 'Open workspace', exact: true }).click();
-    await expect.element(page.getByRole('dialog', { name: 'Tracks and settings', exact: true })).toBeVisible();
-    await userEvent.keyboard('{Escape}');
-    await expect.poll(() => page.getByRole('dialog', { name: 'Tracks and settings', exact: true }).query()).toBeNull();
-    await expect.poll(() => document.activeElement).toBe(workspaceButton);
+    await expect.element(page.getByRole('heading', { name: 'Workspace', exact: true })).toBeVisible();
+    await page.getByRole('button', { name: 'Back to Focus', exact: true }).click();
+    await expect.element(page.getByRole('button', { name: 'Open workspace', exact: true })).toHaveFocus();
 
     // Round-trip viewport resize: mobile -> desktop Today Assistant -> back to mobile Focus Home.
     await page.viewport(1280, 800);
@@ -907,7 +904,6 @@ describe('MobileFocusHome', () => {
 
     await page.getByRole('button', { name: 'Back to Workspace', exact: true }).click();
     await page.getByRole('button', { name: 'Today', exact: true }).click();
-    await expect.poll(() => page.getByRole('dialog', { name: 'Tracks and settings', exact: true }).query()).toBeNull();
     await expect.poll(() => fixture.router.state.location.searchStr).toBe('?view=today');
     await expect.poll(() => document.querySelector('[data-nc-track-page]')).not.toBeNull();
     expect(fixture.requests.some((request) => request.path === '/api/v1/today/daily')).toBe(true);
@@ -922,7 +918,7 @@ describe('MobileFocusHome', () => {
     await page.getByRole('button', { name: /^Unread/ }).click();
     await expect.element(page.getByText('2 unread', { exact: true })).toBeVisible();
     expect(page.getByRole('button', { name: 'Mark all read', exact: true }).query()).toBeNull();
-    await page.getByRole('button', { name: 'Open workspace', exact: true }).click();
+    expect(page.getByRole('button', { name: 'Open workspace', exact: true }).query()).toBeNull();
     expect(page.getByRole('button', { name: 'Settings', exact: true }).query()).toBeNull();
     expect(page.getByRole('button', { name: 'Memory', exact: true }).query()).toBeNull();
     expect(page.getByRole('button', { name: 'New area', exact: true }).query()).toBeNull();

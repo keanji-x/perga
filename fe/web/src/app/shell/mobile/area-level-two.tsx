@@ -2,11 +2,11 @@
 // Full-screen Area detail with OPEN TRACKS and collapsible CLOSED IN <AREA>.
 
 import { useMemo, useRef } from 'react';
-import { visibleAreas } from '../../../../../core/domain/area.ts';
+import type { Area } from '../../../../../core/domain/area.ts';
 import { createRelativeTimeFormatters } from '../../../../../core/domain/relative-time.ts';
 import { areaPinnedTracks, isClosed } from '../../../../../core/domain/track.ts';
 import { MobileTrackFeedRow } from '../../../features/focus/public.tsx';
-import { TrackActions } from '../../../features/track/row/actions.tsx';
+import { TrackActions, type TrackActionsProps } from '../../../features/track/row/actions.tsx';
 import { TrackTitle } from '../../../features/track/title/public.tsx';
 import { EmptyState } from '../../../ui/empty-state/public.tsx';
 import { ErrorBox } from '../../../ui/error-box/public.tsx';
@@ -16,19 +16,27 @@ import { Menu } from '../../../ui/menu/public.tsx';
 import { useState } from '../../../ui/state/public.ts';
 import { useUiPreferences } from '../../providers/ui-preferences.tsx';
 import menuStyles from './header.module.css';
-import type { MobileTracksProps } from './tracks-types.ts';
+import type { Track } from '../../../../../core/domain/track.ts';
+import type { DialogOrigin } from '../../../ui/dialog/public.tsx';
+import { MobileHeader } from '../../../ui/mobile-header/public.tsx';
+import type { WorkspaceListProps } from './workspace-list-props.ts';
 import styles from './navigation.module.css';
 
 export function AreaLevelTwo({
-  tracksBackLabel = 'Workspace', areas, tracksByArea, areaId, currentTrackId,
+  backLabel, areas, currentTrackId, tracksByArea, areaId, scrollRef, initialClosedExpanded, onClosedExpandedChange,
   onBack, onEditArea, onOpenTrack, onNewTrack, onOpenAreaMemory,
-  isUnread, trackActions, readError, readLoading, onRetryRead, shareMode = false, nowMs,
-}: MobileTracksProps) {
-  const shown = visibleAreas(areas);
-  const selected = shown.find((candidate) => candidate.id === areaId);
+  isUnread, trackActions, readError, readLoading, onRetryRead, nowMs,
+}: WorkspaceListProps & Readonly<{
+  areaId: string;
+  onEditArea: (area: Area, origin: DialogOrigin) => void;
+  onNewTrack: (areaId: string) => void;
+  onOpenAreaMemory: (areaId: string) => void;
+  trackActions?: (track: Track) => Omit<TrackActionsProps, 'track' | 'className'>;
+}>) {
+  const selected = areas.find((candidate) => candidate.id === areaId);
   const preferences = useUiPreferences();
   const moreRef = useRef<HTMLSpanElement | null>(null);
-  const [showClosed, setShowClosed] = useState<boolean | null>(null);
+  const [showClosed, setShowClosed] = useState<boolean | null>(initialClosedExpanded ?? null);
   const timeFormatters = useMemo(
     () => createRelativeTimeFormatters(Intl.DateTimeFormat().resolvedOptions().timeZone),
     [],
@@ -47,69 +55,56 @@ export function AreaLevelTwo({
 
   return (
     <div className={styles.page}>
-      <header className={styles.headerLevelTwo} data-nc-mobile-header="">
-        <div className={styles.headerLeading}>
-          <button type="button" className={styles.backButton} aria-label={`Back to ${tracksBackLabel}`} onClick={onBack}>
-            <Icon name="chevron-left" size="sm" />
-            <span>{tracksBackLabel}</span>
+      <MobileHeader title={selected?.name ?? 'Tracks'} level={1} backLabel={backLabel} onBack={onBack}
+        className={styles.areaHeader}
+        actions={<>
+          <button
+            type="button"
+            className={`${styles.iconButton} ${styles.iconButtonAccent}`}
+            aria-label="New track"
+            disabled={selected === undefined}
+            onClick={() => { if (selected !== undefined) onNewTrack(selected.id); }}
+          >
+            <Icon name="plus" />
           </button>
-        </div>
-        <div className={styles.headerCenter}>
-          <h1 className={styles.headerTitle}>{selected?.name ?? 'Tracks'}</h1>
-        </div>
-        <div className={styles.headerActions}>
-          {!shareMode && (
-            <>
-              <button
-                type="button"
-                className={`${styles.iconButton} ${styles.iconButtonAccent}`}
-                aria-label="New track"
-                disabled={selected === undefined}
-                onClick={() => { if (selected !== undefined) onNewTrack(selected.id); }}
-              >
-                <Icon name="plus" />
-              </button>
-              {selected !== undefined && (
-                <span ref={moreRef} className={styles.menuHost}>
-                  <Menu
-                    wrapClassName={menuStyles.toolsMenuWrap}
-                    menuClassName={menuStyles.toolsMenu}
-                    itemClassName={menuStyles.menuItem}
-                    items={[
-                      {
-                        label: `Edit area ${selected.name}`,
-                        onSelect: () => onEditArea(selected, { kind: 'anchor', anchor: { ref: moreRef }, unavailable: 'surface-center' }),
-                      },
-                      ...(onOpenAreaMemory === undefined ? [] : [{
-                        label: showMemory ? 'Hide memory' : 'Show memory',
-                        onSelect: () => preferences.setAreaShowsMemory(selected.id, !showMemory),
-                      }]),
-                    ]}
-                    trigger={(triggerProps) => (
-                      <button
-                        {...triggerProps}
-                        type="button"
-                        className={styles.iconButton}
-                        aria-label="Area actions"
-                      >
-                        <Icon name="more" />
-                      </button>
-                    )}
-                  />
-                </span>
-              )}
-            </>
+          {selected !== undefined && (
+            <span ref={moreRef} className={styles.menuHost}>
+              <Menu
+                wrapClassName={menuStyles.toolsMenuWrap}
+                menuClassName={menuStyles.toolsMenu}
+                itemClassName={menuStyles.menuItem}
+                items={[
+                  {
+                    label: `Edit area ${selected.name}`,
+                    onSelect: () => onEditArea(selected, { kind: 'anchor', anchor: { ref: moreRef }, unavailable: 'surface-center' }),
+                  },
+                  {
+                    label: showMemory ? 'Hide memory' : 'Show memory',
+                    onSelect: () => preferences.setAreaShowsMemory(selected.id, !showMemory),
+                  },
+                ]}
+                trigger={(triggerProps) => (
+                  <button
+                    {...triggerProps}
+                    type="button"
+                    className={styles.iconButton}
+                    aria-label="Area actions"
+                  >
+                    <Icon name="more" />
+                  </button>
+                )}
+              />
+            </span>
           )}
-        </div>
-      </header>
+        </>} />
 
-      <div className={styles.areaBody}>
+      <div ref={scrollRef} className={styles.areaBody} data-nc-area-scroll="">
         <div className={styles.areaSummaryStrip}>
           <span className={styles.areaSummaryMeta}>
             {openTracks.length} {openTracks.length === 1 ? 'open track' : 'open tracks'}
             {unreadCount > 0 ? ` · ${unreadCount} unread` : ''}
           </span>
-          {selected !== undefined && onOpenAreaMemory !== undefined && (
+          {selected !== undefined && (
             <button
               type="button"
               className={styles.areaMemoryLink}
@@ -137,9 +132,9 @@ export function AreaLevelTwo({
                   unread={isUnread(track)}
                   formatters={timeFormatters}
                   onOpenTrack={onOpenTrack}
-                  current={track.id === currentTrackId}
                   renderTitle={(track) => <TrackTitle track={track} />}
-                  trailingAction={trackActions === undefined ? undefined : (
+                  current={track.id === currentTrackId}
+                  trailingAction={trackActions !== undefined && (
                     <TrackActions track={track} {...trackActions(track)} className={styles.trackActions} />
                   )}
                 />
@@ -164,7 +159,7 @@ export function AreaLevelTwo({
                 type="button"
                 className={styles.collapseToggle}
                 aria-expanded={closedExpanded}
-                onClick={() => setShowClosed(!closedExpanded)}
+                onClick={() => { setShowClosed(!closedExpanded); onClosedExpandedChange(!closedExpanded); }}
               >
                 <span>{closedExpanded ? 'Hide' : 'Show'}</span>
                 <Icon name={closedExpanded ? 'chevron-down' : 'chevron-right'} size="sm" />
@@ -180,8 +175,8 @@ export function AreaLevelTwo({
                     unread={isUnread(track)}
                     formatters={timeFormatters}
                     onOpenTrack={onOpenTrack}
-                    current={track.id === currentTrackId}
                     renderTitle={(track) => <TrackTitle track={track} />}
+                    current={track.id === currentTrackId}
                     timestampMs={track.closedAt ?? track.updatedAt}
                   />
                 ))}

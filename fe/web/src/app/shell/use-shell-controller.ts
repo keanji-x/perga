@@ -29,11 +29,11 @@ import { useTrackLifecycleMutations } from '../providers/track-lifecycle-mutatio
 import { useUiPreferences } from '../providers/ui-preferences.tsx';
 import { useWorkspace } from '../providers/workspace-queries.ts';
 import {
-  routeParamFromPath, useCurrentPath, useGo, useMobileFocusHomeLocation, useNewTrackBack, useRouteCardId, useRouteFilePath,
-  useTrackPanelNavigation,
+  isNewTrackPath, routeParamFromPath, useCurrentPath, useGo, useMobileFocusHomeLocation, useRouteCardId, useRouteFilePath, useRoutePanel,
 } from '../router/navigation.ts';
 import { useNewTrackDraftArea, usePrepareNewTrack } from '../router/new-track-drafts.tsx';
 import { useDrawerWidthHost } from './drawer-width.tsx';
+import { useMobileHeaderPath } from '../router/mobile-back.ts';
 import { settingsSectionForPath } from './settings-overlay.tsx';
 import { sidebarTrackGroups } from './sidebar-track-groups.ts';
 
@@ -49,12 +49,11 @@ export type ShellControllerOptions = Readonly<{
   transport: ApiTransportPort;
   unauthorized: UnauthorizedChannel;
   nowMs?: number;
-  onAreaCreated?: (area: Area) => void;
 }>;
 
 /** Shared headless shell kernel: workspace reads, mutations, read receipts, Area editor state, and routing actions. */
 export function useShellController({
-  transport, unauthorized, nowMs, onAreaCreated,
+  transport, unauthorized, nowMs,
 }: ShellControllerOptions) {
   const router = useRouter();
   const workspace = useWorkspace(transport, unauthorized);
@@ -82,15 +81,15 @@ export function useShellController({
   const areaEditorNameRef = useRef<HTMLInputElement | null>(null);
 
   const currentPath = useCurrentPath();
-  const routeOwnsMobileChrome = useMobileFocusHomeLocation();
+  const focusHome = useMobileFocusHomeLocation();
+  const headerPath = useMobileHeaderPath();
   const settingsOpen = settingsSectionForPath(currentPath) !== null;
   const routeCardId = useRouteCardId();
   const routeFilePath = useRouteFilePath();
-  const mobileOverlayRoute = typeof routeCardId === 'string' || typeof routeFilePath === 'string';
+  const routeOwnsMobileChrome = focusHome || headerPath === '/workspace' || /^\/area\/[^/]+$/.test(headerPath)
+    || routeCardId != null || routeFilePath != null;
+  const routePanel = useRoutePanel();
   const go = useGo();
-  const newTrackBack = useNewTrackBack();
-  // The report's panel is a history destination, so the shell leaves it the same way the report does.
-  const { closePanel } = useTrackPanelNavigation();
 
   const readError = workspaceReadErrorText(workspace);
   const activityError = workspaceActivityErrorText(workspace);
@@ -119,12 +118,10 @@ export function useShellController({
 
   const routeTrackId = routeParamFromPath(currentPath, '/track/');
   const routeAreaId = routeParamFromPath(currentPath, '/area/');
-  const newTrackArea = useNewTrackDraftArea(newTrackBack === null ? undefined : routeAreaId);
+  const newTrackArea = useNewTrackDraftArea(isNewTrackPath(currentPath) ? routeAreaId : undefined);
   const areas = visibleAreas(workspace.areas);
   const activeAreaId = routeAreaId ?? workspace.tracks.find((track) => track.id === routeTrackId)?.areaId;
   const liveActiveArea = areas.find((area) => area.id === activeAreaId);
-  const activeArea = liveActiveArea ?? newTrackArea ?? areas[0];
-  const areaEditorOpen = areaEditorTarget !== null;
 
   // Both track mutations need the area id to invalidate the right list, and the
   // rail only knows track ids; the workspace read already has the mapping.
@@ -133,13 +130,6 @@ export function useShellController({
 
   const openNewTrack = (areaId: string) => {
     go({ name: 'new-track', areaId });
-  };
-
-  /* Leaving the report layer drops `?panel=` through `closePanel()`, not a bare
-   * `replace`: opening a panel is a `push`, and `replace` does not merge with the
-   * entry before it. Only track routes have a report panel to close. */
-  const clearReportPanel = () => {
-    if (routeTrackId !== undefined) closePanel(routeTrackId);
   };
 
   const requestCreateArea = (origin: DialogOrigin) => {
@@ -209,7 +199,6 @@ export function useShellController({
       if (target.kind === 'create' && originEntryKey !== undefined
         && (router.history as RouterHistory).location.state.__TSR_key === originEntryKey) {
         prepareNewTrack(saved);
-        onAreaCreated?.(saved);
         openNewTrack(saved.id);
       }
     }).catch((failure: unknown) => {
@@ -278,20 +267,14 @@ export function useShellController({
     drawerWidth,
     currentPath,
     routeOwnsMobileChrome,
+    routePanel,
     settingsOpen,
-    mobileOverlayRoute,
-    routeTrackId,
-    routeAreaId,
     newTrackArea,
-    newTrackBack,
     liveActiveArea,
-    activeArea,
     isUnread,
     trackGroups,
     pinFeedback,
     go,
-    areaIdOf,
-    clearReportPanel,
     openNewTrack,
     deleteArea,
     setTrackPinned,
@@ -299,7 +282,6 @@ export function useShellController({
     mobileTrackActions,
     requestCreateArea,
     requestEditArea,
-    areaEditorOpen,
     areaEditor: {
       target: areaEditorTarget,
       pending: areaEditorPending,

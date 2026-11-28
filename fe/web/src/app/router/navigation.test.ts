@@ -1,14 +1,13 @@
 import type { ParsedLocation } from '@tanstack/react-router';
 import { act,cleanup,waitFor } from '@testing-library/react';
-import { createElement,useLayoutEffect } from 'react';
+import { createElement,useCallback,useLayoutEffect } from 'react';
 import { afterEach,describe,expect,it,vi } from 'vitest';
 import { renderDailyFixture } from './daily-planner-fixture.tsx';
 import { useDraftBackOwner,type NavigationSource } from './draft-back-owner.tsx';
-import { useGo,useNewTrackBack } from './navigation.ts';
+import { useAppBack,useGo } from './navigation.ts';
 
 import {
 cardIdFromLocation,cardIdFromSearchString,filePathFromLocation,filePathFromSearchString,
-fromFromLocation,fromFromSearchString,
 hasFilePushedMarker,hasPanelPushedMarker,hasPlannerOpenMarker,
 panelFromLocation,panelFromSearchString,pathFor,
 renderedMobilePanel,sameTrackSearch,validateTrackSearch,
@@ -62,12 +61,10 @@ describe('pathFor', () => {
   });
 });
 
-describe('panel and from parsers', () => {
+describe('panel parsers', () => {
   it('reads a single legal value', () => {
     expect(panelFromSearchString('?panel=cards')).toBe('cards');
     expect(panelFromSearchString('panel=outline&from=area')).toBe('outline');
-    expect(fromFromSearchString('?from=pages')).toBe('pages');
-    expect(fromFromSearchString('?from=area')).toBe('area');
   });
 
   it('drops empty, missing, illegal, and duplicated values without throwing', () => {
@@ -80,24 +77,18 @@ describe('panel and from parsers', () => {
     // The same duplicate-key verdict `?card=` reaches, not a folded first-wins.
     expect(panelFromSearchString('?panel=cards&panel=tasks')).toBeNull();
     expect(panelFromSearchString('?panel=cards&panel=cards')).toBeNull();
-    expect(fromFromSearchString('')).toBeNull();
-    expect(fromFromSearchString('?from=')).toBeNull();
-    expect(fromFromSearchString('?from=today')).toBeNull();
-    expect(fromFromSearchString('?from=pages&from=area')).toBeNull();
   });
 
   it('reads the raw string in preference to an already-folded object', () => {
     expect(panelFromLocation({ searchStr: '?panel=cards&panel=tasks', search: { panel: 'cards' } })).toBeNull();
-    expect(fromFromLocation({ searchStr: '?from=pages&from=area', search: { from: 'pages' } })).toBeNull();
     expect(panelFromLocation({ searchStr: '?panel=tasks' })).toBe('tasks');
-    expect(fromFromLocation({ search: { from: 'area' } })).toBe('area');
   });
 });
 
 describe('validateTrackSearch', () => {
   it('keeps the whitelisted fields and drops everything else', () => {
     expect(validateTrackSearch({ file: 'src/main.rs', from: 'area', other: 'x' }))
-      .toEqual({ file: 'src/main.rs', from: 'area' });
+      .toEqual({ file: 'src/main.rs' });
   });
 
   it('keeps valid one-based line selections only when a file owns the surface', () => {
@@ -116,12 +107,12 @@ describe('validateTrackSearch', () => {
 
   it('[#1191 §0.1] drops the panel when a card is present', () => {
     expect(validateTrackSearch({ card: 'c1', panel: 'cards', from: 'pages' }))
-      .toEqual({ card: 'c1', from: 'pages' });
+      .toEqual({ card: 'c1' });
   });
 
   it('keeps only one primary report surface, with card then file precedence', () => {
     expect(validateTrackSearch({ file: 'README.md', panel: 'tasks', from: 'pages' }))
-      .toEqual({ file: 'README.md', from: 'pages' });
+      .toEqual({ file: 'README.md' });
     expect(validateTrackSearch({ card: 'c1', file: 'README.md', panel: 'cards' }))
       .toEqual({ card: 'c1' });
   });
@@ -137,22 +128,22 @@ describe('sameTrackSearch', () => {
   });
 
   it('keeps the fields the patch does not mention', () => {
-    expect(sameTrackSearch(onW1, 'w1', {})).toEqual({ card: 'c1', from: 'area' });
-    expect(sameTrackSearch(onW1, 'w1', { card: undefined })).toEqual({ from: 'area' });
+    expect(sameTrackSearch(onW1, 'w1', {})).toEqual({ card: 'c1' });
+    expect(sameTrackSearch(onW1, 'w1', { card: undefined })).toEqual({});
   });
 
   it('opens a file without carrying a card or panel and clears only that file on close', () => {
     const panel = { pathname: '/track/w1', searchStr: '?panel=tasks&from=area' };
     expect(sameTrackSearch(panel, 'w1', { file: 'src/main.rs' }))
-      .toEqual({ file: 'src/main.rs', from: 'area' });
+      .toEqual({ file: 'src/main.rs' });
     const file = { pathname: '/track/w1', searchStr: '?file=src%2Fmain.rs&from=area' };
-    expect(sameTrackSearch(file, 'w1', { file: undefined })).toEqual({ from: 'area' });
+    expect(sameTrackSearch(file, 'w1', { file: undefined })).toEqual({});
   });
 
   it('distinguishes an absent key from an explicit undefined', () => {
     const location = { pathname: '/track/w1', searchStr: '?panel=tasks&from=pages' };
-    expect(sameTrackSearch(location, 'w1', { from: undefined })).toEqual({ panel: 'tasks' });
-    expect(sameTrackSearch(location, 'w1', {})).toEqual({ panel: 'tasks', from: 'pages' });
+    expect(sameTrackSearch(location, 'w1', { panel: undefined })).toEqual({});
+    expect(sameTrackSearch(location, 'w1', {})).toEqual({ panel: 'tasks' });
   });
 
   it('rebuilds from the whitelist instead of spreading the previous search', () => {
@@ -162,21 +153,21 @@ describe('sameTrackSearch', () => {
     };
     // `debug` never crosses; the duplicated `card` is rejected rather than
     // carried through as an array.
-    expect(sameTrackSearch(polluted, 'w1', {})).toEqual({ panel: 'tasks', from: 'area' });
+    expect(sameTrackSearch(polluted, 'w1', {})).toEqual({ panel: 'tasks' });
   });
 
   it('[#1191 §0.1] clears the panel whenever a card is set', () => {
     const location = { pathname: '/track/w1', searchStr: '?panel=cards&from=pages' };
-    expect(sameTrackSearch(location, 'w1', { card: 'c9' })).toEqual({ card: 'c9', from: 'pages' });
+    expect(sameTrackSearch(location, 'w1', { card: 'c9' })).toEqual({ card: 'c9' });
   });
 
   /* The card/panel exclusion belongs to the search this builds, not the one it reads: normalising
    * `?card=bad&panel=tasks` on read would leave the bounce's `{ card: undefined }` no panel to keep. */
   it('[#1191 §1.4] keeps the panel when the illegal-card bounce clears the card', () => {
     const location = { pathname: '/track/w1', searchStr: '?card=bad&panel=tasks&from=area' };
-    expect(sameTrackSearch(location, 'w1', { card: undefined })).toEqual({ panel: 'tasks', from: 'area' });
+    expect(sameTrackSearch(location, 'w1', { card: undefined })).toEqual({ panel: 'tasks' });
     // Reading alone still never emits the pair: the patch is what releases it.
-    expect(sameTrackSearch(location, 'w1', {})).toEqual({ card: 'bad', from: 'area' });
+    expect(sameTrackSearch(location, 'w1', {})).toEqual({ card: 'bad' });
   });
 });
 
@@ -229,10 +220,11 @@ describe('renderedMobilePanel', () => {
 });
 
 
-type NavigationPort = { go: ReturnType<typeof useGo>; back: ReturnType<typeof useNewTrackBack>; owner: NonNullable<ReturnType<typeof useDraftBackOwner>> };
+type NavigationPort = { go: ReturnType<typeof useGo>; back: () => void; owner: NonNullable<ReturnType<typeof useDraftBackOwner>> };
 function NavigationProbe({ ready }: { ready: (port: NavigationPort) => void }) {
   const go = useGo();
-  const back = useNewTrackBack();
+  const { goBack } = useAppBack();
+  const back = useCallback(() => goBack({ name: 'today' }), [goBack]);
   const owner = useDraftBackOwner()!;
   useLayoutEffect(() => { ready({ go, back, owner }); }, [go, back, owner, ready]);
   return null;
@@ -248,7 +240,7 @@ async function pendingDraftBack() {
   await waitFor(() => { expect(port!.back).toBeTypeOf('function'); expect(router.state.status).toBe('idle'); });
   const release = router.history.back.bind(router.history);
   const request = vi.spyOn(router.history, 'back').mockImplementation(() => {});
-  act(() => { port!.back!(); });
+  act(() => { port!.back(); });
   return { ...fixture, port: () => port!, release, request };
 }
 
@@ -261,7 +253,7 @@ describe('draft Back supersession owner', () => {
     act(() => {
       port().owner.go(old);
       port().owner.go(latest);
-      port().back!();
+      port().back();
       // An idle origin and an unrelated resolved event are not a Back ack.
       router.emit({ type: 'onResolved', toLocation: router.state.location as ParsedLocation, fromLocation: router.state.location as ParsedLocation, pathChanged: false, hrefChanged: false, hashChanged: false });
       port().owner.ready();
@@ -281,10 +273,10 @@ describe('draft Back supersession owner', () => {
     const { router, port, release, requests } = await pendingDraftBack();
     act(() => {
       port().go({ name: 'new-track', areaId: 'project-area' });
-      port().go(name === 'track' ? { name, trackId: 'project', from: 'area', blockId: 'latest' } : { name });
+      port().go(name === 'track' ? { name, trackId: 'project', blockId: 'latest' } : { name });
       release();
     });
-    const href = name === 'settings' ? '/settings' : name === 'today' ? '/' : '/track/project?from=area#latest';
+    const href = name === 'settings' ? '/settings' : name === 'today' ? '/' : '/track/project#latest';
     await waitFor(() => { expect(router.state.location.href).toBe(href); expect(router.state.status).toBe('idle'); });
     expect(requests.filter(request => request.method !== 'GET')).toHaveLength(0);
   });
@@ -298,7 +290,7 @@ describe('draft Back supersession owner', () => {
       release();
     });
     await waitFor(() => { expect(router.state.location.pathname).toBe('/area/project-area/new'); expect(router.state.status).toBe('idle'); });
-    act(() => { port().back!(); });
+    act(() => { port().back(); });
     expect(request).toHaveBeenCalledTimes(2);
     act(() => { release(); });
     await waitFor(() => { expect(router.state.location.href).toBe('/track/project?from=pages#source'); });

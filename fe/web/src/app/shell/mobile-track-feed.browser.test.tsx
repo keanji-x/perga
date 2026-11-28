@@ -6,8 +6,9 @@ import { commands, page } from 'vitest/browser';
 import type { Area } from '../../../../core/domain/area.ts';
 import type { Track } from '../../../../core/domain/track.ts';
 import { track } from '../../features/track/page/test-fixtures.tsx';
-import { MobileTracks } from './mobile/tracks.tsx';
-import type { MobileTracksProps } from './mobile/tracks-types.ts';
+import { AreaLevelTwo } from './mobile/area-level-two.tsx';
+import { WorkspaceLevelOne } from './mobile/workspace-level-one.tsx';
+import type { ComponentProps } from 'react';
 
 const now = Date.UTC(2026, 10, 27, 12);
 const product: Area = {
@@ -18,7 +19,7 @@ const platform: Area = { ...product, id: 'c2', name: 'Platform', sort: 2 };
 const longTitle = 'Workspace setup with a title too long for the available width on narrow phones';
 const longPreview = 'The report describes the work completed, the decisions made, and the work that remains. '.repeat(3);
 
-function fixture(overrides: Partial<MobileTracksProps> = {}) {
+function fixture({ view = 'tracks', ...overrides }: Partial<ComponentProps<typeof AreaLevelTwo>> & { view?: 'tracks' | 'areas' } = {}) {
   const updatedAt = now - 120_000;
   const open = [
     track({ id: 'failed', title: longTitle, attention: 'failed', previewKind: 'error', previewText: 'Mount **timed out**.', updatedAt }),
@@ -39,16 +40,19 @@ function fixture(overrides: Partial<MobileTracksProps> = {}) {
   const tracksByArea = new Map<string, readonly Track[]>([[product.id, [...open, closed]], [platform.id, [closedWithoutPreview]]]);
   const onOpenTrack = vi.fn();
   const onMarkUnread = vi.fn();
-  render(<div style={{ height: '100dvh' }}>
-    <MobileTracks
-      view="tracks" areas={[product, platform]} areaId={product.id} currentTrackId="current" tracksByArea={tracksByArea}
-      isUnread={(candidate) => candidate.id === 'reply' || candidate.id === 'closed-product'}
-      readError={null} readLoading={false} onRetryRead={vi.fn()}
-      onBack={vi.fn()} onCreateArea={vi.fn()} onEditArea={vi.fn()} onNewTrack={vi.fn()} onSelectArea={vi.fn()}
-      onOpenSettings={vi.fn()} onOpenTrack={onOpenTrack} onOpenToday={vi.fn()} onOpenMemory={vi.fn()} onOpenAreaMemory={vi.fn()}
-      trackActions={() => ({ areaPinned: false, onSetPinned: vi.fn(), onSetAreaPinned: vi.fn(), onMarkUnread })}
-      accountLabel="Test account" nowMs={now} {...overrides}
-    />
+  const props = {
+    areas: [product, platform], currentTrackId: 'current', tracksByArea,
+    isUnread: (candidate: Track) => candidate.id === 'reply' || candidate.id === 'closed-product',
+    readError: null, readLoading: false, onRetryRead: vi.fn(),
+    backLabel: 'Focus', onBack: vi.fn(), scrollRef: null, onClosedExpandedChange: vi.fn(), onOpenTrack, nowMs: now,
+    ...overrides,
+  };
+  render(<div style={{ height: '100dvh', display: 'flex', flexDirection: 'column' }}>
+    {view === 'areas'
+      ? <WorkspaceLevelOne {...props} onCreateArea={vi.fn()} onSelectArea={vi.fn()}
+          onOpenSettings={vi.fn()} onOpenToday={vi.fn()} onOpenMemory={vi.fn()} accountLabel="Test account" />
+      : <AreaLevelTwo areaId={product.id} onEditArea={vi.fn()} onNewTrack={vi.fn()} onOpenAreaMemory={vi.fn()}
+          trackActions={() => ({ areaPinned: false, onSetPinned: vi.fn(), onSetAreaPinned: vi.fn(), onMarkUnread })} {...props} />}
   </div>);
   return { onOpenTrack, onMarkUnread };
 }

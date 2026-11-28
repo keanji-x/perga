@@ -24,10 +24,12 @@ createRecentFileHistory,type RecentFileHistory,
 } from '../providers/recent-files.ts';
 import { createUiPreferences,UiPreferencesProvider,type UiPreferences } from '../providers/ui-preferences.tsx';
 import { prefetchAreaList } from '../providers/workspace-queries.ts';
-import { AppShell,MobileConversationProvider } from '../shell/public.tsx';
+import { AppShell } from '../shell/public.tsx';
 import { useCompactViewport } from '../../ui/viewport/public.ts';
 import { DailyTodayRoute } from './daily-planner.tsx';
 import { MemoryRoute } from './memory-route.tsx';
+import { AreaRoute, WorkspaceRoute } from '../shell/mobile/workspace-routes.tsx';
+import { AppHistoryProvider } from './app-history.tsx';
 import { MobileFocusRoute } from './mobile-focus-route.tsx';
 import {
 pathFor,useGo,useMobileFocusHomeLocation,useRouteParam,
@@ -71,7 +73,7 @@ export function createRouteTree(deps: AppRouterDeps): AnyRoute {
       cardRuntime={cards} recentFiles={recentFiles} />;
   const rootRoute = createRootRouteWithContext<DraftBackContext>()({ component: () => (
     <UiPreferencesProvider preferences={preferences}><ReadReceiptsProvider transport={transport} unauthorized={unauthorized}>
-      <TrackViewProvider><DraftBackLifecycle><MobileConversationProvider><ShellRoute submittedStorage={deps.submittedStorage} transport={transport} unauthorized={unauthorized} shareScope={shareScope} onOwnerSetupComplete={deps.onOwnerSetupComplete} /></MobileConversationProvider></DraftBackLifecycle></TrackViewProvider>
+      <TrackViewProvider><DraftBackLifecycle><AppHistoryProvider><ShellRoute submittedStorage={deps.submittedStorage} transport={transport} unauthorized={unauthorized} shareScope={shareScope} onOwnerSetupComplete={deps.onOwnerSetupComplete} /></AppHistoryProvider></DraftBackLifecycle></TrackViewProvider>
     </ReadReceiptsProvider></UiPreferencesProvider>
   ) });
 
@@ -99,6 +101,18 @@ export function createRouteTree(deps: AppRouterDeps): AnyRoute {
         renderTrack={(detail, evidence, panelContent, intro, supervisor, center) => <TrackRouteBody memoryAreaId={shareScope === null ? null : false} showWorkspaceIsolation={false} center={center} reportHeader={supervisor} reportEmpty={null} mobileReportIntro={intro} panelContent={panelContent} reportEvidence={evidence} key={detail.track.id} prepareReport={prepareReport} transport={transport} unauthorized={unauthorized}
           snapshot={detail} cardRuntime={cards} recentFiles={recentFiles} />} />;
     },
+  });
+
+  const workspaceRoute = createRoute({
+    getParentRoute: () => rootRoute,
+    path: '/workspace',
+    component: WorkspaceRoute,
+  });
+
+  const areaRoute = createRoute({
+    getParentRoute: () => rootRoute,
+    path: '/area/$areaId',
+    component: AreaRoute,
   });
 
   const globalMemoryRoute = createRoute({
@@ -173,7 +187,7 @@ export function createRouteTree(deps: AppRouterDeps): AnyRoute {
   return rootRoute.addChildren([
     indexRoute, newTrackRoute, trackRoute, settingsRoute,
     plannersRoute, appearanceRoute, accountRoute, aboutRoute,
-    ...(shareScope === null ? [globalMemoryRoute, areaMemoryRoute] : []),
+    ...(shareScope === null ? [workspaceRoute, areaRoute, globalMemoryRoute, areaMemoryRoute] : []),
   ]);
 }
 

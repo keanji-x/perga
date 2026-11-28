@@ -10,7 +10,7 @@ function Probe({ trackId }: { trackId: string }) {
   const file = useTrackFileNavigation();
   return <>
     <span>{trackId}</span>
-    <button type="button" onClick={() => go({ name: 'track', trackId: 'a', from: 'pages' })}>resume a</button>
+    <button type="button" onClick={() => go({ name: 'track', trackId: 'a' })}>resume a</button>
     <button type="button" onClick={() => go({ name: 'track', trackId: 'b' })}>resume b</button>
     <button type="button" onClick={() => go({ name: 'track', trackId: 'a', cardId: 'c' })}>target c</button>
     <button type="button" onClick={() => go({ name: 'track', trackId: 'a', blockId: 'paragraph' })}>target paragraph</button>
@@ -43,12 +43,12 @@ it('resumes a mobile panel with the new return source and remembers an explicit 
   await click('resume b', 'b');
   expect(router.state.location.search).toEqual({});
   await click('resume a', 'a');
-  expect(router.state.location.search).toEqual({ panel: 'tasks', from: 'pages' });
+  expect(router.state.location.search).toEqual({ panel: 'tasks' });
   await click('resume a', 'a');
-  await waitFor(() => { expect(router.state.location.search).toEqual({ from: 'pages' }); });
+  await waitFor(() => { expect(router.state.location.search).toEqual({}); });
   await click('resume b', 'b');
   await click('resume a', 'a');
-  expect(router.state.location.search).toEqual({ from: 'pages' });
+  expect(router.state.location.search).toEqual({});
 });
 
 it('distinguishes a same-card explicit target from resume and clears the grid for anchors', async () => {
@@ -60,7 +60,7 @@ it('distinguishes a same-card explicit target from resume and clears the grid fo
   await click('resume b', 'b');
   await click('resume a', 'a');
   expect(router.state.location.state.ncResumeTrackView).toBe(true);
-  expect(router.state.location.search).toEqual({ card: 'c', from: 'pages' });
+  expect(router.state.location.search).toEqual({ card: 'c' });
   await click('resume b', 'b');
   await click('target paragraph', 'a');
   expect(router.state.location.search).toEqual({});
@@ -72,9 +72,9 @@ it('closes a resumed file on its own track instead of popping to the previous tr
   const router = await setup('/track/a?file=README.md&line=13');
   await click('resume b', 'b');
   await click('resume a', 'a');
-  expect(router.state.location.search).toEqual({ file: 'README.md', line: 13, from: 'pages' });
+  expect(router.state.location.search).toEqual({ file: 'README.md', line: 13 });
   await click('close file', 'a');
-  await waitFor(() => { expect(router.state.location.search).toEqual({ from: 'pages' }); });
+  await waitFor(() => { expect(router.state.location.search).toEqual({}); });
   expect(router.state.location.pathname).toBe('/track/a');
 });
 
@@ -86,5 +86,5 @@ it('preserves an external file path across Track navigation and resume', async (
 
   await click('resume b', 'b');
   await click('resume a', 'a');
-  expect(router.state.location.search).toEqual({ file: '/tmp/widget.html', from: 'pages' });
+  expect(router.state.location.search).toEqual({ file: '/tmp/widget.html' });
 });
