@@ -119,6 +119,8 @@ export type TrackPageProps = Readonly<{
   /** `null` reserves the shell header while its title host mounts. */
   mobileHeaderTitleHost?: HTMLElement | null;
   mobileAreaName?: string;
+  onOpenMobileArea?: () => void;
+  mobileReportTitleOnScroll?: boolean;
   mobileTitleReadView?: EditableTitleProps['readView'];
   /** The server's capabilities; at most one is true, so the menu offers Close or Reopen, never both. */
   canReopenTrack: boolean;
@@ -138,6 +140,10 @@ function formatFolioDate(ms: number | undefined): string | null {
   const mm = String(date.getMonth() + 1).padStart(2, '0');
   const dd = String(date.getDate()).padStart(2, '0');
   return `Updated ${yyyy}-${mm}-${dd}`;
+}
+
+function isPastMobileHeading(page: HTMLElement, heading: HTMLElement): boolean {
+  return page.scrollTop > 0 && heading.getBoundingClientRect().bottom <= page.getBoundingClientRect().top;
 }
 
 function directoryLeafOf(cwd: string | undefined, trackId: string): string | null {
@@ -162,14 +168,15 @@ export function TrackPage({ fillReading = false, articleMasthead = !fillReading,
   shareLinks, onShareTrack, onStartConversation, conversationOpen = false, mobilePanelObscured, unread = false, onReply,
   cardsAction, recentFiles, onOpenCard, onDeleteCard, onSetWorkbench, onOpenTask, onOpenOutline, board, onCloseBoard, fileViewer,
   panel = null, onOpenPanel, onClosePanel,
-  mobileBackLabel = 'Workspace', onMobileBack, mobileHeaderActionsHost = null, mobileHeaderTitleHost, mobileAreaName, mobileTitleReadView,
+  mobileBackLabel = 'Workspace', onMobileBack, mobileHeaderActionsHost = null, mobileHeaderTitleHost, mobileAreaName, onOpenMobileArea, mobileReportTitleOnScroll = false, mobileTitleReadView,
   canReopenTrack, canCloseTrack, onRenameTrack, onOpenOriginTrack, closedControl, onDeleteTrack, onTrackDeleted,
 }: TrackPageProps) {
   const compactViewport = useCompactViewport();
   const headerActionsHost = compactViewport ? mobileHeaderActionsHost : null;
   const titleSlotRef = useRef<HTMLDivElement | null>(null);
   const lastFocusedTitleRef = useRef<HTMLElement | null>(null);
-  const titleReadControlRef = useRef<HTMLButtonElement | null>(null);
+  const titleReadControlRef = useRef<HTMLElement | null>(null);
+  const mobileDocTitleRef = useRef<HTMLHeadingElement>(null);
   const mobileTitleEditRef = useRef<(() => void) | null>(null);
   const [canEditMobileTitle, setCanEditMobileTitle] = useState(false);
   const registerMobileTitleEdit = useCallback((begin: (() => void) | null) => {
@@ -258,6 +265,10 @@ export function TrackPage({ fillReading = false, articleMasthead = !fillReading,
   });
   const [desktopActionsOpen, setDesktopActionsOpen] = useState(false);
   const [pageScrolled, setPageScrolled] = useState(false);
+  const hasMobileTitleReadView = titleInHeader && onRenameTrack !== undefined && mobileTitleReadView !== undefined;
+  const scrollTitleInHeader = hasMobileTitleReadView && mobileReportTitleOnScroll;
+  const hideMobileReadTitle = scrollTitleInHeader && !pageScrolled;
+  const mobileDocHeaderRef = useRef<HTMLElement>(null);
   const pageRef = useRef<HTMLElement>(null);
   const reportOffset = useRef<number | null>(null);
   const fileOpen = fileViewer !== undefined;
@@ -275,6 +286,16 @@ export function TrackPage({ fillReading = false, articleMasthead = !fillReading,
     page.scrollTop = top;
   }, [fileOpen]);
   const mastheadRef = useRef<HTMLElement | null>(null);
+  useLayoutEffect(() => {
+    const page = pageRef.current;
+    const heading = mobileDocHeaderRef.current;
+    if (!scrollTitleInHeader || page === null || heading === null) return;
+    const sync = () => setPageScrolled(isPastMobileHeading(page, heading));
+    sync();
+    const observer = new ResizeObserver(sync);
+    observer.observe(heading);
+    return () => observer.disconnect();
+  }, [scrollTitleInHeader]);
   const desktopActionsRef = useRef<HTMLButtonElement | null>(null);
   const mobilePanelRef = useRef<HTMLElement | null>(null);
   const shareTriggerRef = useRef<HTMLButtonElement | null>(null);
@@ -296,8 +317,8 @@ export function TrackPage({ fillReading = false, articleMasthead = !fillReading,
       return;
     }
     if (previous === null) return;
-    const trigger = mobileHeaderTitleHost?.querySelector<HTMLElement>('[data-nc-page-title]')
-      ?? mobileActionsRef.current?.querySelector('button');
+    const titleControl = mobileHeaderTitleHost?.querySelector<HTMLElement>('[data-nc-page-title]');
+    const trigger = titleControl?.closest('[inert]') === null ? titleControl : mobileActionsRef.current?.querySelector('button');
     trigger?.focus({ preventScroll: true });
   }, [panel, mobileHeaderTitleHost]);
 
@@ -356,7 +377,6 @@ export function TrackPage({ fillReading = false, articleMasthead = !fillReading,
     ...(folioDate !== null ? [folioDate] : []),
   ];
   const { originTrackId } = track;
-  const hasMobileTitleReadView = titleInHeader && onRenameTrack !== undefined && mobileTitleReadView !== undefined;
   const originLink = originTrackId === undefined || onOpenOriginTrack === undefined ? null : (
     <button type="button" className={styles.originLink} onClick={() => { onOpenOriginTrack(originTrackId); }}>
       Origin track
@@ -382,10 +402,14 @@ export function TrackPage({ fillReading = false, articleMasthead = !fillReading,
                 readView={hasMobileTitleReadView ? (controls) => <MobileTitleReadView
                   controls={controls} host={mobileHeaderTitleHost} register={registerMobileTitleEdit}
                   view={(readControls) => (
-                    <div className={styles.mobileOriginTitle}>
-                      {mobileTitleReadView(readControls)}
-                      {originLink}
-                      {mobileAreaName === undefined && <ActivityIndicator state={activity} spoken={activityLabel} />}
+                    <div className={styles.mobileOriginTitle} inert={hideMobileReadTitle} aria-hidden={hideMobileReadTitle || undefined}>
+                      {mobileTitleReadView(hideMobileReadTitle ? {
+                        ...readControls,
+                        isPageTitle: false,
+                        titleRef: (node) => readControls.titleRef(node === null ? null : mobileDocTitleRef.current),
+                      } : readControls)}
+                      {!scrollTitleInHeader && originLink}
+                      {!scrollTitleInHeader && mobileAreaName === undefined && <ActivityIndicator state={activity} spoken={activityLabel} />}
                     </div>
                   )} /> : undefined} />}
         </h1>
@@ -398,6 +422,7 @@ export function TrackPage({ fillReading = false, articleMasthead = !fillReading,
     </div>
   );
 
+  const hasMobileDocArea = mobileAreaName !== undefined || onOpenMobileArea !== undefined;
   const fileTitle = fileViewer === undefined ? undefined
     : (fileViewer.title ?? <span className={styles.headerFilePath} title={fileViewer.fullPath}>{fileViewer.label}</span>);
 
@@ -409,8 +434,10 @@ export function TrackPage({ fillReading = false, articleMasthead = !fillReading,
       data-nc-scrolled={pageScrolled ? '' : undefined}
       onScroll={(event) => {
         if (!fileOpen && !boardOpen) reportOffset.current = event.currentTarget.scrollTop;
-        const threshold = mastheadRef.current?.offsetHeight || 72;
-        const next = event.currentTarget.scrollTop > threshold;
+        const mobileHeading = scrollTitleInHeader ? mobileDocHeaderRef.current : null;
+        const next = mobileHeading === null
+          ? event.currentTarget.scrollTop > (mastheadRef.current?.offsetHeight || 72)
+          : isPastMobileHeading(event.currentTarget, mobileHeading);
         if (next !== pageScrolled) setPageScrolled(next);
       }}
     >
@@ -489,7 +516,10 @@ export function TrackPage({ fillReading = false, articleMasthead = !fillReading,
         )}
       />
 
-      {titleInHeader && createPortal(<span aria-hidden="true" style={{ position: 'absolute' }} />, mobileHeaderTitleHost)}
+      {titleInHeader && createPortal(
+        <span hidden data-nc-track-header-state={scrollTitleInHeader && pageScrolled ? 'scrolled' : undefined} />,
+        mobileHeaderTitleHost,
+      )}
       {headerActionsHost !== null && mobileActions !== undefined && createPortal(mobileActions, headerActionsHost)}
       {usesShellHeader ? null : <div className={styles.mobileTrackHeader} ref={mobileHeaderRef}>
         <MobileHeader
@@ -532,19 +562,36 @@ export function TrackPage({ fillReading = false, articleMasthead = !fillReading,
             </header>
           )}
           {compactViewport && titleInHeader && (
-            <header className={styles.mobileDocHeader}>
-              {(mobileAreaName !== undefined || folioDate !== null) && (
+            <header ref={mobileDocHeaderRef} className={styles.mobileDocHeader}>
+              {hasMobileTitleReadView ? (
+                /* eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions -- Keep heading semantics and support F2 when focus returns here. */
+                <h1 ref={mobileDocTitleRef} className={styles.mobileDocTitle}
+                  tabIndex={hideMobileReadTitle ? -1 : undefined} data-nc-page-title={hideMobileReadTitle ? '' : undefined}
+                  onKeyDown={hideMobileReadTitle ? (event) => {
+                    if (event.key !== 'F2') return;
+                    event.preventDefault();
+                    mobileTitleEditRef.current?.();
+                  } : undefined}><TrackTitle track={track} /></h1>
+              ) : <h2 className={styles.mobileDocTitle}><TrackTitle track={track} /></h2>}
+              {(hasMobileDocArea || folioDate !== null || track.closedAt !== null || (scrollTitleInHeader && originLink !== null)) && (
                 <div className={styles.mobileDocMeta}>
-                  {mobileAreaName !== undefined && (
-                    <span className={styles.mobileDocAreaChip}>
-                      <span className={styles.mobileDocAreaDot} aria-hidden="true" />
-                      <span>{mobileAreaName}</span>
-                    </span>
+                  {onOpenMobileArea === undefined ? (mobileAreaName !== undefined && <span>{mobileAreaName}</span>) : (
+                    <button type="button" className={styles.mobileDocArea}
+                      aria-label={mobileAreaName === undefined ? 'Open workspace' : `Open area ${mobileAreaName}`}
+                      onClick={(event) => {
+                        event.currentTarget.focus({ preventScroll: true });
+                        onOpenMobileArea();
+                      }}>
+                      <span>{mobileAreaName ?? 'Workspace'}</span>
+                      <Icon name="chevron-right" size="sm" />
+                    </button>
                   )}
-                  {folioDate !== null && <span className={styles.mobileDocDate}>{folioDate}</span>}
+                  {hasMobileDocArea && folioDate !== null && <span aria-hidden="true">·</span>}
+                  {folioDate !== null && <span>{folioDate}</span>}
+                  <TrackClosedBadge closedAt={track.closedAt} />
+                  {scrollTitleInHeader && originLink}
                 </div>
               )}
-              <h2 className={styles.mobileDocTitle}><TrackTitle track={track} /></h2>
             </header>
           )}
           {compactViewport && mobileReportIntro}

@@ -448,6 +448,12 @@
       align-items: center;
       justify-content: center;
       inline-size: 100%;
+      transition: opacity var(--motion-snappy) var(--ease-feedback);
+    }
+
+    .mobileOriginTitle[inert] {
+      opacity: 0;
+      visibility: hidden;
     }
 
     .mobileOriginTitle > :first-child {
@@ -630,6 +636,7 @@
       flex-direction: column;
       gap: var(--space-2);
       padding-block: var(--space-1) var(--space-3);
+      border-block-end: var(--space-px) solid color-mix(in srgb, var(--hairline) 45%, transparent);
     }
 
     .mobileDocMeta {
@@ -637,31 +644,43 @@
       align-items: center;
       flex-wrap: wrap;
       gap: var(--space-2);
+      color: var(--text-3);
+      font: var(--type-metadata);
     }
 
-    .mobileDocAreaChip {
+    .mobileDocArea {
       display: inline-flex;
       align-items: center;
       gap: var(--space-1);
-      padding: var(--space-half) var(--space-2);
-      border-radius: var(--radius-pill);
-      background: var(--surface-card);
-      border: 1px solid color-mix(in srgb, var(--hairline) 75%, transparent);
-      font: var(--type-metadata);
+      min-block-size: var(--rail-w-collapsed);
+      max-inline-size: 100%;
+      min-inline-size: 0;
+      padding: 0;
+      border: 0;
+      background: transparent;
+      font: inherit;
       font-weight: var(--weight-medium);
       color: var(--text-2);
+      cursor: pointer;
     }
 
-    .mobileDocAreaDot {
-      inline-size: var(--dot-sm);
-      block-size: var(--dot-sm);
-      border-radius: var(--radius-pill);
-      background: var(--accent);
+    .mobileDocArea:hover,
+    .mobileDocArea:focus-visible {
+      color: var(--text);
     }
 
-    .mobileDocDate {
-      font: var(--type-metadata);
-      color: var(--text-3);
+    .mobileDocArea > span:first-child {
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .mobileDocArea svg {
+      flex: none;
+    }
+
+    .mobileDocArea:where(:dir(rtl)) svg {
+      transform: scaleX(-1);
     }
 
     .mobileDocTitle {
@@ -669,8 +688,9 @@
       font-family: var(--font-sans);
       font-size: var(--font-step-5-size);
       font-weight: var(--weight-bold);
-      line-height: 1.25;
-      letter-spacing: -0.015em;
+      line-height: var(--font-step-5-line);
+      letter-spacing: var(--font-step-5-tracking);
+      overflow-wrap: anywhere;
       color: var(--text);
     }
 

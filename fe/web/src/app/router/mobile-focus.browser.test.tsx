@@ -316,7 +316,7 @@ describe('MobileFocusHome', () => {
     await expect.element(page.getByRole('heading', { name: 'Focus', exact: true })).toBeVisible();
     const feed = page.getByRole('list', { name: 'Tracks', exact: true });
     await expect.element(feed).toBeVisible();
-    const rows = feed.getByRole('button').elements();
+    const rows = feed.getByRole('button').elements().filter((button) => button.parentElement?.localName === 'li');
     expect(rows).toHaveLength(17);
     const failed = feed.getByRole('button', { name: /^Workspace setup.*Needs repair Mount timed out\./ });
     const ask = feed.getByRole('button', { name: /^Mobile layout polish.*Waiting on you: Approve the mobile layout\?/ });
@@ -326,7 +326,7 @@ describe('MobileFocusHome', () => {
     const pinned = feed.getByRole('button', { name: /^Overflow track 1\b.*Pinned$/ });
     expect(rows.slice(0, 6)).toEqual([failed, ask, reply, running, summary, pinned].map(row => row.element()));
     expect(page.getByRole('heading').elements()).toHaveLength(1);
-    expect(feed.element().querySelector('section, footer, svg')).toBeNull();
+    expect(feed.element().querySelector('section, footer, li > button svg')).toBeNull();
     expect(getComputedStyle(feed.element()).borderRadius).toBe('0px');
     expect(getComputedStyle(failed.element(), '::before').content).toBe('none');
     expect(getComputedStyle(failed.element()).borderLeftWidth).toBe('0px');
@@ -338,13 +338,28 @@ describe('MobileFocusHome', () => {
     const firstPreview = failureLabel.parentElement!;
     const longTitle = reply.getByText(/^Design system review/).element().parentElement!;
     const longPreview = reply.getByText('Reply:', { exact: true }).element().parentElement!;
-    await expect.element(ask.getByText('Product', { exact: true })).toBeVisible();
-    await expect.element(ask.getByText('· 2m', { exact: true })).toBeVisible();
+    const askItem = page.elementLocator(ask.element().closest('li')!);
+    const area = askItem.getByRole('button', { name: 'Open area Product' }).element();
+    const time = askItem.getByText('· 2m', { exact: true }).element();
+    const askPreview = ask.getByText('Waiting on you:', { exact: true }).element().parentElement!;
+    expect(ask.element()).not.toContainElement(area);
+    expect(area.getBoundingClientRect().height).toBeGreaterThanOrEqual(44);
+    expect(area.getBoundingClientRect().top).toBeGreaterThan(askPreview.getBoundingClientRect().bottom);
+    expect(time.getBoundingClientRect().left).toBeGreaterThan(area.getBoundingClientRect().right);
+    expect(time.getBoundingClientRect().right).toBe(askPreview.getBoundingClientRect().right);
     expect(firstTitle.getBoundingClientRect().left).toBe(firstPreview.getBoundingClientRect().left);
     expect(parseFloat(getComputedStyle(firstTitle).fontSize)).toBeGreaterThan(parseFloat(getComputedStyle(firstPreview).fontSize));
-    expect(getComputedStyle(longTitle).textOverflow).toBe('ellipsis');
+    const titleStyle = getComputedStyle(longTitle);
+    expect(titleStyle.textOverflow).toBe('ellipsis');
+    expect(titleStyle.whiteSpace).toBe('nowrap');
+    expect(longTitle.getBoundingClientRect().height).toBeCloseTo(parseFloat(titleStyle.lineHeight), 1);
     expect(longTitle.scrollWidth).toBeGreaterThan(longTitle.clientWidth);
-    expect(getComputedStyle(longPreview).getPropertyValue('-webkit-line-clamp')).toBe('3');
+    const previewStyle = getComputedStyle(longPreview);
+    expect(previewStyle.getPropertyValue('-webkit-line-clamp')).toBe('2');
+    expect(parseFloat(previewStyle.lineHeight) / parseFloat(previewStyle.fontSize)).toBeCloseTo(1.6, 1);
+    expect(longPreview.clientHeight).toBeCloseTo(parseFloat(previewStyle.lineHeight) * 2, 0);
+    expect(getComputedStyle(reply.element()).paddingBlock).toBe('20px 18px');
+    expect(getComputedStyle(reply.element()).rowGap).toBe('8px');
     expect(longPreview.scrollHeight).toBeGreaterThan(longPreview.clientHeight);
     for (const row of rows) {
       expect(row.scrollWidth).toBeLessThanOrEqual(row.clientWidth);
@@ -373,6 +388,7 @@ describe('MobileFocusHome', () => {
     const filterBar = page.getByRole('navigation', { name: 'Focus filters', exact: true }).element();
     expect(feed.element().getBoundingClientRect().top).toBe(filterBar.getBoundingClientRect().bottom);
     expect(getComputedStyle(filterBar).backgroundColor).toBe(getComputedStyle(headers[0]).backgroundColor);
+    expect(getComputedStyle(feed.element()).backgroundColor).toBe(getComputedStyle(filterBar).backgroundColor);
     expect(Math.abs((menuGlyph.top + menuGlyph.height / 2) - (title.top + title.height / 2))).toBeLessThanOrEqual(1);
     expect(Math.abs(menuGlyph.left - contentLeft)).toBeLessThanOrEqual(1);
     expect(feedScroll!.scrollHeight).toBeGreaterThan(feedScroll!.clientHeight);
@@ -380,21 +396,31 @@ describe('MobileFocusHome', () => {
     await expect.element(page.getByRole('button', { name: /Overflow track 12/ })).toBeInViewport();
     feedScroll!.scrollTop = 0;
 
-    // Header actions, filter pills, and the unread utility action meet the 44px touch target floor.
+    // Header actions, filter tabs, and the unread utility action meet the 44px touch height floor.
     for (const label of ['Open workspace', 'Search tracks', 'New track'] as const) {
       const box = page.getByRole('button', { name: label, exact: true }).element().getBoundingClientRect();
       expect(box.width).toBeGreaterThanOrEqual(44);
       expect(box.height).toBeGreaterThanOrEqual(44);
     }
-    for (const pill of page.getByRole('navigation', { name: 'Focus filters', exact: true }).getByRole('button').elements()) {
-      expect(pill.getBoundingClientRect().height).toBeGreaterThanOrEqual(44);
+    for (const tab of page.getByRole('navigation', { name: 'Focus filters', exact: true }).getByRole('button').elements()) {
+      expect(tab.getBoundingClientRect().height).toBeGreaterThanOrEqual(44);
     }
 
-    await page.getByRole('button', { name: /^Unread/ }).click();
+    const unread = page.getByRole('button', { name: /^Unread/ });
+    await unread.click();
+    await expect.element(unread).toHaveAttribute('aria-pressed', 'true');
+    expect(getComputedStyle(unread.element(), '::after').backgroundColor).toBe(resolvedColor('var(--text)'));
+    expect(getComputedStyle(page.getByRole('button', { name: /^Focus\b/ }).element(), '::after').content).toBe('none');
+    await userEvent.tab();
+    const attention = page.getByRole('button', { name: /^Attention/ }).element();
+    expect(document.activeElement).toBe(attention);
+    expect(getComputedStyle(attention).outlineColor).toBe(resolvedColor('var(--accent)'));
+    expect(getComputedStyle(attention).outlineStyle).toBe('solid');
     await expect.element(page.getByText('2 unread', { exact: true })).toBeVisible();
     const markRead = page.getByRole('button', { name: 'Mark all read', exact: true }).element();
     expect(markRead.getBoundingClientRect().height).toBeGreaterThanOrEqual(44);
     expect(getComputedStyle(markRead.parentElement!).borderBottomWidth).toBe('1px');
+    expect(getComputedStyle(markRead.parentElement!).backgroundColor).toBe(getComputedStyle(feed.element()).backgroundColor);
     expect(feed.element().getBoundingClientRect().bottom).toBe(feedScroll!.getBoundingClientRect().bottom);
     expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(width);
   });
@@ -416,7 +442,8 @@ describe('MobileFocusHome', () => {
     await heading.hover();
 
     const failedPill = getComputedStyle(failed.getByText('Needs repair', { exact: true }).element());
-    const askLabel = getComputedStyle(ask.getByText('Waiting on you:', { exact: true }).element());
+    const askLabelElement = ask.getByText('Waiting on you:', { exact: true }).element();
+    const askLabel = getComputedStyle(askLabelElement);
     const failedAsk = failed.getByText('Waiting on you:', { exact: true }).element();
     const failedAskLabel = getComputedStyle(failedAsk);
     const failedInk = getComputedStyle(failedAsk.parentElement!).color;
@@ -424,9 +451,23 @@ describe('MobileFocusHome', () => {
     const radius = getComputedStyle(feed.element()).getPropertyValue('--radius-pill').trim();
     const filters = page.getByRole('navigation', { name: 'Focus filters' }).getByRole('button').elements();
     expect(filters).toHaveLength(5);
-    for (const style of [...filters.map(element => getComputedStyle(element)), failedPill]) {
-      expect(style.borderRadius).toBe(radius);
+    for (const tab of filters) {
+      const style = getComputedStyle(tab);
+      const indicator = getComputedStyle(tab, '::after');
+      expect(style.borderRadius).toBe('0px');
+      expect(style.borderBottomWidth).toBe('0px');
+      expect(style.backgroundColor).toBe(resolvedColor('transparent'));
+      if (tab.getAttribute('aria-pressed') === 'true') {
+        expect(indicator.content).toBe('""');
+        expect(indicator.bottom).toBe('0px');
+        expect(indicator.height).toBe(style.getPropertyValue('--rule-h').trim());
+        expect(indicator.backgroundColor).toBe(resolvedColor('var(--text)'));
+        expect(parseFloat(indicator.width) / tab.getBoundingClientRect().width).toBeCloseTo(0.6, 2);
+      } else {
+        expect(indicator.content).toBe('none');
+      }
     }
+    expect(failedPill.borderRadius).toBe(radius);
     expect(failedPill.backgroundColor).toBe(resolvedColor('var(--chip-error)'));
     expect(failedPill.color).toBe(resolvedColor('var(--chip-on-error)'));
     for (const style of [askLabel, failedAskLabel]) {
@@ -436,10 +477,12 @@ describe('MobileFocusHome', () => {
       expect(style.backgroundColor).toBe(resolvedColor('transparent'));
       expect(style.borderTopWidth).toBe('0px');
     }
-    expect(failedInk).toBe(resolvedColor('var(--text)'));
-    expect(getComputedStyle(failed.getByText('Workspace setup', { exact: true }).element()).color).toBe(failedInk);
+    expect(failedInk).toBe(resolvedColor('var(--text-2)'));
+    expect(getComputedStyle(failed.getByText('Workspace setup', { exact: true }).element()).color).toBe(resolvedColor('var(--text)'));
     expect(getComputedStyle(failed.element().closest('li')!).backgroundColor).toBe(resolvedColor('var(--error-soft)'));
-    expect(surface).toBe(resolvedColor('var(--surface-card)'));
+    expect(surface).toBe(resolvedColor('var(--bg)'));
+    expect(getComputedStyle(filters[0].parentElement!).backgroundColor).toBe(surface);
+    expect(getComputedStyle(heading.element().closest('header')!).backgroundColor).toBe(surface);
     const divider = getComputedStyle(ask.element().closest('li')!, '::before');
     expect([divider.left, divider.right, divider.height]).toEqual(['0px', '0px', '1px']);
     expect(divider.backgroundColor).toBe(resolvedColor('var(--error-border)'));
@@ -448,7 +491,10 @@ describe('MobileFocusHome', () => {
       {
         row: ask, title: 'Mobile layout polish',
         backgrounds: ['transparent', 'var(--overlay-hover)', 'var(--overlay-active)'],
-        checkContrast: (fill: string) => expect(contrastRatio(askLabel.color, surface, fill)).toBeGreaterThanOrEqual(4.5),
+        checkContrast: (fill: string) => {
+          expect(contrastRatio(askLabel.color, surface, fill)).toBeGreaterThanOrEqual(4.5);
+          expect(contrastRatio(getComputedStyle(askLabelElement.parentElement!).color, surface, fill)).toBeGreaterThanOrEqual(4.5);
+        },
       },
       {
         row: failed, title: 'Workspace setup',
@@ -560,7 +606,7 @@ describe('MobileFocusHome', () => {
 
       const glyph = menu.querySelector('svg')!.getBoundingClientRect();
       const rowTitle = row.getByText('Mobile layout polish', { exact: true }).element().getBoundingClientRect();
-      const rowMeta = row.getByText('· 2m', { exact: true }).element().getBoundingClientRect();
+      const rowMeta = page.elementLocator(row.element().closest('li')!).getByText('· 2m', { exact: true }).element().getBoundingClientRect();
       for (const box of [glyph, focus.getBoundingClientRect(), rowTitle, rowMeta, create.getBoundingClientRect()]) {
         expect(box.left).toBeGreaterThanOrEqual(leftInset);
         expect(box.right).toBeLessThanOrEqual(width - rightInset);
@@ -584,6 +630,30 @@ describe('MobileFocusHome', () => {
     } finally {
       await commands.setHorizontalSafeArea(0, 0);
     }
+  });
+
+  it.each([320, 390])('jumps from a Focus row directly to its Area and restores the opener at %ipx', async (width) => {
+    await page.viewport(width, 844);
+    const { router } = renderFocusFixture();
+    const row = await page.getByRole('button', { name: /^Mobile layout polish\b/ }).findElement();
+    const item = row.closest('li')!;
+    const area = page.elementLocator(item).getByRole('button', { name: 'Open area Product' });
+    const opener = await area.findElement();
+    const chevron = opener.querySelector('svg')!;
+    expect(getComputedStyle(chevron).transform).toBe('none');
+    item.dir = 'rtl';
+    expect(getComputedStyle(chevron).transform).toBe('matrix(-1, 0, 0, 1, 0, 0)');
+    item.removeAttribute('dir');
+    await area.click();
+    const dialog = page.getByRole('dialog', { name: 'Tracks and settings' });
+    await expect.element(dialog.getByRole('heading', { name: 'Product', exact: true })).toBeVisible();
+    await expect.element(dialog.getByRole('region', { name: 'Open tracks' })).toBeVisible();
+    expect(dialog.getByRole('heading', { name: 'Workspace' }).query()).toBeNull();
+    expect(router.state.location.pathname).toBe('/');
+    await dialog.getByRole('button', { name: 'Back to Focus', exact: true }).click();
+    await expect.element(area).toHaveFocus();
+    expect(area.element()).toBe(opener);
+    expect(router.state.location.pathname).toBe('/');
   });
 
   it('searches quiet & closed tracks from Focus, handles IME-safe Escape, preserves query via Show all matches, and navigates', async () => {
@@ -624,6 +694,7 @@ describe('MobileFocusHome', () => {
     const area = page.getByRole('combobox', { name: 'Filter by area', exact: true });
     await area.selectOptions('a-prod');
     await expect.element(page.getByText('Found 5 tracks in Product')).toBeVisible();
+    expect(getComputedStyle(searchInput.element().closest('header')!).backgroundColor).toBe(resolvedColor('var(--bg)'));
     expect(page.getByRole('list', { name: 'Tracks', exact: true }).element().querySelector('mark')?.textContent).toBe('Product');
     await page.getByRole('button', { name: 'Reset', exact: true }).click();
     expect((searchInput.element() as HTMLInputElement).value).toBe('');

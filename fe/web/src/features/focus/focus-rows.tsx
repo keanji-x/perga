@@ -66,9 +66,9 @@ export function MobileTrackFeedRow({
   unread,
   formatters,
   onOpenTrack,
+  onOpenArea,
   timestampMs = trackRecentAt(track),
   current = false,
-  previewLines = 3,
   surface = 'edge',
   trailingAction,
   renderTitle,
@@ -80,9 +80,9 @@ export function MobileTrackFeedRow({
   unread: boolean;
   formatters: RelativeTimeFormatters;
   onOpenTrack: (trackId: string) => void;
+  onOpenArea?: (areaId: string) => void;
   timestampMs?: number;
   current?: boolean;
-  previewLines?: 2 | 3;
   surface?: 'edge' | 'card';
   trailingAction?: ReactNode;
   renderTitle?: (track: Track, content: ReactNode) => ReactNode;
@@ -105,6 +105,11 @@ export function MobileTrackFeedRow({
     failed ? styles.feedItemFailed : '',
   ].join(' ');
 
+  const area = areaName === undefined ? null : <span className={styles.feedArea}>{highlightMatch(areaName, query)}</span>;
+  const hasAreaAction = areaName !== undefined && onOpenArea !== undefined;
+  const hasControls = hasAreaAction || trailingAction != null;
+  const timeLabel = time === '' ? null : <span className={styles.feedTime}>{areaName === undefined ? time : `· ${time}`}</span>;
+
   return (
     <li className={itemClass}>
       <button
@@ -113,23 +118,14 @@ export function MobileTrackFeedRow({
         aria-current={current ? 'page' : undefined}
         onClick={() => onOpenTrack(track.id)}
       >
-        <span className={styles.feedTopRow}>
-          <span
-            className={styles.feedTitle}
-            data-nc-active={current || (!closed && activity !== 'quiet') || undefined}
-          >
-            {renderTitle === undefined ? title : renderTitle(track, title)}
-          </span>
-          {' '}
-          {(areaName !== undefined || time !== '') && (
-            <span className={styles.feedMeta}>
-              {areaName !== undefined && <span className={styles.feedArea}>{highlightMatch(areaName, query)}</span>}
-              {time !== '' && <span>{areaName !== undefined ? ` · ${time}` : time}</span>}
-            </span>
-          )}
+        <span
+          className={styles.feedTitle}
+          data-nc-active={current || unread || (!closed && activity !== 'quiet') || undefined}
+        >
+          {renderTitle === undefined ? title : renderTitle(track, title)}
         </span>
         {' '}
-        <span className={preview === '' ? styles.feedFallback : styles.feedPreview} data-nc-preview-lines={previewLines}>
+        <span className={styles.feedPreview}>
           {status !== null && content !== null && status.text !== content.text && (
             <><span className={status.tone ?? styles.statusMuted}>{status.text}</span>{status.pill || content.pill ? ' ' : ' · '}</>
           )}
@@ -144,10 +140,28 @@ export function MobileTrackFeedRow({
           ))}
         </span>
         {' '}
+        {!hasControls && (area !== null || timeLabel !== null) && (
+          <span className={styles.feedMeta}>{area}{' '}{timeLabel}</span>
+        )}
+        {' '}
         {closed && status?.text !== 'Closed' && <span className={styles.srOnly}>Closed</span>}
         {announceUnread && <span className={styles.srOnly}>Unread</span>}
       </button>
-      {trailingAction != null && <div className={styles.feedAction}>{trailingAction}</div>}
+      {hasControls && (
+        <div className={`${styles.feedMeta} ${styles.feedControls}`}>
+          {hasAreaAction ? (
+            <button type="button" className={styles.feedAreaButton} aria-label={`Open area ${areaName}`}
+              onClick={(event) => {
+                event.currentTarget.focus({ preventScroll: true });
+                onOpenArea(track.areaId);
+              }}>
+              <span className={styles.feedAreaLabel}>{area}<Icon name="chevron-right" size="sm" /></span>
+            </button>
+          ) : area}
+          {timeLabel}
+          {trailingAction}
+        </div>
+      )}
     </li>
   );
 }

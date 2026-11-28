@@ -1,4 +1,8 @@
 @layer features {
+  .rootHeader:has([data-nc-track-header-state="scrolled"]) {
+    box-shadow: inset 0 calc(-1 * var(--space-px)) color-mix(in srgb, var(--hairline) 45%, transparent);
+  }
+
   .rootHeader button:not([role='menuitem']) {
     border: 0;
     background-color: transparent;

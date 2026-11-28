@@ -93,7 +93,7 @@ import { useNewTrackCard } from '../../features/track/new-card/controller.tsx';
 import type { CardRuntime } from './card-runtime.ts';
 import { useConversationPanel } from './conversation-panel.tsx';
 export function TrackRouteBody({
-  transport, unauthorized, snapshot, memoryAreaId, trackPath, showWorkspaceIsolation = true, cardRuntime, recentFiles, reportEvidence, reportHeader, reportEmpty, panelContent, mobileReportIntro, prepareReport, center, workspaceWaiting = false, workspaceNotice,
+  transport, unauthorized, snapshot, memoryAreaId, trackPath, showWorkspaceIsolation = true, cardRuntime, recentFiles, reportEvidence, reportHeader, reportEmpty, panelContent, mobileReportIntro, mobileReportTitleOnScroll, prepareReport, center, workspaceWaiting = false, workspaceNotice,
 }: {
   transport: ApiTransportPort;
   unauthorized: UnauthorizedChannel;
@@ -110,6 +110,7 @@ export function TrackRouteBody({
   workspaceNotice?: ReactNode;
   panelContent?: ReactNode;
   mobileReportIntro?: ReactNode;
+  mobileReportTitleOnScroll?: boolean;
   prepareReport: ReportPreparationPort;
   reportEmpty?: ReactNode;
 
@@ -151,6 +152,11 @@ export function TrackRouteBody({
   }), [canReopenTrack, canCloseTrack, closedPending, setClosed]);
   const conversationMutations = useTrackConversationMutations(transport, track.id, unauthorized);
   const openMobileSection = useOpenMobileSection();
+  const openReportArea = mobileAreaId === null ? undefined
+    : () => openMobileSection({ kind: 'tracks', areaId: mobileAreaId, returnTo: 'report' }, 'opener');
+  const openMobileWorkspace = () => openMobileSection({ kind: 'areas', areaId: undefined });
+  const openMobileArea = mobileAreaName !== undefined ? openReportArea
+    : mobileReportTitleOnScroll && memoryAreaId !== false ? openMobileWorkspace : undefined;
   const mobileHeaderActionsHost = useMobileHeaderActionsHost();
   const mobileHeaderTitleHost = useMobileHeaderTitleHost();
   const go = useGo(alias);
@@ -527,10 +533,10 @@ export function TrackRouteBody({
       mobileHeaderActionsHost={mobileHeaderActionsHost}
       mobileHeaderTitleHost={mobileHeaderTitleHost}
       mobileAreaName={mobileAreaName}
-      mobileTitleReadView={(controls) => <TrackSelector track={track} areaName={mobileAreaName} controls={controls}
-        onOpenTracks={() => openMobileSection(mobileAreaId === null
-          ? { kind: 'areas', areaId: undefined }
-          : { kind: 'tracks', areaId: mobileAreaId, returnTo: 'report' })} />}
+      mobileReportTitleOnScroll={mobileReportTitleOnScroll}
+      onOpenMobileArea={openMobileArea}
+      mobileTitleReadView={(controls) => <TrackSelector track={track} controls={controls}
+        onOpenTracks={openReportArea ?? openMobileWorkspace} />}
       track={track}
       onOpenOriginTrack={openRelatedTrack}
       canReopenTrack={canReopenTrack}

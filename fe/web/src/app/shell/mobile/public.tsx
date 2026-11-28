@@ -171,8 +171,9 @@ export function MobileShellChrome({
     }
   }, [mobileSectionKind, navigation.interactive]);
 
-  // Opening while Areas is loading has no id yet. Follow the current Area
-  // when the read recovers; an explicitly requested Area still stays exact.
+  const returnTo = navigation.section?.kind === 'tracks' ? navigation.section.returnTo : undefined;
+  const tracksBackLabel = returnTo === 'report' ? 'Report' : returnTo === 'focus' ? 'Focus' : 'Workspace';
+  // A section opened while Areas are loading follows the active Area when the read recovers.
   const navigationAreaId = navigation.section?.areaId ?? workspace.activeArea?.id;
   const navigationArea = workspace.visibleAreas.find((area) => area.id === navigationAreaId);
 
@@ -229,10 +230,10 @@ export function MobileShellChrome({
                   <MobileTracks
                     view={navigation.section.kind === 'tracks' ? 'tracks' : 'areas'}
                     onSelectArea={(areaId) => { navigation.select({ kind: 'tracks', areaId }); }}
-                    onBack={navigation.section.kind === 'tracks' && navigation.section.returnTo !== 'report'
+                    onBack={navigation.section.kind === 'tracks' && (returnTo === undefined || returnTo === 'areas')
                       ? () => navigation.select({ kind: 'areas', areaId: navigationArea?.id })
                       : () => navigation.close()}
-                    tracksBackLabel={navigation.section.kind === 'tracks' && navigation.section.returnTo === 'report' ? 'Report' : 'Workspace'}
+                    tracksBackLabel={tracksBackLabel}
                     onNewTrack={openNewTrack}
                     onOpenSettings={() => { navigation.close(); actions.onOpenSettings(); }}
                     currentTrackId={route.routeTrackId}

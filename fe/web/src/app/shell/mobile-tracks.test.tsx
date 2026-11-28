@@ -41,6 +41,8 @@ describe('MobileTracks', () => {
     expect(onNewTrack).toHaveBeenCalledWith('c1');
     const selected = screen.getByRole('button', { name: /^Responsive mobile UI\b/ });
     expect(selected.getAttribute('aria-current')).toBe('page');
+    expect(selected.closest('section')).toBe(screen.getByRole('region', { name: 'Open tracks' }));
+    expect(screen.queryByRole('heading', { name: 'Open tracks' })).toBeNull();
     await userEvent.click(selected);
     expect(onOpenTrack).toHaveBeenCalledWith('w1');
     await userEvent.click(screen.getByRole('button', { name: 'Back to Workspace' }));
@@ -111,7 +113,7 @@ describe('MobileTracks', () => {
     expect(row(/^Responsive mobile UI No updates yet$/).querySelector('svg')).toBeNull();
 
     view.rerender(mount({ closedAt: 5, working: true }));
-    expect(row(/^Responsive mobile UI.* Running Closed$/).querySelector('svg')).toBeNull();
+    expect(row(/^Responsive mobile UI.* Running .* Closed$/).querySelector('svg')).toBeNull();
 
     view.rerender(mount({ attention: 'input' }));
     expect(row(/^Responsive mobile UI Waiting on you$/).querySelector('svg')).toBeNull();
@@ -138,7 +140,7 @@ describe('MobileTracks', () => {
     expect(row(/^Responsive mobile UI Pinned · Reply:/).textContent).toContain('Pinned · Reply: Ready for review');
 
     view.rerender(mount({ closedAt: 5 }, true));
-    expect(row(/^Responsive mobile UI.* Closed Unread$/).querySelector('svg')).toBeNull();
+    expect(row(/^Responsive mobile UI.* Closed .* Unread$/).querySelector('svg')).toBeNull();
   });
 });
 

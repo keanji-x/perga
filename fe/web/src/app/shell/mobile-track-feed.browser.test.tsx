@@ -63,11 +63,12 @@ function color(token: string): string {
   return value;
 }
 
-function expectClamped(prefix: Element, lines: number) {
+function expectClamped(prefix: Element) {
   const preview = prefix.parentElement!;
   const style = getComputedStyle(preview);
-  expect(style.getPropertyValue('-webkit-line-clamp')).toBe(String(lines));
-  expect(preview.clientHeight).toBeCloseTo(parseFloat(style.lineHeight) * lines, 0);
+  expect(style.getPropertyValue('-webkit-line-clamp')).toBe('2');
+  expect(parseFloat(style.lineHeight) / parseFloat(style.fontSize)).toBeCloseTo(1.6, 1);
+  expect(preview.clientHeight).toBeCloseTo(parseFloat(style.lineHeight) * 2, 0);
   expect(preview.scrollHeight).toBeGreaterThan(preview.clientHeight);
 }
 
@@ -78,8 +79,7 @@ afterEach(async () => {
 });
 
 it.each([
-  ['light', 390, 844],
-  ['dark', 320, 640],
+  ['light', 390, 844], ['light', 320, 640], ['dark', 390, 844], ['dark', 320, 640],
 ] as const)('renders a flush Area feed with an independent repair-row menu in %s at %ix%i', async (theme, width, height) => {
   await page.viewport(width, height);
   document.documentElement.dataset.theme = theme;
@@ -92,9 +92,13 @@ it.each([
   await page.getByRole('heading', { name: 'Product', exact: true }).hover();
   const feedBox = feed.getBoundingClientRect();
   expect([feedBox.left, feedBox.right]).toEqual([0, width]);
-  expect(getComputedStyle(fullFeed.element()).backgroundColor).toBe(color('--surface-card'));
+  expect(getComputedStyle(feed).backgroundColor).toBe(color('--bg'));
+  expect(getComputedStyle(page.getByRole('heading', { name: 'Product', exact: true }).element().closest('header')!).backgroundColor).toBe(color('--bg'));
+  expect(open.getByRole('heading').query()).toBeNull();
   const summaryStrip = (await page.getByText('6 open tracks · 1 unread', { exact: true }).findElement()).parentElement!;
   expect(getComputedStyle(summaryStrip).backgroundColor).toBe(color('--bg'));
+  expect(getComputedStyle(summaryStrip).borderBottomWidth).toBe('1px');
+  expect(summaryStrip.getBoundingClientRect().bottom).toBe(feedBox.top);
   await expect.element(page.getByRole('button', { name: 'Area memory', exact: true })).toBeVisible();
 
   const failed = fullFeed.getByRole('button', { name: /^Workspace setup\b/ });
@@ -116,6 +120,8 @@ it.each([
   }
   expect(getComputedStyle(title).fontSize).toBe('16px');
   expect(getComputedStyle(title).textOverflow).toBe('ellipsis');
+  expect(getComputedStyle(title).whiteSpace).toBe('nowrap');
+  expect(title.getBoundingClientRect().height).toBeCloseTo(parseFloat(getComputedStyle(title).lineHeight), 1);
   expect(title.scrollWidth).toBeGreaterThan(title.clientWidth);
   const captionStyle = getComputedStyle(caption.element());
   expect(captionStyle.backgroundColor).toBe(color('--chip-error'));
@@ -123,8 +129,9 @@ it.each([
   expect(captionStyle.borderRadius).toBe(captionStyle.getPropertyValue('--radius-pill').trim());
   const failurePreview = caption.element().parentElement!;
   expect(failurePreview.textContent).toContain('Mount timed out.');
-  await expect.element(failed.getByText('2m', { exact: true })).toBeVisible();
-  expect(getComputedStyle(failurePreview).color).toBe(color('--text'));
+  const time = page.elementLocator(failed.element().closest('li')!).getByText('2m', { exact: true });
+  await expect.element(time).toBeVisible();
+  expect(getComputedStyle(failurePreview).color).toBe(color('--text-2'));
   expect(title.getBoundingClientRect().left).toBe(failurePreview.getBoundingClientRect().left);
 
   const failureItem = failed.element().closest('li')!;
@@ -135,7 +142,14 @@ it.each([
   expect(actionBox.height).toBeGreaterThanOrEqual(44);
   expect(actionBox.right).toBeLessThanOrEqual(width);
   const titleBox = title.getBoundingClientRect();
-  expect(Math.abs((titleBox.top + titleBox.bottom - actionBox.top - actionBox.bottom) / 2)).toBeLessThanOrEqual(4);
+  const previewBox = failurePreview.getBoundingClientRect();
+  const timeBox = time.element().getBoundingClientRect();
+  expect(titleBox.right).toBe(previewBox.right);
+  expect(titleBox.right).toBe(width - 16);
+  expect(actionBox.top).toBeGreaterThan(previewBox.bottom);
+  expect(timeBox.right).toBeLessThan(actionBox.left);
+  expect(timeBox.top + timeBox.height / 2).toBeCloseTo(actionBox.top + actionBox.height / 2, 0);
+  expect(actionBox.right).toBe(titleBox.right);
   expect(getComputedStyle(failureItem).backgroundColor).toBe(color('--error-soft'));
   expect(getComputedStyle(action.element()).backgroundColor).toBe('rgba(0, 0, 0, 0)');
   const repairDivider = getComputedStyle(ask.element().closest('li')!, '::before');
@@ -156,7 +170,7 @@ it.each([
   expect(getComputedStyle(current.element().closest('li')!).backgroundColor).toBe(color('--selection-bg'));
   await expect.element(current.getByText('Pinned', { exact: true })).toBeVisible();
   await expect.element(current).toHaveTextContent('Pinned · Summary: The report describes');
-  expectClamped(current.getByText('Summary:', { exact: true }).element(), 3);
+  expectClamped(current.getByText('Summary:', { exact: true }).element());
   expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(width);
 
   await action.click();
@@ -181,7 +195,7 @@ it('keeps Area and Workspace archive rows compact and applies asymmetric landsca
     const failed = open.getByRole('button', { name: /^Workspace setup/ });
     const action = open.getByRole('button', { name: /^Actions for track Workspace setup/ });
     const title = await failed.getByText(longTitle, { exact: true }).findElement();
-    const openTime = await failed.getByText('2m', { exact: true }).findElement();
+    const openTime = await page.elementLocator(failed.element().closest('li')!).getByText('2m', { exact: true }).findElement();
     const inset = title.getBoundingClientRect().left - left;
     expect(inset).toBe(16);
     expect(action.element().getBoundingClientRect().right).toBeLessThanOrEqual(width - right);
@@ -196,6 +210,7 @@ it('keeps Area and Workspace archive rows compact and applies asymmetric landsca
     const toggleStrip = show.element().parentElement!;
     expect(toggleStrip.getBoundingClientRect().top).toBe(open.element().getBoundingClientRect().bottom);
     expect(getComputedStyle(toggleStrip).backgroundColor).toBe(color('--bg'));
+    expect(getComputedStyle(toggleStrip).borderBlockWidth).toBe('1px');
     await show.click();
     const areaRow = closed.getByRole('button', { name: /^Archived roadmap\b/ });
     await expect.element(areaRow).toHaveAttribute('aria-current', 'page');
@@ -204,9 +219,10 @@ it('keeps Area and Workspace archive rows compact and applies asymmetric landsca
     await expect.element(areaRow.getByText('5m', { exact: true })).toBeVisible();
     const areaTitle = await areaRow.getByText('Archived roadmap', { exact: true }).findElement();
     expect(areaTitle.getBoundingClientRect().left).toBe(left + inset);
+    expect((await areaRow.getByText('5m', { exact: true }).findElement()).getBoundingClientRect().right).toBe(width - right - inset);
     expect(getComputedStyle(areaTitle).textDecorationLine).toBe('line-through');
     expect(getComputedStyle(areaTitle).fontWeight).toBe(getComputedStyle(areaTitle).getPropertyValue('--weight-semibold').trim());
-    expectClamped(areaRow.getByText('Summary:', { exact: true }).element(), 2);
+    expectClamped(areaRow.getByText('Summary:', { exact: true }).element());
     const hide = closed.getByRole('button', { name: 'Hide', exact: true });
     expect(hide.element().getAttribute('aria-expanded')).toBe('true');
     await hide.click();
@@ -224,14 +240,16 @@ it('keeps Area and Workspace archive rows compact and applies asymmetric landsca
     await expect.element(workspaceRow).toHaveAccessibleName(/\bUnread$/);
     await expect.element(workspaceRow).toHaveTextContent(/Product\s*· 5m/);
     const card = workspaceRow.element().closest('ul')!;
+    expect(getComputedStyle(card).backgroundColor).toBe(color('--surface-card'));
     const cardBox = card.getBoundingClientRect();
     expect([cardBox.left, width - cardBox.right]).toEqual([left + inset, right + inset]);
     const workspaceTitle = workspaceRow.getByText('Archived roadmap', { exact: true }).element();
     expect(workspaceTitle.getBoundingClientRect().left - workspaceRow.element().getBoundingClientRect().left).toBe(inset);
     expect(getComputedStyle(workspaceTitle).textDecorationLine).toBe('line-through');
-    expectClamped(workspaceRow.getByText('Summary:', { exact: true }).element(), 2);
+    expectClamped(workspaceRow.getByText('Summary:', { exact: true }).element());
     const prototype = library.getByRole('button', { name: /^Archived prototype\b/ });
-    await expect.element(prototype).toHaveTextContent(/Platform\s*· 7m\s*Closed/);
+    await expect.element(prototype).toHaveTextContent(/Closed\s*Platform\s*· 7m/);
+    expect(getComputedStyle(prototype.element().closest('li')!).backgroundColor).toBe('rgba(0, 0, 0, 0)');
     const prototypeTitle = getComputedStyle(prototype.getByText('Archived prototype', { exact: true }).element());
     expect(prototypeTitle.fontWeight).toBe(prototypeTitle.getPropertyValue('--weight-medium').trim());
     await workspaceRow.click();
@@ -247,4 +265,19 @@ it('extends the Area feed surface to the bottom when there is no archive toggle'
   const open = page.getByRole('region', { name: 'Open tracks', exact: true }).getByRole('list');
   expect((await open.findElement()).getBoundingClientRect().bottom).toBe(844);
   expect(page.getByRole('region', { name: 'Closed tracks', exact: true }).query()).toBeNull();
+});
+
+
+it.each([320, 390])('keeps the menu below a two-line preview when there is no timestamp at %ipx', async (width) => {
+  await page.viewport(width, 640);
+  fixture({ tracksByArea: new Map([[product.id, [track({
+    title: 'Untimed work', previewKind: 'summary', previewText: longPreview, updatedAt: 0, createdAt: 0,
+  })]]]) });
+  const row = await page.getByRole('button', { name: /^Untimed work Summary:/ }).findElement();
+  const summary = page.elementLocator(row).getByText('Summary:', { exact: true }).element();
+  const action = await page.getByRole('button', { name: 'Actions for track Untimed work' }).findElement();
+  await expect.poll(() => row.getBoundingClientRect().left).toBe(0);
+  expectClamped(summary);
+  expect(action.getBoundingClientRect().top).toBeGreaterThan(summary.parentElement!.getBoundingClientRect().bottom);
+  expect(action.getBoundingClientRect()).toMatchObject({ width: 44, height: 44, right: width - 16 });
 });

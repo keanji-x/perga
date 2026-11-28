@@ -27,14 +27,16 @@ it('gives the daily mobile page one header and opens its scoped conversation swi
 it.each([320, 390])('keeps mobile navigation labels and pointer targets usable at %ipx', async (width) => {
   await page.viewport(width, 844);
   renderDailyFixture({ initial: '/track/project' });
-  await page.getByRole('button', { name: 'Switch track, Project', exact: true }).click();
-  const layer = page.getByRole('dialog', { name: 'Tracks and settings', exact: true }).element();
+  await page.getByRole('button', { name: 'Open area Project', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'Tracks and settings', exact: true });
+  const layer = await dialog.findElement();
+  const row = dialog.getByRole('region', { name: 'Open tracks' }).getByRole('button', { name: /^Project evidence\b/ });
+  const item = await row.findElement();
   await expect.poll(() => layer.getAnimations({ subtree: true }).filter(animation => animation.effect?.getTiming().iterations !== Infinity).every(animation => animation.playState !== 'running')).toBe(true);
   const bounds = layer.getBoundingClientRect();
   expect(bounds.left).toBeGreaterThanOrEqual(0);
   expect(bounds.right).toBeLessThanOrEqual(width);
-  const item = page.getByRole('button', { name: 'Project evidence', exact: true }).element();
-  const text = item.querySelector('span:nth-child(2)')!;
+  const text = row.getByText('Project evidence', { exact: true }).element();
   const box = text.getBoundingClientRect();
   expect(item.contains(document.elementFromPoint((box.left + box.right) / 2, (box.top + box.bottom) / 2))).toBe(true);
   await page.getByRole('button', { name: 'Back to Report', exact: true }).click();

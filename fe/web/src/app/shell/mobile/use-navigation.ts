@@ -6,7 +6,7 @@ import { useState } from '../../../ui/state/public.ts';
 /** Routes can reopen an Area's Tracks or the main Workspace view. */
 type MobileSection =
   | Readonly<{ kind: 'areas'; areaId: string | undefined }>
-  | Readonly<{ kind: 'tracks'; areaId: string | undefined; returnTo?: 'areas' | 'report' }>;
+  | Readonly<{ kind: 'tracks'; areaId: string | undefined; returnTo?: 'areas' | 'report' | 'focus' }>;
 
 export type OpenMobileSection = (section: MobileSection, returnFocus?: 'opener' | 'workspace') => void;
 

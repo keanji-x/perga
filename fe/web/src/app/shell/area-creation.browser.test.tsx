@@ -36,7 +36,7 @@ describe('creating an Area after navigation changes', () => {
         if (request.path === '/api/v1/areas' && request.method === 'GET') areaReads++;
       }, receipts, history);
       try {
-        await page.getByRole('button', { name: 'Switch track, Product', exact: true }).click();
+        await page.getByRole('button', { name: 'Open area Product', exact: true }).click();
         await page.getByRole('button', { name: 'New track', exact: true }).click();
         await expect.poll(() => router.state.location.pathname, { timeout: 5000 }).toBe('/area/c1/new');
         await page.getByRole('button', { name: 'Switch area, Product', exact: true }).click();

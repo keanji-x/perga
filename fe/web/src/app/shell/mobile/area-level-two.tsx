@@ -127,9 +127,6 @@ export function AreaLevelTwo({
         )}
 
         <section className={styles.areaSection} aria-label="Open tracks">
-          <div className={styles.areaSectionHeader}>
-            <h2 className={styles.sectionTitle}>Open tracks</h2>
-          </div>
           {openTracks.length > 0 ? (
             <ul className={styles.areaFeed}>
               {openTracks.map((track) => (
@@ -186,7 +183,6 @@ export function AreaLevelTwo({
                     current={track.id === currentTrackId}
                     renderTitle={(track) => <TrackTitle track={track} />}
                     timestampMs={track.closedAt ?? track.updatedAt}
-                    previewLines={2}
                   />
                 ))}
               </ul>

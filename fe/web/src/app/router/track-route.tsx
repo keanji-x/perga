@@ -86,6 +86,7 @@ export function TrackRoute({ transport, unauthorized, cardRuntime, recentFiles, 
       snapshot={detail.data}
       memoryAreaId={memoryEnabled ? memoryAreaId : false}
       showWorkspaceIsolation={!isMemoryTrack}
+      mobileReportTitleOnScroll={!isMemoryTrack}
       workspaceWaiting={detail.data.workspacePreparation != null}
       workspaceNotice={detail.data.workspacePreparation === 'failed' && detail.data.track.closedAtMs != null
         ? <Banner status="error" role="alert" title="Reopen this Track to retry workspace setup." />
